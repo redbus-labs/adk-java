@@ -130,7 +130,7 @@ public class OllamaBaseLM extends BaseLlm {
         }
     }
 
-    private Part ollamaContentBlockToPart(JSONObject blockJson) {
+    public static Part ollamaContentBlockToPart(JSONObject blockJson) {
         // Check for tool_calls first, as the example with tool_calls had empty content
         if (blockJson.has("tool_calls")) {
             JSONArray toolCalls = blockJson.optJSONArray("tool_calls"); // Use optJSONArray for null safety
