@@ -22,7 +22,10 @@ import io.reactivex.rxjava3.core.Flowable;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
@@ -311,103 +314,122 @@ public class RedbusADG extends BaseLlm {
      * @throws RuntimeException If environment variables are not set or JSON
      * creation fails.
      */
-    public static JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
-        try {
-            // 1. Get username and password from environment variables
-            String username = System.getenv(USERNAME_ENV_VAR);
-            String password = System.getenv(PASSWORD_ENV_VAR);
-            String apiUrl = System.getenv(DEFAULT_API_URL);
+   public static JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+    try {
+        // 1. Get username and password from environment variables
+        String username = System.getenv(USERNAME_ENV_VAR);
+        String password = System.getenv(PASSWORD_ENV_VAR);
+        String apiUrl = System.getenv(DEFAULT_API_URL);
 
-            if (username == null || username.isEmpty()) {
-                throw new RuntimeException("Environment variable '" + USERNAME_ENV_VAR + "' not set.");
-            }
-            if (password == null || password.isEmpty()) {
-                throw new RuntimeException("Environment variable '" + PASSWORD_ENV_VAR + "' not set.");
-            }
+        if (username == null || username.isEmpty()) {
+            throw new RuntimeException("Environment variable '" + USERNAME_ENV_VAR + "' not set.");
+        }
+        if (password == null || password.isEmpty()) {
+            throw new RuntimeException("Environment variable '" + PASSWORD_ENV_VAR + "' not set.");
+        }
 
-            JSONObject responseJ = new JSONObject();
+        JSONObject responseJ = new JSONObject();
 
-            // Constructing the JSON payload
-            JSONObject payload = new JSONObject();
+        // Constructing the JSON payload
+        JSONObject payload = new JSONObject();
 
-            payload.put("username", username);
-            payload.put("password", password);
+        payload.put("username", username);
+        payload.put("password", password);
 
-            payload.put("api", model); //This parameter takes id of model, not actual model name
+        payload.put("api", model); //This parameter takes id of model, not actual model name
 
-            JSONObject request = new JSONObject();
+        JSONObject request = new JSONObject();
 
-            request.put("messages", messages);
-            if (tools != null) {
-                request.put("functions", tools);
-            }
+        request.put("messages", messages);
+        if (tools != null) {
+            request.put("functions", tools);
+        }
 
-            request.put("temperature", 0.9);
+        request.put("temperature", 0.9);
 
-            payload.put("request", request);
+        payload.put("request", request);
 
-            // Convert payload to string
-            String jsonString = payload.toString();
+        // Convert payload to string
+        String jsonString = payload.toString();
 
-            // Create URL object
-            URL url = new URL(apiUrl);
+        // Create URL object
+        URL url = new URL(apiUrl);
 
-            // Open connection
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        // Open connection
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
 
-            // Set request method
-            connection.setRequestMethod("POST");
+        // Set request method
+        connection.setRequestMethod("POST");
 
-            // Set headers
-            connection.setRequestProperty("Content-Type", "application/json");
+        // Set headers
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8"); // <-- Also good practice to specify charset here
+        // connection.setRequestProperty("charset", "UTF-8"); // This header is less standard than adding to Content-Type
 
-            // Enable output and set content length
-            connection.setDoOutput(true);
-            connection.setFixedLengthStreamingMode(jsonString.getBytes().length);
+        // Enable output
+        connection.setDoOutput(true);
+        // Optional: Set content length based on UTF-8 bytes
+        connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
 
-            // Write JSON data to output stream
-            try (DataOutputStream outputStream = new DataOutputStream(connection.getOutputStream())) {
-                outputStream.writeBytes(jsonString);
-                outputStream.flush();
-            } catch (IOException ex) {
-                java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
-            }
 
-            // Read response
-            int responseCode = connection.getResponseCode();
-            System.out.println("Response Code: " + responseCode);
-
-            // Read response body
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                System.out.println("Response Body: " + response.toString());
-
-                responseJ = new JSONObject(response.toString());
-
-            } catch (IOException ex) {
-                java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
-            }
-
-            // Close connection
-            connection.disconnect();
-
-            return responseJ;
-
-        } catch (MalformedURLException ex) {
-            java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
-        } catch (ProtocolException ex) {
-            java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+        // Write JSON data to output stream using UTF-8
+        try (OutputStream outputStream = connection.getOutputStream();
+             OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) { // <-- MODIFIED
+            writer.write(jsonString); // <-- MODIFIED
+            writer.flush();
         } catch (IOException ex) {
             java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
         }
-        return new JSONObject();
 
+        // Read response
+        int responseCode = connection.getResponseCode();
+        System.out.println("Response Code: " + responseCode);
+
+        // Read response body using UTF-8
+        try (InputStream inputStream = connection.getInputStream();
+             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) { // <-- MODIFIED
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+            System.out.println("Response Body: " + response.toString());
+
+            responseJ = new JSONObject(response.toString());
+
+        } catch (IOException ex) {
+            java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+            // Handle error stream if responseCode is not 2xx
+            if (responseCode >= 400) {
+                 try (InputStream errorStream = connection.getErrorStream();
+                      BufferedReader errorReader = new BufferedReader(new InputStreamReader(errorStream, "UTF-8"))) {
+                     StringBuilder errorResponse = new StringBuilder();
+                     String errorLine;
+                     while ((errorLine = errorReader.readLine()) != null) {
+                         errorResponse.append(errorLine);
+                     }
+                     System.err.println("Error Response Body: " + errorResponse.toString());
+                     // You might want to parse the errorResponse as a JSON object too if the API returns JSON errors
+                 } catch (IOException errorEx) {
+                     java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, errorEx);
+                 }
+            }
+        }
+
+        // Close connection
+        connection.disconnect();
+
+        return responseJ;
+
+    } catch (MalformedURLException ex) {
+        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+    } catch (ProtocolException ex) {
+        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+    } catch (IOException ex) {
+        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
     }
+    return new JSONObject();
 
+}
     @Override
     public BaseLlmConnection connect(LlmRequest llmRequest) {
         throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
