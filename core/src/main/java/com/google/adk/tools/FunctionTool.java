@@ -197,6 +197,8 @@ public class FunctionTool extends BaseTool {
       return Maybe.empty();
     } else if (result instanceof Maybe) {
       return (Maybe<Map<String, Object>>) result;
+    } else if (result instanceof Single) {
+      return ((Single<Map<String, Object>>) result).toMaybe();
     } else {
       return Maybe.just((Map<String, Object>) result);
     }

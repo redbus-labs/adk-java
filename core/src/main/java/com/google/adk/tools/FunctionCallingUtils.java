@@ -73,7 +73,8 @@ public final class FunctionCallingUtils {
       if (returnType instanceof ParameterizedType) {
         ParameterizedType parameterizedReturnType = (ParameterizedType) returnType;
         String returnTypeName = ((Class<?>) parameterizedReturnType.getRawType()).getName();
-        if (returnTypeName.equals("io.reactivex.rxjava3.core.Maybe")) {
+        if (returnTypeName.equals("io.reactivex.rxjava3.core.Maybe")
+            || returnTypeName.equals("io.reactivex.rxjava3.core.Single")) {
           returnType = parameterizedReturnType.getActualTypeArguments()[0];
           if (returnType instanceof ParameterizedType) {
             ParameterizedType maybeParameterizedType = (ParameterizedType) returnType;
@@ -86,7 +87,8 @@ public final class FunctionCallingUtils {
         }
       }
       throw new IllegalArgumentException(
-          "Return type should be Map or Maybe<Map>, but it was " + realReturnType.getTypeName());
+          "Return type should be Map or Maybe<Map> or Single<Map>, but it was "
+              + realReturnType.getTypeName());
     }
     return builder.build();
   }
