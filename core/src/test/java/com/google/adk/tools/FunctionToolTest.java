@@ -26,6 +26,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.core.Single;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
@@ -344,6 +345,24 @@ public final class FunctionToolTest {
   }
 
   @Test
+  public void create_withSingleMapReturnType() {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsSingleMap");
+
+    assertThat(tool).isNotNull();
+    assertThat(tool.declaration().get().response())
+        .hasValue(Schema.builder().type("OBJECT").build());
+  }
+
+  @Test
+  public void call_withSingleMapReturnType() throws Exception {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsSingleMap");
+
+    Map<String, Object> result = tool.runAsync(new HashMap<>(), null).blockingGet();
+
+    assertThat(result).containsExactly("key", "value");
+  }
+
+  @Test
   public void call_nonStaticWithAllSupportedParameterTypes() throws Exception {
     Functions functions = new Functions();
     FunctionTool tool =
@@ -461,6 +480,10 @@ public final class FunctionToolTest {
 
     public static Maybe<String> returnsMaybeString() {
       return Maybe.just("not supported");
+    }
+
+    public static Single<Map<String, Object>> returnsSingleMap() {
+      return Single.just(ImmutableMap.of("key", "value"));
     }
 
     public void nonStaticVoidReturnWithoutSchema() {}
