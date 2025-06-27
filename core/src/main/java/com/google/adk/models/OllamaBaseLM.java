@@ -28,19 +28,25 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.Collections;
+
 
 /**
  *
  * @author ryzen
+ * @author Manoj Kumar, Sandeep Belgavi
+ * @date 2025-06-27
  */
 public class OllamaBaseLM extends BaseLlm {
 
-    public static String OLLAMA_EP = "http://localhost:11434";//"http://192.168.1.8:11434";// "https://eb28-122-176-48-130.ngrok-free.app";//
+    // The Ollama endpoint is already correctly set as requested.
+    public static String OLLAMA_EP = "OLLAMA_API_BASE";
 
-    private static final Logger logger = LoggerFactory.getLogger(Claude.class);
-    
+    // Corrected the logger name to use OllamaBaseLM.class
+    private static final Logger logger = LoggerFactory.getLogger(OllamaBaseLM.class);
+
     public OllamaBaseLM(String model) {
-    
+
         super(model);
     }
 
@@ -52,50 +58,105 @@ public class OllamaBaseLM extends BaseLlm {
         if (configOpt.isPresent()) {
             Optional<Content> systemInstructionOpt = configOpt.get().systemInstruction();
             if (systemInstructionOpt.isPresent()) {
+                // Extract system instruction text if present
                 String extractedSystemText
                         = systemInstructionOpt.get().parts().orElse(ImmutableList.of()).stream()
-                                .filter(p -> p.text().isPresent())
-                                .map(p -> p.text().get())
-                                .collect(Collectors.joining("\n"));
+                        .filter(p -> p.text().isPresent())
+                        .map(p -> p.text().get())
+                        .collect(Collectors.joining("\n"));
                 if (!extractedSystemText.isEmpty()) {
                     systemText = extractedSystemText;
                 }
             }
         }
 
-        String toolSupportedModel =this.model();// "devstral";//"llama3.2:3b-instruct-q2_K";//"llama3.2"; // The 1b doesn't support tool
-        //Introduce agent to create Ontology
-        //String agentresponse = agentManager.sendMessageOllama(noteMaker.getName(), toolSupportedModel, "Temperature in Bangalore?");
+        String toolSupportedModel = this.model(); // Use the model passed to the constructor
 
-        //agentresponse = agentManager.sendMessageOllama(noteMaker.getName(), toolSupportedModel, Ontology_Prompt + "\n" + template_JSON);
-        //Search the Ontology
-        String userQuestion = "I want to know 8 detils, What are parts of a car ?";
-        JSONArray messagesToSend = new JSONArray();//Order is important
+        JSONArray messagesToSend = new JSONArray(); // Stores messages for the Ollama API
 
-        JSONObject llmMessageJson1 = new JSONObject();
-        llmMessageJson1.put("role", "system");
-        llmMessageJson1.put("content", systemText);
-        messagesToSend.put(llmMessageJson1);//Agent system prompt is always added
+        // Add the system instruction as the first message if it exists
+        if (!systemText.isEmpty()) {
+            JSONObject systemMessageJson = new JSONObject();
+            systemMessageJson.put("role", "system");
+            systemMessageJson.put("content", systemText);
+            messagesToSend.put(systemMessageJson);
+        }
+        List<Content> contents = Optional.ofNullable(llmRequest.contents())
+                .orElse(Collections.emptyList());
 
-        JSONObject userMessageJson = new JSONObject();
-        userMessageJson.put("role", "user");
-        userMessageJson.put("content", llmRequest.contents().get(0).text());//Do better eork here
-        messagesToSend.put(userMessageJson);//Agent system prompt is always added
+        // Process the user's content from the LlmRequest
+        // Assuming LlmRequest.contents() contains the actual chat history/prompt
+        if (contents != null && !contents.isEmpty()) {
+            for (Content content : contents) {
+                JSONObject messageJson = new JSONObject();
+                messageJson.put("role", content.role().orElse("user")); // Default to 'user' if role is not present
 
-        JSONObject agentresponse = callLLMChat(userQuestion, toolSupportedModel, messagesToSend, null);
+                // Handle different parts of the content (e.g., text, function calls, etc.)
+                if (content.parts().isPresent()) {
+                    StringBuilder textContent = new StringBuilder();
+                    // For simplicity, concatenating all text parts into a single content string
+                    // You might need more sophisticated handling if there are mixed content types
+                    for (Part part : content.parts().get()) {
+                        if (part.text().isPresent()) {
+                            textContent.append(part.text().get());
+                        }
+                        // Add handling for other part types (e.g., function calls, blob) if needed by Ollama
+                        // For example, if it's a function_call, you'd add it to a 'tool_calls' array
+                        // Ollama expects tool calls to be separate from 'content' in a message.
+                        if (part.functionCall().isPresent()) {
+                            FunctionCall functionCall = part.functionCall().get();
+                            JSONObject funcCallJson = new JSONObject();
+                            funcCallJson.put("name", functionCall.name());
+                            funcCallJson.put("arguments", new JSONObject(functionCall.args())); // Convert Map to JSONObject
 
-        String llmResponse = agentresponse.getJSONObject("message").getString("content");
+                            JSONArray toolCallsArray = new JSONArray();
+                            JSONObject toolCallObject = new JSONObject();
+                            toolCallObject.put("function", funcCallJson);
+                            toolCallsArray.put(toolCallObject);
+                            messageJson.put("tool_calls", toolCallsArray);
+                        }
+                    }
+                    if (textContent.length() > 0) {
+                        messageJson.put("content", textContent.toString());
+                    }
+                }
+                messagesToSend.put(messageJson);
+            }
+        }
 
+        // Call the LLM chat method
+        // The 'prompt' parameter in callLLMChat is not directly used for the message content
+        // when 'messages' are provided. It's better to rely solely on 'messages'.
+        JSONObject agentresponse = callLLMChat("", toolSupportedModel, messagesToSend, null);
+        System.out.println("Ollama Response: " + agentresponse.toString(1)); // For debugging
+        // Extract the response content from the Ollama JSON
+        String llmResponseContent = "";
         LlmResponse.Builder responseBuilder = LlmResponse.builder();
         List<Part> parts = new ArrayList<>();
-        Part part = ollamaContentBlockToPart(agentresponse.getJSONObject("message"));
-        parts.add(part);
+
+        if (agentresponse.has("message")) {
+            JSONObject messageObject = agentresponse.getJSONObject("message");
+            // Use the utility method to convert Ollama's message JSON to a Part
+            Part part = ollamaContentBlockToPart(messageObject);
+            parts.add(part);
+
+            // If the part contains text, extract it for logging
+            if (part.text().isPresent()) {
+                llmResponseContent = part.text().get();
+            }
+        } else {
+            logger.warn("Ollama response did not contain a 'message' object.");
+            // Handle error or no content scenario appropriately
+            parts.add(Part.builder().text("Error: No message content from Ollama.").build());
+        }
 
         responseBuilder.content(
                 Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
 
-        logger.debug("Ollama response: {}", llmResponse);
+        logger.debug("Ollama response: {}", llmResponseContent);
 
+        // This implementation returns a single response, not a stream, despite the 'stream' parameter.
+        // If actual streaming is required, the callLLMChat method and this flow would need significant changes.
         return Flowable.just(responseBuilder.build());
     }
 
@@ -104,6 +165,12 @@ public class OllamaBaseLM extends BaseLlm {
         throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
     }
 
+    /**
+     * This method appears to be unused in the current context.
+     * It's typically used for modifying JSON schemas, which is not directly related
+     * to sending chat messages to Ollama. You might consider removing it if it's
+     * no longer needed.
+     */
     private void updateTypeString(Map<String, Object> valueDict) {
         if (valueDict == null) {
             return;
@@ -163,10 +230,6 @@ public class OllamaBaseLM extends BaseLlm {
                         }
                     }
                 }
-                // If tool_calls array is present but malformed or empty,
-                // it might fall through to check content or throw.
-                // Based on original code, falling through to unsupported might be appropriate
-                // if no valid tool call was found despite the key being present.
             }
         }
 
@@ -191,48 +254,46 @@ public class OllamaBaseLM extends BaseLlm {
      * Use prompt parameter to moderate the questions is prompt!=null, using the
      * generate "options": { "num_ctx": 4096 }
      *
-     * @param prompt
-     * @param model
-     * @param messages
-     * @param tools
-     * @return
+     * @param prompt (Note: This 'prompt' is largely superseded by 'messages'
+     * for chat APIs, keep for compatibility if needed elsewhere)
+     * @param model   The Ollama model to use (e.g., "llama3")
+     * @param messages The JSONArray of messages representing the chat history
+     * @param tools    Optional JSONArray of tool definitions
+     * @return JSONObject representing the Ollama API response
      */
     public static JSONObject callLLMChat(String prompt, String model, JSONArray messages, JSONArray tools) {
         JSONObject responseJ = new JSONObject();
         try {
-
-            // API endpoint URL
-            String apiUrl = OLLAMA_EP + "/api/chat";
+            // API endpoint URL //OLLAMA_API_BASE
+            String apiUrl = System.getenv(OLLAMA_EP);
+             apiUrl = apiUrl + "/api/chat";
 
             // Constructing the JSON payload
             JSONObject payload = new JSONObject();
             payload.put("model", model);
-            payload.put("stream", false);
+            payload.put("stream", false); // Assuming non-streaming as per current generateContent implementation
 
             JSONObject options = new JSONObject();
             options.put("num_ctx", 4096);
+            payload.put("options", options);
 
-//            JSONArray messages = new JSONArray();
-//            JSONObject message = new JSONObject();
-//            message.put("role", "user");
-//            message.put("content", prompt);
-//            messages.put(message);
+            // Add messages to the payload
             payload.put("messages", messages);
+
+            // Add tools if provided
             if (tools != null) {
                 payload.put("tools", tools);
             }
-            payload.put("options", options);
 
             // Convert payload to string
             String jsonString = payload.toString();
-            //System.out.println(payload.toString(1));
 
             // Create URL object
             URL url = new URL(apiUrl);
 
             // Open connection
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-
+            System.out.print("HTTP Connection to Ollama API: " + apiUrl.toString());
             // Set request method
             connection.setRequestMethod("POST");
 
@@ -260,9 +321,10 @@ public class OllamaBaseLM extends BaseLlm {
                 while ((line = reader.readLine()) != null) {
                     response.append(line);
                 }
-                System.out.println("Response Body: " + response.toString());
+                String responseBody = response.toString();
+                System.out.println("Response Body: " + responseBody);
 
-                responseJ = new JSONObject(response.toString());
+                responseJ = new JSONObject(responseBody);
 
             }
 
@@ -270,8 +332,13 @@ public class OllamaBaseLM extends BaseLlm {
             connection.disconnect();
 
         } catch (MalformedURLException ex) {
+            logger.error("Malformed URL for Ollama API.", ex);
             java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
+            logger.error("IO Exception when calling Ollama API.", ex);
+            java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (Exception ex) { // Catch any other unexpected exceptions
+            logger.error("An unexpected error occurred when calling Ollama API.", ex);
             java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
         }
         return responseJ;
