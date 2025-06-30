@@ -75,62 +75,63 @@ public final class GcsArtifactService implements BaseArtifactService {
   @Override
   public Single<Integer> saveArtifact(
       String appName, String userId, String sessionId, String filename, Part artifact) {
-    ImmutableList<Integer> versions =
-        listVersions(appName, userId, sessionId, filename).blockingGet();
-    int nextVersion = versions.isEmpty() ? 0 : max(versions) + 1;
+    return listVersions(appName, userId, sessionId, filename)
+        .map(versions -> versions.isEmpty() ? 0 : max(versions) + 1)
+        .map(
+            nextVersion -> {
+              String blobName = getBlobName(appName, userId, sessionId, filename, nextVersion);
+              BlobId blobId = BlobId.of(bucketName, blobName);
 
-    String blobName = getBlobName(appName, userId, sessionId, filename, nextVersion);
-    BlobId blobId = BlobId.of(bucketName, blobName);
+              BlobInfo blobInfo =
+                  BlobInfo.newBuilder(blobId)
+                      .setContentType(artifact.inlineData().get().mimeType().orElse(null))
+                      .build();
 
-    BlobInfo blobInfo =
-        BlobInfo.newBuilder(blobId)
-            .setContentType(artifact.inlineData().get().mimeType().orElse(null))
-            .build();
-
-    try {
-      byte[] dataToSave =
-          artifact
-              .inlineData()
-              .get()
-              .data()
-              .orElseThrow(
-                  () -> new IllegalArgumentException("Saveable artifact data must be non-empty."));
-      storageClient.create(blobInfo, dataToSave);
-      return Single.just(nextVersion);
-    } catch (StorageException e) {
-      throw new VerifyException("Failed to save artifact to GCS", e);
-    }
+              try {
+                byte[] dataToSave =
+                    artifact
+                        .inlineData()
+                        .get()
+                        .data()
+                        .orElseThrow(
+                            () ->
+                                new IllegalArgumentException(
+                                    "Saveable artifact data must be non-empty."));
+                storageClient.create(blobInfo, dataToSave);
+                return nextVersion;
+              } catch (StorageException e) {
+                throw new VerifyException("Failed to save artifact to GCS", e);
+              }
+            });
   }
 
   @Override
   public Maybe<Part> loadArtifact(
       String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
-    int versionToLoad;
-    if (version.isPresent()) {
-      versionToLoad = version.get();
-    } else {
-      ImmutableList<Integer> versions =
-          listVersions(appName, userId, sessionId, filename).blockingGet();
-      if (versions.isEmpty()) {
-        return Maybe.empty();
-      }
-      versionToLoad = max(versions);
-    }
+    return version
+        .map(Maybe::just)
+        .orElseGet(
+            () ->
+                listVersions(appName, userId, sessionId, filename)
+                    .flatMapMaybe(
+                        versions -> versions.isEmpty() ? Maybe.empty() : Maybe.just(max(versions))))
+        .flatMap(
+            versionToLoad -> {
+              String blobName = getBlobName(appName, userId, sessionId, filename, versionToLoad);
+              BlobId blobId = BlobId.of(bucketName, blobName);
 
-    String blobName = getBlobName(appName, userId, sessionId, filename, versionToLoad);
-    BlobId blobId = BlobId.of(bucketName, blobName);
-
-    try {
-      Blob blob = storageClient.get(blobId);
-      if (blob == null || !blob.exists()) {
-        return Maybe.empty();
-      }
-      byte[] data = blob.getContent();
-      String mimeType = blob.getContentType();
-      return Maybe.just(Part.fromBytes(data, mimeType));
-    } catch (StorageException e) {
-      return Maybe.empty();
-    }
+              try {
+                Blob blob = storageClient.get(blobId);
+                if (blob == null || !blob.exists()) {
+                  return Maybe.empty();
+                }
+                byte[] data = blob.getContent();
+                String mimeType = blob.getContentType();
+                return Maybe.just(Part.fromBytes(data, mimeType));
+              } catch (StorageException e) {
+                return Maybe.empty();
+              }
+            });
   }
 
   @Override
