@@ -29,7 +29,13 @@ import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
+import java.net.URI;
 import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -217,8 +223,8 @@ public class RedbusADG extends BaseLlm {
         
         
         JSONObject agentresponse = callLLMChat(modelId, messages, LAST_RESP_TOOl_EXECUTED?null:(functions.length() > 0 ? functions : null));//Tools/functions can not be of 0 length
-        JSONObject responseQuantum = agentresponse.getJSONObject("response").getJSONObject("openAIResponse")
-                .getJSONArray("choices").getJSONObject(0);
+        JSONObject responseQuantum = agentresponse.has("response")?agentresponse.getJSONObject("response").getJSONObject("openAIResponse")
+                .getJSONArray("choices").getJSONObject(0):new JSONObject();
 
         //Check if tool call is required
         //Tools call
@@ -303,6 +309,103 @@ public class RedbusADG extends BaseLlm {
         throw new UnsupportedOperationException("Unsupported content block format or missing required fields: " + blockJson.toString());
     }
 
+    // Create a shared HttpClient instance (thread-safe and efficient)
+    private static final HttpClient httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_2) // Or HTTP_1_1
+            .connectTimeout(Duration.ofSeconds(60)) // Example timeout
+            .build();
+
+    /**
+     * Makes a POST request to a specified URL with a dynamic JSON body
+     * using HttpClient. Fetches username and password from environment variables.
+     *
+     * @param model    The model ID (used in the "api" field of the request payload).
+     * @param messages The list of messages for the "request.messages" field.
+     * @param tools    The list of tools/functions for the "request.functions" field (can be null).
+     * @return The response body as a JSONObject, or an empty JSONObject in case of failure.
+     * @throws RuntimeException If environment variables are not set.
+     */
+    public static JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+        // 1. Get username and password from environment variables
+        String username = System.getenv(USERNAME_ENV_VAR);
+        String password = System.getenv(PASSWORD_ENV_VAR);
+        String apiUrl = System.getenv(DEFAULT_API_URL);
+
+        if (username == null || username.isEmpty()) {
+            throw new RuntimeException("Environment variable '" + USERNAME_ENV_VAR + "' not set.");
+        }
+        if (password == null || password.isEmpty()) {
+            throw new RuntimeException("Environment variable '" + PASSWORD_ENV_VAR + "' not set.");
+        }
+         if (apiUrl == null || apiUrl.isEmpty()) {
+            throw new RuntimeException("Environment variable '" + DEFAULT_API_URL + "' not set.");
+        }
+
+
+        // Constructing the JSON payload using the same structure
+        JSONObject payload = new JSONObject();
+        payload.put("username", username);
+        payload.put("password", password);
+        payload.put("api", model); // This parameter takes id of model, not actual model name
+
+        JSONObject request = new JSONObject();
+        request.put("messages", messages);
+        if (tools != null) {
+            request.put("functions", tools);
+        }
+        request.put("temperature", 0.9);
+
+        payload.put("request", request);
+
+        // Convert payload to string
+        String jsonString = payload.toString();
+
+        try {
+            // Build the HttpRequest
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl)) // Use URI
+                    .header("Content-Type", "application/json; charset=UTF-8") // Explicitly set content type with charset
+                    // Use BodyPublishers.ofString with StandardCharsets.UTF_8
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonString, StandardCharsets.UTF_8))
+                    .build();
+
+            // Send the request and get the response body as a String, decoded with UTF-8
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+            int statusCode = response.statusCode();
+            String responseBody = response.body();
+
+            System.out.println("Response Code: " + statusCode);
+            System.out.println("Response Body: " + responseBody); // Response body is already a String decoded as UTF-8
+
+            if (statusCode >= 200 && statusCode < 300) {
+                // Success
+                return new JSONObject(responseBody);
+            } else {
+                // Handle error responses (status code 4xx or 5xx)
+                //Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE,  "HTTP request failed with status code " + statusCode + ": " + responseBody);
+                // Depending on the API, the error details might be in the responseBody
+                // even for error status codes. You can try to parse it if needed.
+                 try {
+                     return new JSONObject(responseBody); // Attempt to parse error body if it's JSON
+                 } catch (Exception jsonEx) {
+                    //  Logger.getLogger(RedbusADG.class.getName()).log(Level.WARNING,  "Could not parse error response body as JSON.", jsonEx);
+                      return new JSONObject(); // Return empty JSON on parse failure
+                 }
+            }
+
+        } catch (IOException | InterruptedException ex) {
+            // Handle network errors, timeouts, or thread interruptions
+            //Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, "HTTP request failed", ex);
+            return new JSONObject(); // Return empty JSON on error
+        } catch (Exception ex) {
+             // Catch other potential exceptions like JSON parsing issues from the *response*
+            // logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, "An unexpected error occurred", ex);
+             return new JSONObject(); // Return empty JSON on error
+        }
+    }
+    
+    
     /**
      * Makes a POST request to a specified URL with a dynamic JSON body. Fetches
      * username and password from environment variables.
@@ -314,7 +417,7 @@ public class RedbusADG extends BaseLlm {
      * @throws RuntimeException If environment variables are not set or JSON
      * creation fails.
      */
-   public static JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+   public static JSONObject callLLMChatOld(String model, JSONArray messages, JSONArray tools) {
     try {
         // 1. Get username and password from environment variables
         String username = System.getenv(USERNAME_ENV_VAR);
@@ -430,7 +533,8 @@ public class RedbusADG extends BaseLlm {
     return new JSONObject();
 
 }
-    @Override
+   
+   @Override
     public BaseLlmConnection connect(LlmRequest llmRequest) {
         throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
     }

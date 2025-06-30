@@ -4,19 +4,34 @@
  */
 package com.google.adk.models;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import static com.google.adk.models.RedbusADG.callLLMChat;
+import static com.google.adk.models.RedbusADG.cleanForIdentifierPattern;
+import static com.google.adk.models.RedbusADG.oaiContentBlockToPart;
+import com.google.adk.tools.BaseTool;
 import com.google.common.collect.ImmutableList;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
+import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
+import com.google.genai.types.Schema;
 
 import io.reactivex.rxjava3.core.Flowable;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.net.ProtocolException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,25 +43,43 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.stream.Stream;
+
 
 /**
  *
  * @author ryzen
+ * @author Manoj Kumar, Sandeep Belgavi
+ * @date 2025-06-27
  */
 public class OllamaBaseLM extends BaseLlm {
 
-    public static String OLLAMA_EP = "http://localhost:11434";//"http://192.168.1.8:11434";// "https://eb28-122-176-48-130.ngrok-free.app";//
+    // The Ollama endpoint is already correctly set as requested.
+    public static String OLLAMA_EP = "OLLAMA_API_BASE";
 
-    private static final Logger logger = LoggerFactory.getLogger(Claude.class);
+    // Corrected the logger name to use OllamaBaseLM.class
+    private static final Logger logger = LoggerFactory.getLogger(OllamaBaseLM.class);
     
+    private static final String CONTINUE_OUTPUT_MESSAGE =
+      "Continue output. DO NOT look at this line. ONLY look at the content before this line and"
+          + " system instruction.";
+
     public OllamaBaseLM(String model) {
-    
+
         super(model);
     }
 
     @Override
     public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
-
+   List<Content> contents = llmRequest.contents();
+        // Last content must be from the user, otherwise the model won't respond.
+        if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
+            Content userContent = Content.fromParts(Part.fromText(CONTINUE_OUTPUT_MESSAGE));
+            contents = Stream.concat(contents.stream(), Stream.of(userContent)).collect(toImmutableList());
+        }
+        
         String systemText = "";
         Optional<GenerateContentConfig> configOpt = llmRequest.config();
         if (configOpt.isPresent()) {
@@ -63,38 +96,139 @@ public class OllamaBaseLM extends BaseLlm {
             }
         }
 
-        String toolSupportedModel =this.model();// "devstral";//"llama3.2:3b-instruct-q2_K";//"llama3.2"; // The 1b doesn't support tool
-        //Introduce agent to create Ontology
-        //String agentresponse = agentManager.sendMessageOllama(noteMaker.getName(), toolSupportedModel, "Temperature in Bangalore?");
-
-        //agentresponse = agentManager.sendMessageOllama(noteMaker.getName(), toolSupportedModel, Ontology_Prompt + "\n" + template_JSON);
-        //Search the Ontology
-        String userQuestion = "I want to know 8 detils, What are parts of a car ?";
-        JSONArray messagesToSend = new JSONArray();//Order is important
+        //Messages 
+        JSONArray messages = new JSONArray();
 
         JSONObject llmMessageJson1 = new JSONObject();
         llmMessageJson1.put("role", "system");
         llmMessageJson1.put("content", systemText);
-        messagesToSend.put(llmMessageJson1);//Agent system prompt is always added
+        messages.put(llmMessageJson1);//Agent system prompt is always added
 
-        JSONObject userMessageJson = new JSONObject();
-        userMessageJson.put("role", "user");
-        userMessageJson.put("content", llmRequest.contents().get(0).text());//Do better eork here
-        messagesToSend.put(userMessageJson);//Agent system prompt is always added
+        llmRequest.contents().stream().forEach(item -> {
+            //   return new MessageParam(content.role().get().equals("model") || content.role().get().equals("assistant") ? "" : "",content.text());
+            JSONObject messageQuantum = new JSONObject();
+            messageQuantum.put("role", item.role().get().equals("model") || item.role().get().equals("assistant") ? "assistant" : "user");
+           
+            
+            
+            //Additinal override work to add function response
+            if (item.parts().get().get(0).functionResponse().isPresent()) {
+                messageQuantum.put("content",new JSONObject(item.parts().get().get(0).functionResponse().get().response().get()).toString(1));
+            } else {
+                messageQuantum.put("content", item.text());
+            }
+            messages.put(messageQuantum);
+            
+        });
 
-        JSONObject agentresponse = callLLMChat(userQuestion, toolSupportedModel, messagesToSend, null);
+        //Tools
+        // Define the required pattern for the name
+        JSONArray functions = new JSONArray();
+        llmRequest.tools().entrySet().forEach(tooldetail -> {
+            BaseTool baseTool = tooldetail.getValue();
 
-        String llmResponse = agentresponse.getJSONObject("message").getString("content");
+// Get the function declaration from the base tool
+            Optional<FunctionDeclaration> declarationOptional = baseTool.declaration();
 
+// Skip this tool if there is no function declaration
+            if (!declarationOptional.isPresent()) {
+                // Log a warning or handle appropriately
+                System.err.println("Skipping tool '" + baseTool.name() + "' with missing declaration.");
+                // continue; // If inside a loop
+                return; // If processing a single tool outside a loop
+            }
+
+            FunctionDeclaration functionDeclaration = declarationOptional.get();
+
+// Build the top-level map representing the tool JSON structure
+            Map<String, Object> toolMap = new HashMap<>();
+
+// Add the tool's name and description from the function declaration
+            toolMap.put("name", cleanForIdentifierPattern(functionDeclaration.name().get()));
+            toolMap.put("description", cleanForIdentifierPattern(functionDeclaration.description().orElse(""))); // Use description from declaration, handle Optional
+
+// Build the 'parameters' object if parameters are defined
+            Optional<Schema> parametersOptional = functionDeclaration.parameters();
+            if (parametersOptional.isPresent()) {
+                Schema parametersSchema = parametersOptional.get();
+
+                Map<String, Object> parametersMap = new HashMap<>();
+                parametersMap.put("type", "object"); // Function parameters schema type is typically "object"
+
+                // Build the 'properties' map within 'parameters'
+                Optional<Map<String, Schema>> propertiesOptional = parametersSchema.properties();
+                if (propertiesOptional.isPresent()) {
+                    Map<String, Object> propertiesMap = new HashMap<>();
+                    // Create ObjectMapper instance once for the loop
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    objectMapper.registerModule(new Jdk8Module()); // Register module for Java 8 Optionals, etc.
+
+                    propertiesOptional.get().forEach(
+                            (key, schema) -> {
+                                // Convert the library's Schema object for a parameter to a generic Map
+                                Map<String, Object> schemaMap = objectMapper.convertValue(schema, new TypeReference<Map<String, Object>>() {
+                                });
+
+                                // Apply your custom logic to update the type string
+                                // !!! This function updateTypeString(schemaMap) is required and not provided !!!
+                                updateTypeString(schemaMap); // Ensure this modifies schemaMap in place or returns the modified map
+
+                                propertiesMap.put(key, schemaMap);
+                            });
+                    parametersMap.put("properties", propertiesMap);
+                }
+
+                // Add the 'required' list within 'parameters' if present
+                parametersSchema.required().ifPresent(requiredList -> parametersMap.put("required", requiredList)); // Assuming required() returns Optional<List<String>>
+
+                // Add the completed 'parameters' map to the main tool map
+                toolMap.put("parameters", parametersMap);
+            }
+
+// Convert the complete tool map into an org.json.JSONObject
+            JSONObject jsonTool = new JSONObject(toolMap);
+
+// Add the generated tool JSON object to your functions list/array
+            functions.put(jsonTool);
+
+        });
+        
+        //Check if the tool is executed, then parse and response.
+
+        logger.debug("functions: {}", functions.toString(1));
+         
+
+        String modelId = this.model();// "devstral";//"llama3.2:3b-instruct-q2_K";//"llama3.2"; // The 1b doesn't support tool
+
+        //If last user response has the function reponse, then function calla is not needed.
+        boolean LAST_RESP_TOOl_EXECUTED=Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
+        
+        
+        JSONObject agentresponse = callLLMChat(modelId, messages, LAST_RESP_TOOl_EXECUTED?null:(functions.length() > 0 ? functions : null));//Tools/functions can not be of 0 length
+        JSONObject responseQuantum = agentresponse.getJSONObject("message");
+               
+
+        //Check if tool call is required
+        //Tools call
         LlmResponse.Builder responseBuilder = LlmResponse.builder();
         List<Part> parts = new ArrayList<>();
-        Part part = ollamaContentBlockToPart(agentresponse.getJSONObject("message"));
+        Part part = ollamaContentBlockToPart(responseQuantum);
         parts.add(part);
 
-        responseBuilder.content(
-                Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
+        //Call tool
+        if (responseQuantum.has("tool_calls") && "stop".contentEquals(agentresponse.getString("done_reason"))) {
 
-        logger.debug("Ollama response: {}", llmResponse);
+                responseBuilder.content(
+                        Content.builder().role("model")
+                                .parts(ImmutableList.of(Part.builder().functionCall(part.functionCall().get()).build()))
+                                .build());
+
+              //  responseBuilder.partial(false).turnComplete(false);
+
+          
+        } else {
+            responseBuilder.content(Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
+        }
 
         return Flowable.just(responseBuilder.build());
     }
@@ -104,6 +238,12 @@ public class OllamaBaseLM extends BaseLlm {
         throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
     }
 
+    /**
+     * This method appears to be unused in the current context.
+     * It's typically used for modifying JSON schemas, which is not directly related
+     * to sending chat messages to Ollama. You might consider removing it if it's
+     * no longer needed.
+     */
     private void updateTypeString(Map<String, Object> valueDict) {
         if (valueDict == null) {
             return;
@@ -163,10 +303,6 @@ public class OllamaBaseLM extends BaseLlm {
                         }
                     }
                 }
-                // If tool_calls array is present but malformed or empty,
-                // it might fall through to check content or throw.
-                // Based on original code, falling through to unsupported might be appropriate
-                // if no valid tool call was found despite the key being present.
             }
         }
 
@@ -186,53 +322,169 @@ public class OllamaBaseLM extends BaseLlm {
         // or structures not covered (e.g., image parts, other types).
         throw new UnsupportedOperationException("Unsupported content block format or missing required fields: " + blockJson.toString());
     }
+    
+      /**
+     * Makes a POST request to a specified URL with a dynamic JSON body. Fetches
+     * username and password from environment variables.
+     *
+     * @param model
+     * @param messages The list of messages for the "request.messages" field.
+     * @param tools
+     * @return The response body as a String.
+     * @throws RuntimeException If environment variables are not set or JSON
+     * creation fails.
+     */
+   public static JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+    try {
+          JSONObject responseJ = new JSONObject();
+        // API endpoint URL //OLLAMA_API_BASE
+            String apiUrl = System.getenv(OLLAMA_EP);
+             apiUrl = apiUrl + "/api/chat";
+
+            // Constructing the JSON payload
+            JSONObject payload = new JSONObject();
+            payload.put("model", model);
+            payload.put("stream", false); // Assuming non-streaming as per current generateContent implementation
+
+            JSONObject options = new JSONObject();
+            options.put("num_ctx", 4096);
+            payload.put("options", options);
+
+            // Add messages to the payload
+            payload.put("messages", messages);
+
+            // Add tools if provided
+            if (tools != null) {
+                payload.put("tools", tools);
+            }
+
+            // Convert payload to string
+            String jsonString = payload.toString();
+
+        // Create URL object
+        URL url = new URL(apiUrl);
+
+        // Open connection
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+
+        // Set request method
+        connection.setRequestMethod("POST");
+
+        // Set headers
+        connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8"); // <-- Also good practice to specify charset here
+        // connection.setRequestProperty("charset", "UTF-8"); // This header is less standard than adding to Content-Type
+
+        // Enable output
+        connection.setDoOutput(true);
+        // Optional: Set content length based on UTF-8 bytes
+        connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
+
+
+        // Write JSON data to output stream using UTF-8
+        try (OutputStream outputStream = connection.getOutputStream();
+             OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) { // <-- MODIFIED
+            writer.write(jsonString); // <-- MODIFIED
+            writer.flush();
+        } catch (IOException ex) {
+            java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+        }
+
+        // Read response
+        int responseCode = connection.getResponseCode();
+        System.out.println("Response Code: " + responseCode);
+
+        // Read response body using UTF-8
+        try (InputStream inputStream = connection.getInputStream();
+             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) { // <-- MODIFIED
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+            System.out.println("Response Body: " + response.toString());
+
+            responseJ = new JSONObject(response.toString());
+
+        } catch (IOException ex) {
+            java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+            // Handle error stream if responseCode is not 2xx
+            if (responseCode >= 400) {
+                 try (InputStream errorStream = connection.getErrorStream();
+                      BufferedReader errorReader = new BufferedReader(new InputStreamReader(errorStream, "UTF-8"))) {
+                     StringBuilder errorResponse = new StringBuilder();
+                     String errorLine;
+                     while ((errorLine = errorReader.readLine()) != null) {
+                         errorResponse.append(errorLine);
+                     }
+                     System.err.println("Error Response Body: " + errorResponse.toString());
+                     // You might want to parse the errorResponse as a JSON object too if the API returns JSON errors
+                 } catch (IOException errorEx) {
+                     java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, errorEx);
+                 }
+            }
+        }
+
+        // Close connection
+        connection.disconnect();
+
+        return responseJ;
+
+    } catch (MalformedURLException ex) {
+        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+    } catch (ProtocolException ex) {
+        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+    } catch (IOException ex) {
+        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+    }
+    return new JSONObject();
+
+}
+   
 
     /**
      * Use prompt parameter to moderate the questions is prompt!=null, using the
      * generate "options": { "num_ctx": 4096 }
      *
-     * @param prompt
-     * @param model
-     * @param messages
-     * @param tools
-     * @return
+     * @param prompt (Note: This 'prompt' is largely superseded by 'messages'
+     * for chat APIs, keep for compatibility if needed elsewhere)
+     * @param model   The Ollama model to use (e.g., "llama3")
+     * @param messages The JSONArray of messages representing the chat history
+     * @param tools    Optional JSONArray of tool definitions
+     * @return JSONObject representing the Ollama API response
      */
     public static JSONObject callLLMChat(String prompt, String model, JSONArray messages, JSONArray tools) {
         JSONObject responseJ = new JSONObject();
         try {
-
-            // API endpoint URL
-            String apiUrl = OLLAMA_EP + "/api/chat";
+            // API endpoint URL //OLLAMA_API_BASE
+            String apiUrl = System.getenv(OLLAMA_EP);
+             apiUrl = apiUrl + "/api/chat";
 
             // Constructing the JSON payload
             JSONObject payload = new JSONObject();
             payload.put("model", model);
-            payload.put("stream", false);
+            payload.put("stream", false); // Assuming non-streaming as per current generateContent implementation
 
             JSONObject options = new JSONObject();
             options.put("num_ctx", 4096);
+            payload.put("options", options);
 
-//            JSONArray messages = new JSONArray();
-//            JSONObject message = new JSONObject();
-//            message.put("role", "user");
-//            message.put("content", prompt);
-//            messages.put(message);
+            // Add messages to the payload
             payload.put("messages", messages);
+
+            // Add tools if provided
             if (tools != null) {
                 payload.put("tools", tools);
             }
-            payload.put("options", options);
 
             // Convert payload to string
             String jsonString = payload.toString();
-            //System.out.println(payload.toString(1));
 
             // Create URL object
             URL url = new URL(apiUrl);
 
             // Open connection
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-
+            System.out.print("HTTP Connection to Ollama API: " + apiUrl.toString());
             // Set request method
             connection.setRequestMethod("POST");
 
@@ -260,9 +512,10 @@ public class OllamaBaseLM extends BaseLlm {
                 while ((line = reader.readLine()) != null) {
                     response.append(line);
                 }
-                System.out.println("Response Body: " + response.toString());
+                String responseBody = response.toString();
+                System.out.println("Response Body: " + responseBody);
 
-                responseJ = new JSONObject(response.toString());
+                responseJ = new JSONObject(responseBody);
 
             }
 
@@ -270,8 +523,13 @@ public class OllamaBaseLM extends BaseLlm {
             connection.disconnect();
 
         } catch (MalformedURLException ex) {
+            logger.error("Malformed URL for Ollama API.", ex);
             java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
         } catch (IOException ex) {
+            logger.error("IO Exception when calling Ollama API.", ex);
+            java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (Exception ex) { // Catch any other unexpected exceptions
+            logger.error("An unexpected error occurred when calling Ollama API.", ex);
             java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
         }
         return responseJ;
