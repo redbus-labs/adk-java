@@ -21,7 +21,7 @@
   <parent>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk-parent</artifactId>
-    <version>0.1.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+    <version>0.2.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
   </parent>
 
   <artifactId>google-adk-dev</artifactId>
@@ -51,7 +51,15 @@
     </dependencies>
   </dependencyManagement>
   <dependencies>
+<<<<<<< HEAD
 
+=======
+    <dependency>
+      <groupId>com.google.adk</groupId>
+      <artifactId>google-adk</artifactId>
+      <version>0.2.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+    </dependency>
+>>>>>>> 5117b8d6c3120e7832996892ce08d710a87c8789
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>

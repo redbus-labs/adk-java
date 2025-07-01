@@ -21,7 +21,6 @@ public final class ExitLoopTool {
   public static void exitLoop(ToolContext toolContext) {
     // Exits the loop.
     // Call this function only when you are instructed to do so.
-    // TODO: b/414077461 - EventActions mutable, instead of autovalue.
     toolContext.setActions(toolContext.actions().toBuilder().escalate(true).build());
   }
 
