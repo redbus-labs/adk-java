@@ -159,9 +159,9 @@ public final class InMemorySessionService implements BaseSessionService {
     return Maybe.just(mergeWithGlobalState(appName, userId, sessionCopy));
   }
 
-  // Helper to get event timestamp as epoch seconds (adapt based on Event.timestamp() actual type)
+  // Helper to get event timestamp as epoch seconds
   private long getEventTimestampEpochSeconds(Event event) {
-    return event.timestamp();
+    return event.timestamp() / 1000L;
   }
 
   @Override
