@@ -17,6 +17,7 @@
 package com.google.adk.testing;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.truth.Truth.assertThat;
 import static java.util.stream.Collectors.joining;
 
 import com.google.adk.agents.BaseAgent;
@@ -140,6 +141,40 @@ public final class TestUtils {
               return event.author() + ": [NO_CONTENT]"; // Fallback if no content/parts
             })
         .collect(toImmutableList());
+  }
+
+  public static void assertEqualIgnoringFunctionIds(
+      Content actualContent, Content expectedContent) {
+    assertThat(overwriteFunctionIdsInContent(actualContent))
+        .isEqualTo(overwriteFunctionIdsInContent(expectedContent));
+  }
+
+  private static Content overwriteFunctionIdsInContent(Content content) {
+    if (content.parts().isEmpty()) {
+      return content;
+    }
+    return content.toBuilder()
+        .parts(
+            content.parts().get().stream()
+                .map(TestUtils::overwriteFunctionIdsInPart)
+                .collect(toImmutableList()))
+        .build();
+  }
+
+  private static Part overwriteFunctionIdsInPart(Part part) {
+    if (part.functionCall().isPresent()) {
+      return part.toBuilder()
+          .functionCall(
+              part.functionCall().get().toBuilder().id("<overwritten by TestUtils>").build())
+          .build();
+    }
+    if (part.functionResponse().isPresent()) {
+      return part.toBuilder()
+          .functionResponse(
+              part.functionResponse().get().toBuilder().id("<overwritten by TestUtils>").build())
+          .build();
+    }
+    return part;
   }
 
   public static TestBaseAgent createRootAgent(BaseAgent... subAgents) {

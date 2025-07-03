@@ -65,10 +65,23 @@ public abstract class BaseLlmFlow implements BaseFlow {
   protected final List<RequestProcessor> requestProcessors;
   protected final List<ResponseProcessor> responseProcessors;
 
+  // Warning: This is local, in-process state that won't be preserved if the runtime is restarted.
+  // "Max steps" is experimental and may evolve in the future (e.g., to support persistence).
+  protected int stepsCompleted = 0;
+  protected final int maxSteps;
+
   public BaseLlmFlow(
       List<RequestProcessor> requestProcessors, List<ResponseProcessor> responseProcessors) {
+    this(requestProcessors, responseProcessors, /* maxSteps= */ Optional.empty());
+  }
+
+  public BaseLlmFlow(
+      List<RequestProcessor> requestProcessors,
+      List<ResponseProcessor> responseProcessors,
+      Optional<Integer> maxSteps) {
     this.requestProcessors = requestProcessors;
     this.responseProcessors = responseProcessors;
+    this.maxSteps = maxSteps.orElse(Integer.MAX_VALUE);
   }
 
   /**
@@ -407,6 +420,11 @@ public abstract class BaseLlmFlow implements BaseFlow {
   @Override
   public Flowable<Event> run(InvocationContext invocationContext) {
     Flowable<Event> currentStepEvents = runOneStep(invocationContext).cache();
+    if (++stepsCompleted >= maxSteps) {
+      logger.debug("Ending flow execution because max steps reached.");
+      return currentStepEvents;
+    }
+
     return currentStepEvents.concatWith(
         currentStepEvents
             .toList()

@@ -17,6 +17,7 @@
 package com.google.adk.flows.llmflows;
 
 import com.google.common.collect.ImmutableList;
+import java.util.Optional;
 
 /** LLM flow with automatic agent transfer support. */
 public class AutoFlow extends SingleFlow {
@@ -32,6 +33,10 @@ public class AutoFlow extends SingleFlow {
   private static final ImmutableList<ResponseProcessor> RESPONSE_PROCESSORS = ImmutableList.of();
 
   public AutoFlow() {
-    super(REQUEST_PROCESSORS, RESPONSE_PROCESSORS);
+    this(/* maxSteps= */ Optional.empty());
+  }
+
+  public AutoFlow(Optional<Integer> maxSteps) {
+    super(REQUEST_PROCESSORS, RESPONSE_PROCESSORS, maxSteps);
   }
 }

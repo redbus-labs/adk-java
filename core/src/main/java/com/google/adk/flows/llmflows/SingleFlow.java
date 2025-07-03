@@ -18,6 +18,7 @@ package com.google.adk.flows.llmflows;
 
 import com.google.common.collect.ImmutableList;
 import java.util.List;
+import java.util.Optional;
 
 /** Basic LLM flow with fixed request processors and no response post-processing. */
 public class SingleFlow extends BaseLlmFlow {
@@ -29,11 +30,17 @@ public class SingleFlow extends BaseLlmFlow {
   protected static final ImmutableList<ResponseProcessor> RESPONSE_PROCESSORS = ImmutableList.of();
 
   public SingleFlow() {
-    super(REQUEST_PROCESSORS, RESPONSE_PROCESSORS);
+    this(/* maxSteps= */ Optional.empty());
+  }
+
+  public SingleFlow(Optional<Integer> maxSteps) {
+    this(REQUEST_PROCESSORS, RESPONSE_PROCESSORS, maxSteps);
   }
 
   protected SingleFlow(
-      List<RequestProcessor> requestProcessors, List<ResponseProcessor> responseProcessors) {
-    super(requestProcessors, responseProcessors);
+      List<RequestProcessor> requestProcessors,
+      List<ResponseProcessor> responseProcessors,
+      Optional<Integer> maxSteps) {
+    super(requestProcessors, responseProcessors, maxSteps);
   }
 }

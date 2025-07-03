@@ -16,6 +16,7 @@
 
 package com.google.adk.agents;
 
+import static com.google.adk.testing.TestUtils.assertEqualIgnoringFunctionIds;
 import static com.google.adk.testing.TestUtils.createInvocationContext;
 import static com.google.adk.testing.TestUtils.createLlmResponse;
 import static com.google.adk.testing.TestUtils.createTestAgent;
@@ -28,6 +29,7 @@ import static org.junit.Assert.assertThrows;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.testing.TestLlm;
+import com.google.adk.testing.TestUtils.EchoTool;
 import com.google.adk.tools.BaseTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -106,6 +108,33 @@ public final class LlmAgentTest {
     assertThat(events.get(0).finalResponse()).isTrue();
 
     assertThat(events.get(0).actions().stateDelta()).isEmpty();
+  }
+
+  @Test
+  public void run_withToolsAndMaxSteps_stopsAfterMaxSteps() {
+    ImmutableMap<String, Object> echoArgs = ImmutableMap.of("arg", "value");
+    Content contentWithFunctionCall =
+        Content.fromParts(Part.fromText("text"), Part.fromFunctionCall("echo_tool", echoArgs));
+    Content unreachableContent = Content.fromParts(Part.fromText("This should never be returned."));
+    TestLlm testLlm =
+        createTestLlm(
+            createLlmResponse(contentWithFunctionCall),
+            createLlmResponse(contentWithFunctionCall),
+            createLlmResponse(unreachableContent));
+    LlmAgent agent = createTestAgentBuilder(testLlm).tools(new EchoTool()).maxSteps(2).build();
+    InvocationContext invocationContext = createInvocationContext(agent);
+
+    List<Event> events = agent.runAsync(invocationContext).toList().blockingGet();
+
+    Content expectedFunctionResponseContent =
+        Content.fromParts(
+            Part.fromFunctionResponse(
+                "echo_tool", ImmutableMap.<String, Object>of("result", echoArgs)));
+    assertThat(events).hasSize(4);
+    assertEqualIgnoringFunctionIds(events.get(0).content().get(), contentWithFunctionCall);
+    assertEqualIgnoringFunctionIds(events.get(1).content().get(), expectedFunctionResponseContent);
+    assertEqualIgnoringFunctionIds(events.get(2).content().get(), contentWithFunctionCall);
+    assertEqualIgnoringFunctionIds(events.get(3).content().get(), expectedFunctionResponseContent);
   }
 
   @Test
