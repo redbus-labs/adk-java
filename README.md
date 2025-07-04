@@ -11,8 +11,10 @@
 | Audio Streaming (Input) | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
 | Transcription           | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
 | Persistent session                    | ✅                          | ✅                          | ✅          | ✅          |
+| Agents as Tool/Function  | ✅                          | ✅                          | ✅          | ✅          |
 | Interoperability (A2A) | ✅                          | ✅                          | ✅          | ✅          |
 | Interoperability (Tools/Functions) | ✅                          | ✅                          | ✅          | ✅          |
+| Interoperability (Agents as Tool/Function) | ✅                          | ✅                          | ✅          | ✅          |
 
 
 # Core Differences
