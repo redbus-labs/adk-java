@@ -15,6 +15,12 @@
 | Interoperability (A2A) | ✅                          | ✅                          | ✅          | ✅          |
 | Interoperability (Tools/Functions) | ✅                          | ✅                          | ✅          | ✅          |
 | Interoperability (Agents as Tool/Function) | ✅                          | ✅                          | ✅          | ✅          |
+| Interoperability (Agents as Tool/Function) | ✅                          | ✅                          | ✅          | ✅          |
+| Agent Workflow | ✅                          | ✅                          | ✅          | ✅          |
+| Parallel Agents | ✅                          | ✅                          | ✅          | ✅          |
+| Sequential Agents | ✅                          | ✅                          | ✅          | ✅          |
+| Agent Orchestration | ✅                          | ✅                          | ✅          | ✅          |
+| Hierarchical Task Decomposition | ✅                          | ✅                          | ✅          | ✅          |
 
 
 # Core Differences
