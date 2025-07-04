@@ -20,6 +20,10 @@ import org.json.JSONObject;
  * and returns the response.
  *
  * This agent acts as a client to an external ADK Python agent service.
+ *
+ * @author Sandeep Belgavi
+ * @version 1.0
+ * @since 2025-07-04
  */
 public class PythonProxyAgent {
 

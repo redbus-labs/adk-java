@@ -1,3 +1,14 @@
+"""
+Java ADK agent that proxies user input to a Python agent running at http://127.0.0.1:8000/
+and returns the response.
+
+This agent acts as a client to an external ADK Python agent service.
+
+Author: Sandeep Belgavi
+Version: 1.0
+Date: 2025-07-04
+"""
+
 import logging
 import re
 import json
