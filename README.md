@@ -1,3 +1,20 @@
+
+# Capability Supported
+
+| Feature                 | Gemini                     | Anthropic                  | Ollama                      | RedbusADG + Azure   |
+| :---------------------- | :------------------------- | :------------------------- | :-------------------------- | :---------- |
+| Chat                    | ✅                          | ✅                          | ✅          | ✅          |
+| Tools/Function                    | ✅                          | ✅                          | ✅          | ✅          |
+| Chat Stream             | ✅                          | ❌                          | ❌          | ❓           |
+| Image (Input)           | ✅ (Multimodal models)      | ❌       | ❌   | ❓           |
+| Image Gen (Output)      | ✅                          | ❌                          | ❌                          | ❓           |
+| Audio Streaming (Input) | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
+| Transcription           | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
+| Persistent session                    | ✅                          | ✅                          | ✅          | ✅          |
+| Interoperability (A2A) | ✅                          | ✅                          | ✅          | ✅          |
+| Interoperability (Tools/Functions) | ✅                          | ✅                          | ✅          | ✅          |
+
+
 # Core Differences
 
 ## Persistent session storage added, 
@@ -57,6 +74,8 @@ LlmAgent.builder()
                 )
             .build();
 ```
+
+
 
 # Agent Development Kit (ADK) for Java
 
