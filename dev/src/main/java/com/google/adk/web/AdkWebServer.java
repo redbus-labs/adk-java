@@ -28,6 +28,7 @@ import com.google.adk.agents.RunConfig.StreamingMode;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.artifacts.ListArtifactsResponse;
+import com.google.adk.artifacts.MapDbArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.BaseSessionService;
@@ -121,6 +122,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 @ComponentScan(basePackages = {"com.google.adk.web", "com.google.adk.web.config"})
 public class AdkWebServer implements WebMvcConfigurer {
 
+  public boolean MAPDBBACKED = false;
   private static final Logger log = LoggerFactory.getLogger(AdkWebServer.class);
 
   @Value("${adk.web.ui.dir:#{null}}")
@@ -133,7 +135,7 @@ public class AdkWebServer implements WebMvcConfigurer {
       // TODO: Add logic to select service based on config (e.g., DB URL)
       log.info("Using MapDbSessionService");
       // return new InMemorySessionService();
-
+      MAPDBBACKED = true;
       return new MapDbSessionService("Manoj");
     } catch (Exception ex) {
       java.util.logging.Logger.getLogger(AdkWebServer.class.getName()).log(Level.SEVERE, null, ex);
@@ -152,8 +154,10 @@ public class AdkWebServer implements WebMvcConfigurer {
    */
   @Bean
   public BaseArtifactService artifactService() {
-    log.info("Using InMemoryArtifactService");
-    return new InMemoryArtifactService();
+    log.info(MAPDBBACKED ? "Using MapDbArtifactService" : "Using InMemoryArtifactService");
+    return MAPDBBACKED
+        ? new MapDbArtifactService("AdkWebserverArtifact")
+        : new InMemoryArtifactService();
   }
 
   @Bean("loadedAgentRegistry")
