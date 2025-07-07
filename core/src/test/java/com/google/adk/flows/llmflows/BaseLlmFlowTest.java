@@ -16,6 +16,7 @@
 
 package com.google.adk.flows.llmflows;
 
+import static com.google.adk.testing.TestUtils.assertEqualIgnoringFunctionIds;
 import static com.google.adk.testing.TestUtils.createInvocationContext;
 import static com.google.adk.testing.TestUtils.createLlmResponse;
 import static com.google.adk.testing.TestUtils.createTestAgent;
@@ -36,9 +37,7 @@ import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
-import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
-import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
@@ -91,19 +90,49 @@ public final class BaseLlmFlowTest {
     List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
 
     assertThat(events).hasSize(3);
-    assertContentIgnoringFunctionId(events.get(0).content().get(), firstContent);
-    assertContentIgnoringFunctionId(
+    assertEqualIgnoringFunctionIds(events.get(0).content().get(), firstContent);
+    assertEqualIgnoringFunctionIds(
         events.get(1).content().get(),
-        Content.fromParts(
-            Part.builder()
-                .functionResponse(
-                    FunctionResponse.builder()
-                        .id("")
-                        .name("my_function")
-                        .response(testResponse)
-                        .build())
-                .build()));
+        Content.fromParts(Part.fromFunctionResponse("my_function", testResponse)));
     assertThat(events.get(2).content()).hasValue(secondContent);
+  }
+
+  @Test
+  public void run_withFunctionCallsAndMaxSteps_stopsAfterMaxSteps() {
+    Content contentWithFunctionCall =
+        Content.fromParts(
+            Part.fromText("LLM response with function call"),
+            Part.fromFunctionCall("my_function", ImmutableMap.of("arg1", "value1")));
+    Content unreachableContent = Content.fromParts(Part.fromText("This should never be returned."));
+    TestLlm testLlm =
+        createTestLlm(
+            Flowable.just(createLlmResponse(contentWithFunctionCall)),
+            Flowable.just(createLlmResponse(contentWithFunctionCall)),
+            Flowable.just(createLlmResponse(unreachableContent)));
+    ImmutableMap<String, Object> testResponse =
+        ImmutableMap.<String, Object>of("response", "response for my_function");
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .tools(ImmutableList.of(new TestTool("my_function", testResponse)))
+                .build());
+    BaseLlmFlow baseLlmFlow =
+        createBaseLlmFlow(
+            /* requestProcessors= */ ImmutableList.of(),
+            /* responseProcessors= */ ImmutableList.of(),
+            /* maxSteps= */ Optional.of(2));
+
+    List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(4);
+    assertEqualIgnoringFunctionIds(events.get(0).content().get(), contentWithFunctionCall);
+    assertEqualIgnoringFunctionIds(
+        events.get(1).content().get(),
+        Content.fromParts(Part.fromFunctionResponse("my_function", testResponse)));
+    assertEqualIgnoringFunctionIds(events.get(2).content().get(), contentWithFunctionCall);
+    assertEqualIgnoringFunctionIds(
+        events.get(3).content().get(),
+        Content.fromParts(Part.fromFunctionResponse("my_function", testResponse)));
   }
 
   @Test
@@ -206,7 +235,15 @@ public final class BaseLlmFlowTest {
 
   private static BaseLlmFlow createBaseLlmFlow(
       List<RequestProcessor> requestProcessors, List<ResponseProcessor> responseProcessors) {
-    return new BaseLlmFlow(requestProcessors, responseProcessors) {};
+    return createBaseLlmFlow(
+        requestProcessors, responseProcessors, /* maxSteps= */ Optional.empty());
+  }
+
+  private static BaseLlmFlow createBaseLlmFlow(
+      List<RequestProcessor> requestProcessors,
+      List<ResponseProcessor> responseProcessors,
+      Optional<Integer> maxSteps) {
+    return new BaseLlmFlow(requestProcessors, responseProcessors, maxSteps) {};
   }
 
   private static RequestProcessor createRequestProcessor() {
@@ -254,43 +291,6 @@ public final class BaseLlmFlowTest {
     @Override
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
       return Single.just(response);
-    }
-  }
-
-  private static void assertContentIgnoringFunctionId(
-      Content actualContent, Content expectedContent) {
-
-    assertThat(actualContent.role()).isEqualTo(expectedContent.role());
-
-    Optional<List<Part>> actualPartsOpt = actualContent.parts();
-    Optional<List<Part>> expectedPartsOpt = expectedContent.parts();
-    assertThat(actualPartsOpt.isPresent()).isEqualTo(expectedPartsOpt.isPresent());
-
-    if (expectedPartsOpt.isPresent()) {
-      List<Part> actualParts = actualPartsOpt.get();
-      List<Part> expectedParts = expectedPartsOpt.get();
-      assertThat(actualParts).hasSize(expectedParts.size());
-
-      for (int i = 0; i < expectedParts.size(); i++) {
-        Part actualPart = actualParts.get(i);
-        Part expectedPart = expectedParts.get(i);
-
-        if (expectedPart.functionCall().isPresent()) {
-          assertThat(actualPart.functionCall()).isPresent();
-          FunctionCall actualFc = actualPart.functionCall().get();
-          FunctionCall expectedFc = expectedPart.functionCall().get();
-          assertThat(actualFc.name()).isEqualTo(expectedFc.name());
-          assertThat(actualFc.args()).isEqualTo(expectedFc.args());
-        } else if (expectedPart.functionResponse().isPresent()) {
-          assertThat(actualPart.functionResponse()).isPresent();
-          FunctionResponse actualFr = actualPart.functionResponse().get();
-          FunctionResponse expectedFr = expectedPart.functionResponse().get();
-          assertThat(actualFr.name()).isEqualTo(expectedFr.name());
-          assertThat(actualFr.response()).isEqualTo(expectedFr.response());
-        } else {
-          assertThat(actualPart).isEqualTo(expectedPart);
-        }
-      }
     }
   }
 }

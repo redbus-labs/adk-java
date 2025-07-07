@@ -5,7 +5,7 @@
 package com.google.adk.runner;
 
 import com.google.adk.agents.BaseAgent;
-import com.google.adk.artifacts.InMemoryArtifactService;
+import com.google.adk.artifacts.MapDbArtifactService;
 import com.google.adk.sessions.MapDbSessionService;
 import java.io.IOException;
 
@@ -19,6 +19,10 @@ public class MapDbRunner extends Runner {
   }
 
   public MapDbRunner(BaseAgent agent, String appName) throws IOException {
-    super(agent, appName, new InMemoryArtifactService(), new MapDbSessionService(appName));
+    super(
+        agent,
+        appName,
+        new MapDbArtifactService(appName + "_ART"),
+        new MapDbSessionService(appName));
   }
 }

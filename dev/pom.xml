@@ -51,12 +51,7 @@
     </dependencies>
   </dependencyManagement>
   <dependencies>
- 
-    <dependency>
-      <groupId>com.google.adk</groupId>
-      <artifactId>google-adk</artifactId>
-      <version>0.2.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
-    </dependency>
+
   <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>

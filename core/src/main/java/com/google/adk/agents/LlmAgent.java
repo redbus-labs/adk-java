@@ -87,6 +87,7 @@ public class LlmAgent extends BaseAgent {
   private final IncludeContents includeContents;
 
   private final boolean planning;
+  private final Optional<Integer> maxSteps;
   private final boolean disallowTransferToParent;
   private final boolean disallowTransferToPeers;
   private final Optional<List<BeforeModelCallback>> beforeModelCallback;
@@ -118,6 +119,7 @@ public class LlmAgent extends BaseAgent {
     this.includeContents =
         builder.includeContents != null ? builder.includeContents : IncludeContents.DEFAULT;
     this.planning = builder.planning != null && builder.planning;
+    this.maxSteps = Optional.ofNullable(builder.maxSteps);
     this.disallowTransferToParent = builder.disallowTransferToParent;
     this.disallowTransferToPeers = builder.disallowTransferToPeers;
     this.beforeModelCallback = Optional.ofNullable(builder.beforeModelCallback);
@@ -156,6 +158,7 @@ public class LlmAgent extends BaseAgent {
     private BaseExampleProvider exampleProvider;
     private IncludeContents includeContents;
     private Boolean planning;
+    private Integer maxSteps;
     private Boolean disallowTransferToParent;
     private Boolean disallowTransferToPeers;
     private ImmutableList<BeforeModelCallback> beforeModelCallback;
@@ -287,6 +290,12 @@ public class LlmAgent extends BaseAgent {
     @CanIgnoreReturnValue
     public Builder planning(boolean planning) {
       this.planning = planning;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder maxSteps(int maxSteps) {
+      this.maxSteps = maxSteps;
       return this;
     }
 
@@ -588,9 +597,9 @@ public class LlmAgent extends BaseAgent {
 
   protected BaseLlmFlow determineLlmFlow() {
     if (disallowTransferToParent() && disallowTransferToPeers() && subAgents().isEmpty()) {
-      return new SingleFlow();
+      return new SingleFlow(maxSteps);
     } else {
-      return new AutoFlow();
+      return new AutoFlow(maxSteps);
     }
   }
 
@@ -694,6 +703,10 @@ public class LlmAgent extends BaseAgent {
     return planning;
   }
 
+  public Optional<Integer> maxSteps() {
+    return maxSteps;
+  }
+
   public Optional<GenerateContentConfig> generateContentConfig() {
     return generateContentConfig;
   }
@@ -761,14 +774,21 @@ public class LlmAgent extends BaseAgent {
     return resolvedModel;
   }
 
+  /**
+   * Resolves the model for this agent, checking first if it is defined locally, then searching
+   * through ancestors.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   *
+   * @return The resolved {@link Model} for this agent.
+   * @throws IllegalStateException if no model is found for this agent or its ancestors.
+   */
   private Model resolveModelInternal() {
-    // 1. Check if the model is defined locally for this agent.
     if (this.model.isPresent()) {
       if (this.model().isPresent()) {
         return this.model.get();
       }
     }
-    // 2. If not defined locally, search ancestors.
     BaseAgent current = this.parentAgent();
     while (current != null) {
       if (current instanceof LlmAgent) {
