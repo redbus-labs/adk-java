@@ -932,14 +932,15 @@ public class OllamaBaseLM extends BaseLlm {
     }
 
     String modelId = "llama3.1:8b"; // Example model ID
+    OllamaBaseLM ollamaLlm = new OllamaBaseLM(modelId);
 
+    // --- Test Streaming Call ---
+    System.out.println("--- Testing Streaming API Call ---");
     try {
-      System.out.println("Attempting to call Ollama API...");
+      System.out.println("Attempting to call Ollama API (Streaming)...");
       System.out.println("Using model ID: " + modelId);
       System.out.println("Fetching Ollama endpoint from environment variable: " + OLLAMA_EP);
 
-      OllamaBaseLM ollamaLlm = new OllamaBaseLM(modelId);
-      // Using null for tools to test simple streaming
       BufferedReader responseReader = ollamaLlm.callLLMChatStream(modelId, messagesArray, null);
 
       if (responseReader != null) {
@@ -949,19 +950,43 @@ public class OllamaBaseLM extends BaseLlm {
             .forEach(
                 line -> {
                   System.out.println(line);
-                  // You can add more sophisticated JSON parsing here if needed
                 });
       } else {
-        System.err.println("API Call failed. Check logs for details.");
+        System.err.println("Streaming API Call failed. Check logs for details.");
       }
 
     } catch (RuntimeException e) {
-      System.err.println("Error during API call (Runtime): " + e.getMessage());
+      System.err.println("Error during Streaming API call (Runtime): " + e.getMessage());
       System.err.println(
           "Please ensure the environment variable '" + OLLAMA_EP + "' is set correctly.");
       e.printStackTrace();
     } catch (Exception e) {
-      System.err.println("An unexpected error occurred during API call: " + e.getMessage());
+      System.err.println(
+          "An unexpected error occurred during Streaming API call: " + e.getMessage());
+      e.printStackTrace();
+    }
+
+    System.out.println("\n\n--- Testing Non-Streaming API Call ---");
+    // --- Test Non-Streaming Call ---
+    try {
+      System.out.println("Attempting to call Ollama API (Non-Streaming)...");
+      System.out.println("Using model ID: " + modelId);
+
+      JSONObject responseJson = ollamaLlm.callLLMChat(modelId, messagesArray, null);
+
+      if (responseJson != null && !responseJson.isEmpty()) {
+        System.out.println("\nAPI Call Successful! Non-Streaming response:");
+        System.out.println(responseJson.toString(4)); // Pretty print JSON
+      } else {
+        System.err.println("Non-Streaming API Call failed. Check logs for details.");
+      }
+
+    } catch (RuntimeException e) {
+      System.err.println("Error during Non-Streaming API call (Runtime): " + e.getMessage());
+      e.printStackTrace();
+    } catch (Exception e) {
+      System.err.println(
+          "An unexpected error occurred during Non-Streaming API call: " + e.getMessage());
       e.printStackTrace();
     }
   }
