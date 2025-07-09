@@ -39,7 +39,8 @@ public final class FunctionCallingUtils {
 
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-  static FunctionDeclaration buildFunctionDeclaration(Method func, List<String> ignoreParams) {
+  public static FunctionDeclaration buildFunctionDeclaration(
+      Method func, List<String> ignoreParams) {
     String name =
         func.isAnnotationPresent(Annotations.Schema.class)
                 && !func.getAnnotation(Annotations.Schema.class).name().isEmpty()
