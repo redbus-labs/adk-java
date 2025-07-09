@@ -5,7 +5,7 @@
 | :---------------------- | :------------------------- | :------------------------- | :-------------------------- | :---------- |
 | Chat                    | ✅                          | ✅                          | ✅          | ✅          |
 | Tools/Function                    | ✅                          | ✅                          | ✅          | ✅          |
-| Chat Stream             | ✅                          | ❌                          | ❌          | ❓           |
+| Chat Stream             | ✅                          | ❌                          | ✅           | ❓           |
 | Image (Input)           | ✅ (Multimodal models)      | ❌       | ❌   | ❓           |
 | Image Gen (Output)      | ✅                          | ❌                          | ❌                          | ❓           |
 | Audio Streaming (Input) | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
