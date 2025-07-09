@@ -457,7 +457,9 @@ public class OllamaBaseLM extends BaseLlm {
                     functionCallName.append(function.getString("name"));
                   }
                   if (function.has("arguments")) {
-                    functionCallArgs.append(function.getString("arguments"));
+                    JSONObject argsJson =
+                        function.optJSONObject("arguments"); // Use optJSONObject for null safety*/
+                    functionCallArgs.append(argsJson.toString());
                   }
                 }
               }
