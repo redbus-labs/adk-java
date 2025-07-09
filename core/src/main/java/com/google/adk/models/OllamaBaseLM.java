@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -76,6 +77,10 @@ public class OllamaBaseLM extends BaseLlm {
 
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
+    if (stream) {
+      return generateContentStream(llmRequest);
+    }
+
     List<Content> contents = llmRequest.contents();
     // Last content must be from the user, otherwise the model won't respond.
     if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
@@ -240,138 +245,317 @@ public class OllamaBaseLM extends BaseLlm {
     boolean LAST_RESP_TOOl_EXECUTED =
         Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
 
-    if (stream) {
-      //      logger.debug("Sending streaming generateContent request to model {}", modelId);
-      //      CompletableFuture<ResponseStream<GenerateContentResponse>> streamFuture =
-      //          apiClient.async.models.generateContentStream(effectiveModelName, contents,
-      // config);
-      //
-      //         return Flowable.defer(
-      //          () -> {
-      //            final StringBuilder accumulatedText = new StringBuilder();
-      //            // Array to bypass final local variable reassignment in lambda.
-      //            final GenerateContentResponse[] lastRawResponseHolder = {null};
-      //
-      //            return Flowable.fromFuture(streamFuture)
-      //                .flatMapIterable(iterable -> iterable)
-      //                .concatMap(
-      //                    rawResponse -> {
-      //                      lastRawResponseHolder[0] = rawResponse;
-      //                      logger.trace("Raw streaming response: {}", rawResponse);
-      //
-      //                      List<LlmResponse> responsesToEmit = new ArrayList<>();
-      //                      LlmResponse currentProcessedLlmResponse =
-      // LlmResponse.create(rawResponse);
-      //                      String currentTextChunk =
-      // getTextFromLlmResponse(currentProcessedLlmResponse);
-      //
-      //                      if (!currentTextChunk.isEmpty()) {
-      //                        accumulatedText.append(currentTextChunk);
-      //                        LlmResponse partialResponse =
-      //                            currentProcessedLlmResponse.toBuilder().partial(true).build();
-      //                        responsesToEmit.add(partialResponse);
-      //                      } else {
-      //                        if (accumulatedText.length() > 0
-      //                            && shouldEmitAccumulatedText(currentProcessedLlmResponse)) {
-      //                          LlmResponse aggregatedTextResponse =
-      //                              LlmResponse.builder()
-      //                                  .content(
-      //                                      Content.builder()
-      //                                          .parts(
-      //                                              ImmutableList.of(
-      //                                                  Part.builder()
-      //                                                      .text(accumulatedText.toString())
-      //                                                      .build()))
-      //                                          .build())
-      //                                  .build();
-      //                          responsesToEmit.add(aggregatedTextResponse);
-      //                          accumulatedText.setLength(0);
-      //                        }
-      //                        responsesToEmit.add(currentProcessedLlmResponse);
-      //                      }
-      //                      logger.debug("Responses to emit: {}", responsesToEmit);
-      //                      return Flowable.fromIterable(responsesToEmit);
-      //                    })
-      //                .concatWith(
-      //                    Flowable.defer(
-      //                        () -> {
-      //                          if (accumulatedText.length() > 0 && lastRawResponseHolder[0] !=
-      // null) {
-      //                            GenerateContentResponse finalRawResp = lastRawResponseHolder[0];
-      //                            boolean isStop =
-      //                                finalRawResp
-      //                                    .candidates()
-      //                                    .flatMap(
-      //                                        candidates ->
-      //                                            candidates.isEmpty()
-      //                                                ? Optional.empty()
-      //                                                : Optional.of(candidates.get(0)))
-      //                                    .flatMap(Candidate::finishReason)
-      //                                    .map(
-      //                                        finishReason ->
-      //                                            finishReason.equals(
-      //                                                new FinishReason(FinishReason.Known.STOP)))
-      //                                    .orElse(false);
-      //
-      //                            if (isStop) {
-      //                              LlmResponse finalAggregatedTextResponse =
-      //                                  LlmResponse.builder()
-      //                                      .content(
-      //                                          Content.builder()
-      //                                              .parts(
-      //                                                  ImmutableList.of(
-      //                                                      Part.builder()
-      //                                                          .text(accumulatedText.toString())
-      //                                                          .build()))
-      //                                              .build())
-      //                                      .build();
-      //                              return Flowable.just(finalAggregatedTextResponse);
-      //                            }
-      //                          }
-      //                          return Flowable.empty();
-      //                        }));
-      //          });
+    JSONObject agentresponse =
+        callLLMChat(
+            modelId,
+            messages,
+            LAST_RESP_TOOl_EXECUTED
+                ? null
+                : (functions.length() > 0
+                    ? functions
+                    : null)); // Tools/functions can not be of 0 length
+    JSONObject responseQuantum = agentresponse.getJSONObject("message");
+
+    // Check if tool call is required
+    // Tools call
+    LlmResponse.Builder responseBuilder = LlmResponse.builder();
+    List<Part> parts = new ArrayList<>();
+    Part part = ollamaContentBlockToPart(responseQuantum);
+    parts.add(part);
+
+    // Call tool
+    if (responseQuantum.has("tool_calls")
+        && "stop".contentEquals(agentresponse.getString("done_reason"))) {
+
+      responseBuilder.content(
+          Content.builder()
+              .role("model")
+              .parts(
+                  ImmutableList.of(Part.builder().functionCall(part.functionCall().get()).build()))
+              .build());
+
+      //  responseBuilder.partial(false).turnComplete(false);
+
     } else {
-      JSONObject agentresponse =
-          callLLMChat(
-              modelId,
-              messages,
-              LAST_RESP_TOOl_EXECUTED
-                  ? null
-                  : (functions.length() > 0
-                      ? functions
-                      : null)); // Tools/functions can not be of 0 length
-      JSONObject responseQuantum = agentresponse.getJSONObject("message");
+      responseBuilder.content(
+          Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
+    }
 
-      // Check if tool call is required
-      // Tools call
-      LlmResponse.Builder responseBuilder = LlmResponse.builder();
-      List<Part> parts = new ArrayList<>();
-      Part part = ollamaContentBlockToPart(responseQuantum);
-      parts.add(part);
+    return Flowable.just(responseBuilder.build());
+  }
 
-      // Call tool
-      if (responseQuantum.has("tool_calls")
-          && "stop".contentEquals(agentresponse.getString("done_reason"))) {
+  public Flowable<LlmResponse> generateContentStream(LlmRequest llmRequest) {
+    List<Content> contents = llmRequest.contents();
+    // Last content must be from the user, otherwise the model won't respond.
+    if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
+      Content userContent = Content.fromParts(Part.fromText(CONTINUE_OUTPUT_MESSAGE));
+      contents =
+          Stream.concat(contents.stream(), Stream.of(userContent)).collect(toImmutableList());
+    }
 
-        responseBuilder.content(
-            Content.builder()
-                .role("model")
-                .parts(
-                    ImmutableList.of(
-                        Part.builder().functionCall(part.functionCall().get()).build()))
-                .build());
+    String systemText = "";
+    Optional<GenerateContentConfig> configOpt = llmRequest.config();
+    if (configOpt.isPresent()) {
+      Optional<Content> systemInstructionOpt = configOpt.get().systemInstruction();
+      if (systemInstructionOpt.isPresent()) {
+        String extractedSystemText =
+            systemInstructionOpt.get().parts().orElse(ImmutableList.of()).stream()
+                .filter(p -> p.text().isPresent())
+                .map(p -> p.text().get())
+                .collect(Collectors.joining("\n"));
+        if (!extractedSystemText.isEmpty()) {
+          systemText = extractedSystemText;
+        }
+      }
+    }
 
-        //  responseBuilder.partial(false).turnComplete(false);
+    // Messages
+    JSONArray messages = new JSONArray();
 
-      } else {
-        responseBuilder.content(
-            Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
+    JSONObject llmMessageJson1 = new JSONObject();
+    llmMessageJson1.put("role", "system");
+    llmMessageJson1.put("content", systemText);
+    messages.put(llmMessageJson1); // Agent system prompt is always added
+
+    final List<Content> finalContents = contents;
+    finalContents.stream()
+        .forEach(
+            item -> {
+              JSONObject messageQuantum = new JSONObject();
+              messageQuantum.put(
+                  "role",
+                  item.role().get().equals("model") || item.role().get().equals("assistant")
+                      ? "assistant"
+                      : "user");
+
+              if (item.parts().get().get(0).functionResponse().isPresent()) {
+                messageQuantum.put(
+                    "content",
+                    new JSONObject(
+                            item.parts().get().get(0).functionResponse().get().response().get())
+                        .toString(1));
+              } else {
+                messageQuantum.put("content", item.text());
+              }
+              messages.put(messageQuantum);
+            });
+
+    // Tools
+    JSONArray functions = new JSONArray();
+    llmRequest
+        .tools()
+        .entrySet()
+        .forEach(
+            tooldetail -> {
+              BaseTool baseTool = tooldetail.getValue();
+              Optional<FunctionDeclaration> declarationOptional = baseTool.declaration();
+              if (!declarationOptional.isPresent()) {
+                System.err.println(
+                    "Skipping tool '" + baseTool.name() + "' with missing declaration.");
+                return;
+              }
+              FunctionDeclaration functionDeclaration = declarationOptional.get();
+              Map<String, Object> toolMap = new HashMap<>();
+              toolMap.put("name", cleanForIdentifierPattern(functionDeclaration.name().get()));
+              toolMap.put(
+                  "description",
+                  cleanForIdentifierPattern(functionDeclaration.description().orElse("")));
+              Optional<Schema> parametersOptional = functionDeclaration.parameters();
+              if (parametersOptional.isPresent()) {
+                Schema parametersSchema = parametersOptional.get();
+                Map<String, Object> parametersMap = new HashMap<>();
+                parametersMap.put("type", "object");
+                Optional<Map<String, Schema>> propertiesOptional = parametersSchema.properties();
+                if (propertiesOptional.isPresent()) {
+                  Map<String, Object> propertiesMap = new HashMap<>();
+                  ObjectMapper objectMapper = new ObjectMapper();
+                  objectMapper.registerModule(new Jdk8Module());
+                  propertiesOptional
+                      .get()
+                      .forEach(
+                          (key, schema) -> {
+                            Map<String, Object> schemaMap =
+                                objectMapper.convertValue(
+                                    schema, new TypeReference<Map<String, Object>>() {});
+                            updateTypeString(schemaMap);
+                            propertiesMap.put(key, schemaMap);
+                          });
+                  parametersMap.put("properties", propertiesMap);
+                }
+                parametersSchema
+                    .required()
+                    .ifPresent(requiredList -> parametersMap.put("required", requiredList));
+                toolMap.put("parameters", parametersMap);
+              }
+              JSONObject jsonTool = new JSONObject(toolMap);
+              functions.put(jsonTool);
+            });
+
+    String modelId = this.model();
+
+    boolean LAST_RESP_TOOl_EXECUTED =
+        Iterables.getLast(Iterables.getLast(finalContents).parts().get())
+            .functionResponse()
+            .isPresent();
+
+    final StringBuilder functionCallName = new StringBuilder();
+    final StringBuilder functionCallArgs = new StringBuilder();
+    final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
+
+    return Flowable.generate(
+        () ->
+            callLLMChatStream(
+                modelId,
+                messages,
+                LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null)),
+        (reader, emitter) -> {
+          try {
+            if (reader == null) {
+              emitter.onComplete();
+              return;
+            }
+            String line = reader.readLine();
+            if (line == null) {
+              emitter.onComplete();
+              return;
+            }
+            if (line.isEmpty()) {
+              return;
+            }
+
+            JSONObject responseJson = new JSONObject(line);
+            JSONObject message = responseJson.optJSONObject("message");
+
+            List<Part> parts = new ArrayList<>();
+
+            if (message != null) {
+              if (message.has("content") && message.get("content") instanceof String) {
+                String text = message.getString("content");
+                if (!text.isEmpty()) {
+                  Part part = Part.fromText(text);
+                  parts.add(part);
+                  LlmResponse llmResponse =
+                      LlmResponse.builder()
+                          .content(
+                              Content.builder()
+                                  .role("model")
+                                  .parts(ImmutableList.copyOf(parts))
+                                  .build())
+                          .partial(true)
+                          .build();
+                  emitter.onNext(llmResponse);
+                }
+              }
+
+              if (message.has("tool_calls")) {
+                inFunctionCall.set(true);
+                JSONArray toolCalls = message.getJSONArray("tool_calls");
+                if (toolCalls.length() > 0) {
+                  JSONObject toolCall = toolCalls.getJSONObject(0);
+                  JSONObject function = toolCall.getJSONObject("function");
+                  if (function.has("name")) {
+                    functionCallName.append(function.getString("name"));
+                  }
+                  if (function.has("arguments")) {
+                    functionCallArgs.append(function.getString("arguments"));
+                  }
+                }
+              }
+            }
+
+            if (responseJson.optBoolean("done", false)) {
+              if (inFunctionCall.get()) {
+                Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
+                FunctionCall fc =
+                    FunctionCall.builder().name(functionCallName.toString()).args(args).build();
+                Part part = Part.builder().functionCall(fc).build();
+                parts.add(part);
+                LlmResponse llmResponse =
+                    LlmResponse.builder()
+                        .content(
+                            Content.builder()
+                                .role("model")
+                                .parts(ImmutableList.copyOf(parts))
+                                .build())
+                        .build();
+                emitter.onNext(llmResponse);
+              }
+              emitter.onComplete();
+            }
+          } catch (Exception e) {
+            emitter.onError(e);
+          }
+        },
+        reader -> {
+          try {
+            if (reader != null) {
+              reader.close();
+            }
+          } catch (IOException e) {
+            logger.error("Error closing stream reader", e);
+          }
+        });
+  }
+
+  public BufferedReader callLLMChatStream(String model, JSONArray messages, JSONArray tools) {
+    try {
+      String apiUrl = D_URL != null ? D_URL : System.getenv(OLLAMA_EP);
+      apiUrl = apiUrl + "/api/chat";
+
+      JSONObject payload = new JSONObject();
+      payload.put("model", model);
+      payload.put("stream", true);
+
+      JSONObject options = new JSONObject();
+      options.put("num_ctx", 4096);
+      payload.put("options", options);
+
+      payload.put("messages", messages);
+
+      if (tools != null) {
+        payload.put("tools", tools);
       }
 
-      return Flowable.just(responseBuilder.build());
+      String jsonString = payload.toString();
+
+      URL url = new URL(apiUrl);
+      HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+      connection.setRequestMethod("POST");
+      connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+      connection.setDoOutput(true);
+      connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
+
+      try (OutputStream outputStream = connection.getOutputStream();
+          OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
+        writer.write(jsonString);
+        writer.flush();
+      }
+
+      int responseCode = connection.getResponseCode();
+      System.out.println("Response Code: " + responseCode);
+
+      if (responseCode >= 200 && responseCode < 300) {
+        return new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
+      } else {
+        try (InputStream errorStream = connection.getErrorStream();
+            BufferedReader errorReader =
+                new BufferedReader(new InputStreamReader(errorStream, "UTF-8"))) {
+          StringBuilder errorResponse = new StringBuilder();
+          String errorLine;
+          while ((errorLine = errorReader.readLine()) != null) {
+            errorResponse.append(errorLine);
+          }
+          System.err.println("Error Response Body: " + errorResponse.toString());
+        } catch (IOException errorEx) {
+          logger.error("Error reading error stream", errorEx);
+        }
+        connection.disconnect();
+        return null;
+      }
+    } catch (IOException ex) {
+      logger.error("Error in callLLMChatStream", ex);
+      return null;
     }
-    return null; // Remove for prod
   }
 
   @Override
@@ -723,63 +907,62 @@ public class OllamaBaseLM extends BaseLlm {
     return responseJ;
   }
 
-  //    ResponseStream<GenerateContentResponse> privateGenerateContentStream(
-  //      String model, List<Content> contents, GenerateContentConfig config) {
-  //
-  //    GenerateContentParameters.Builder parameterBuilder = GenerateContentParameters.builder();
-  //
-  //    if (!Common.isZero(model)) {
-  //      parameterBuilder.model(model);
-  //    }
-  //    if (!Common.isZero(contents)) {
-  //      parameterBuilder.contents(contents);
-  //    }
-  //    if (!Common.isZero(config)) {
-  //      parameterBuilder.config(config);
-  //    }
-  //    JsonNode parameterNode = JsonSerializable.toJsonNode(parameterBuilder.build());
-  //
-  //    ObjectNode body;
-  //    String path;
-  //    if (this.apiClient.vertexAI()) {
-  //      body = generateContentParametersToVertex(this.apiClient, parameterNode, null);
-  //      path = Common.formatMap("{model}:streamGenerateContent?alt=sse", body.get("_url"));
-  //    } else {
-  //      body = generateContentParametersToMldev(this.apiClient, parameterNode, null);
-  //      if (body.get("_url") != null) {
-  //        path = Common.formatMap("{model}:streamGenerateContent?alt=sse", body.get("_url"));
-  //      } else {
-  //        path = "{model}:streamGenerateContent?alt=sse";
-  //      }
-  //    }
-  //    body.remove("_url");
-  //
-  //    JsonNode queryParams = body.get("_query");
-  //    if (queryParams != null) {
-  //      body.remove("_query");
-  //      path = String.format("%s?%s", path, Common.urlEncode((ObjectNode) queryParams));
-  //    }
-  //
-  //    // TODO: Remove the hack that removes config.
-  //    body.remove("config");
-  //
-  //    Optional<HttpOptions> requestHttpOptions = Optional.empty();
-  //    if (config != null) {
-  //      requestHttpOptions = config.httpOptions();
-  //    }
-  //
-  //    ApiResponse response =
-  //        this.apiClient.request(
-  //            "post", path, JsonSerializable.toJsonString(body), requestHttpOptions);
-  //    String converterName;
-  //
-  //    if (this.apiClient.vertexAI()) {
-  //      converterName = "generateContentResponseFromVertex";
-  //    } else {
-  //      converterName = "generateContentResponseFromMldev";
-  //    }
-  //    return new ResponseStream<GenerateContentResponse>( GenerateContentResponse.class, response,
-  // this, converterName);
-  //  }
+  public static void main(String[] args) {
+    // --- Create the 'messages' part of the JSON using org.json ---
+    String messagesJsonString =
+        """
+    [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant."
+        },
+        {
+            "role": "user",
+            "content": "Why is the sky blue?"
+        }
+    ]
+    """;
 
+    JSONArray messagesArray;
+    try {
+      messagesArray = new JSONArray(messagesJsonString);
+    } catch (Exception e) {
+      System.err.println("Failed to parse JSON string into JSONArray: " + e.getMessage());
+      return;
+    }
+
+    String modelId = "llama3.1:8b"; // Example model ID
+
+    try {
+      System.out.println("Attempting to call Ollama API...");
+      System.out.println("Using model ID: " + modelId);
+      System.out.println("Fetching Ollama endpoint from environment variable: " + OLLAMA_EP);
+
+      OllamaBaseLM ollamaLlm = new OllamaBaseLM(modelId);
+      // Using null for tools to test simple streaming
+      BufferedReader responseReader = ollamaLlm.callLLMChatStream(modelId, messagesArray, null);
+
+      if (responseReader != null) {
+        System.out.println("\nAPI Call Successful! Streaming response:");
+        responseReader
+            .lines()
+            .forEach(
+                line -> {
+                  System.out.println(line);
+                  // You can add more sophisticated JSON parsing here if needed
+                });
+      } else {
+        System.err.println("API Call failed. Check logs for details.");
+      }
+
+    } catch (RuntimeException e) {
+      System.err.println("Error during API call (Runtime): " + e.getMessage());
+      System.err.println(
+          "Please ensure the environment variable '" + OLLAMA_EP + "' is set correctly.");
+      e.printStackTrace();
+    } catch (Exception e) {
+      System.err.println("An unexpected error occurred during API call: " + e.getMessage());
+      e.printStackTrace();
+    }
+  }
 }
