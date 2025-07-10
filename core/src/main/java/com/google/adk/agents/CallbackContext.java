@@ -18,7 +18,6 @@ package com.google.adk.agents;
 
 import com.google.adk.events.EventActions;
 import com.google.adk.sessions.State;
-import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Maybe;
 import java.util.Optional;
@@ -45,11 +44,6 @@ public class CallbackContext extends ReadonlyContext {
   @Override
   public State state() {
     return state;
-  }
-
-  /** Returns the user content that initiated this invocation. */
-  public Optional<Content> userContent() {
-    return invocationContext.userContent();
   }
 
   /** Returns the EventActions associated with this context. */

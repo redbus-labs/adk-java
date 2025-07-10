@@ -17,6 +17,7 @@
 package com.google.adk.agents;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.genai.types.Content;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,6 +28,11 @@ public class ReadonlyContext {
 
   public ReadonlyContext(InvocationContext invocationContext) {
     this.invocationContext = invocationContext;
+  }
+
+  /** Returns the user content that initiated this invocation. */
+  public Optional<Content> userContent() {
+    return invocationContext.userContent();
   }
 
   /** Returns the ID of the current invocation. */

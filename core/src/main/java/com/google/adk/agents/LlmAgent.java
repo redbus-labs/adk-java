@@ -16,6 +16,7 @@
 
 package com.google.adk.agents;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.stream.Collectors.joining;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -47,6 +48,7 @@ import com.google.adk.flows.llmflows.SingleFlow;
 import com.google.adk.models.BaseLlm;
 import com.google.adk.models.Model;
 import com.google.adk.tools.BaseTool;
+import com.google.adk.tools.BaseToolset;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -56,6 +58,7 @@ import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -81,7 +84,7 @@ public class LlmAgent extends BaseAgent {
   private final Optional<Model> model;
   private final Instruction instruction;
   private final Instruction globalInstruction;
-  private final List<BaseTool> tools;
+  private final List<Object> toolsUnion;
   private final Optional<GenerateContentConfig> generateContentConfig;
   private final Optional<BaseExampleProvider> exampleProvider;
   private final IncludeContents includeContents;
@@ -130,7 +133,7 @@ public class LlmAgent extends BaseAgent {
     this.outputSchema = Optional.ofNullable(builder.outputSchema);
     this.executor = Optional.ofNullable(builder.executor);
     this.outputKey = Optional.ofNullable(builder.outputKey);
-    this.tools = builder.tools != null ? builder.tools : ImmutableList.of();
+    this.toolsUnion = builder.toolsUnion != null ? builder.toolsUnion : ImmutableList.of();
 
     this.llmFlow = determineLlmFlow();
 
@@ -153,7 +156,7 @@ public class LlmAgent extends BaseAgent {
     private Instruction instruction;
     private Instruction globalInstruction;
     private ImmutableList<BaseAgent> subAgents;
-    private ImmutableList<BaseTool> tools;
+    private ImmutableList<Object> toolsUnion;
     private GenerateContentConfig generateContentConfig;
     private BaseExampleProvider exampleProvider;
     private IncludeContents includeContents;
@@ -234,14 +237,14 @@ public class LlmAgent extends BaseAgent {
     }
 
     @CanIgnoreReturnValue
-    public Builder tools(List<? extends BaseTool> tools) {
-      this.tools = ImmutableList.copyOf(tools);
+    public Builder tools(List<?> tools) {
+      this.toolsUnion = ImmutableList.copyOf(tools);
       return this;
     }
 
     @CanIgnoreReturnValue
-    public Builder tools(BaseTool... tools) {
-      this.tools = ImmutableList.copyOf(tools);
+    public Builder tools(Object... tools) {
+      this.toolsUnion = ImmutableList.copyOf(tools);
       return this;
     }
 
@@ -580,7 +583,7 @@ public class LlmAgent extends BaseAgent {
                   + ": if outputSchema is set, subAgents must be empty to disable agent"
                   + " transfer.");
         }
-        if (this.tools != null && !this.tools.isEmpty()) {
+        if (this.toolsUnion != null && !this.toolsUnion.isEmpty()) {
           throw new IllegalArgumentException(
               "Invalid config for agent "
                   + this.name
@@ -687,6 +690,42 @@ public class LlmAgent extends BaseAgent {
     throw new IllegalStateException("Unknown Instruction subtype: " + instruction.getClass());
   }
 
+  /**
+   * Constructs the list of tools for this agent based on the {@link #tools} field.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   *
+   * @param context The context to retrieve the session state.
+   * @return The resolved list of tools as a {@link Single} wrapped list of {@link BaseTool}.
+   */
+  public Single<List<BaseTool>> canonicalTools(Optional<ReadonlyContext> context) {
+    List<Single<List<BaseTool>>> toolSingles = new ArrayList<>();
+    for (Object toolOrToolset : toolsUnion) {
+      if (toolOrToolset instanceof BaseTool baseTool) {
+        toolSingles.add(Single.just(ImmutableList.of(baseTool)));
+      } else if (toolOrToolset instanceof BaseToolset baseToolset) {
+        toolSingles.add(baseToolset.getTools(context.orElse(null)));
+      } else {
+        throw new IllegalArgumentException(
+            "Object in tools list is not of a supported type: "
+                + toolOrToolset.getClass().getName());
+      }
+    }
+    return Single.concat(toolSingles)
+        .toList()
+        .map(listOfLists -> listOfLists.stream().flatMap(List::stream).collect(toImmutableList()));
+  }
+
+  /** Overload of canonicalTools that defaults to an empty context. */
+  public Single<List<BaseTool>> canonicalTools() {
+    return canonicalTools(Optional.empty());
+  }
+
+  /** Convenience overload of canonicalTools that accepts a non-optional ReadonlyContext. */
+  public Single<List<BaseTool>> canonicalTools(ReadonlyContext context) {
+    return canonicalTools(Optional.ofNullable(context));
+  }
+
   public Instruction instruction() {
     return instruction;
   }
@@ -719,8 +758,8 @@ public class LlmAgent extends BaseAgent {
     return includeContents;
   }
 
-  public List<BaseTool> tools() {
-    return tools;
+  public List<Object> tools() {
+    return toolsUnion;
   }
 
   public boolean disallowTransferToParent() {
