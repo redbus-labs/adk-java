@@ -24,6 +24,7 @@ import com.google.adk.agents.Callbacks.BeforeModelCallback;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequest;
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.agents.ReadonlyContext;
 import com.google.adk.agents.RunConfig.StreamingMode;
 import com.google.adk.events.Event;
 import com.google.adk.exceptions.LlmCallsLimitExceededException;
@@ -112,20 +113,22 @@ public abstract class BaseLlmFlow implements BaseFlow {
         processedRequest -> {
           LlmRequest.Builder updatedRequestBuilder = processedRequest.toBuilder();
 
-          Completable toolProcessingCompletable =
-              Flowable.fromIterable(agent.tools())
-                  .concatMapCompletable(
-                      tool ->
-                          tool.processLlmRequest(
-                              updatedRequestBuilder, ToolContext.builder(context).build()));
-
-          return toolProcessingCompletable.andThen(
-              Single.fromCallable(
-                  () -> {
-                    Iterable<Event> combinedEvents = Iterables.concat(eventIterables);
-                    return RequestProcessingResult.create(
-                        updatedRequestBuilder.build(), combinedEvents);
-                  }));
+          return agent
+              .canonicalTools(new ReadonlyContext(context))
+              .flatMapCompletable(
+                  tools ->
+                      Flowable.fromIterable(tools)
+                          .concatMapCompletable(
+                              tool ->
+                                  tool.processLlmRequest(
+                                      updatedRequestBuilder, ToolContext.builder(context).build())))
+              .andThen(
+                  Single.fromCallable(
+                      () -> {
+                        Iterable<Event> combinedEvents = Iterables.concat(eventIterables);
+                        return RequestProcessingResult.create(
+                            updatedRequestBuilder.build(), combinedEvents);
+                      }));
         });
   }
 
