@@ -1,6 +1,5 @@
 package com.redbus.adk.examples.hybridadkagentsystem;
 
- 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.models.OllamaBaseLM; // Assuming this is your Ollama model for Java ADK
