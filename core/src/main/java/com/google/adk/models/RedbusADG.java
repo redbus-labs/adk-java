@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -389,108 +390,252 @@ public class RedbusADG extends BaseLlm {
               JSONObject jsonTool = new JSONObject(toolMap);
               functions.put(jsonTool);
             });
+    logger.info("Functions for LLM: {}", functions.toString(1));
     String modelId = this.model();
     boolean isLastResponseToolExecuted =
         Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
-
-    final StringBuilder functionCallName = new StringBuilder();
-    final StringBuilder functionCallArgs = new StringBuilder();
-    final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
-
-    return Flowable.create(
-        emitter -> {
-          BufferedReader reader =
-              callLLMChatStream(
-                  modelId,
-                  messages,
-                  isLastResponseToolExecuted ? null : (functions.length() > 0 ? functions : null),
-                  true);
-          if (reader == null) {
-            emitter.onError(new IOException("Failed to get response from LLM gateway."));
-            return;
-          }
-          try (reader) {
-            String line;
-            boolean emitted = false;
-            while ((line = reader.readLine()) != null) {
-              line = line.trim();
-              if (line.isEmpty() || line.equals("data: [DONE]")) {
-                if (line.equals("data: [DONE]")) break;
-                continue;
-              }
-              if (!line.startsWith("data: ")) {
-                logger.warn("Skipping non-data line in stream: {}", line);
-                continue;
-              }
-              String jsonPart = line.substring(6).trim();
-              if (jsonPart.isEmpty()) continue;
-              JSONObject chunk;
+    BufferedReader reader =
+        callLLMChatStream(
+            modelId,
+            messages,
+            isLastResponseToolExecuted ? null : (functions.length() > 0 ? functions : null),
+            true);
+    Flowable<LlmResponse> flowable =
+        Flowable.create(
+            emitter -> {
+              // Buffer for accumulating function call arguments per choice index
+              final Map<Integer, String> functionCallNameBuffer = new HashMap<>();
+              final Map<Integer, StringBuilder> functionCallArgsBuffer = new HashMap<>();
+              final AtomicBoolean functionCallDetected = new AtomicBoolean(false);
+              final StringBuilder accumulatedText = new StringBuilder();
               try {
-                chunk = new JSONObject(jsonPart);
-              } catch (Exception ex) {
-                logger.error("Failed to parse JSON chunk: {}", jsonPart, ex);
-                continue;
-              }
-              if (!chunk.has("choices") || chunk.getJSONArray("choices").isEmpty()) {
-                continue;
-              }
-              JSONObject choice = chunk.getJSONArray("choices").getJSONObject(0);
-              JSONObject delta = choice.optJSONObject("delta");
-              if (delta == null) continue;
+                String line;
+                outer:
+                while (reader != null && (line = reader.readLine()) != null) {
+                   line = line.trim();
 
-              if (delta.has("function_call")) {
-                inFunctionCall.set(true);
-                JSONObject functionCall = delta.getJSONObject("function_call");
-                if (functionCall.has("name")) {
-                  functionCallName.append(functionCall.getString("name"));
+                  if (line.startsWith("data:")) {
+                    line = line.substring(5).trim();
+                  }
+
+                  if (line.equals("[DONE]")) {
+                    logger.info("[DONE] marker found, completing stream");
+                    if (accumulatedText.length() > 0 && !functionCallDetected.get()) {
+                      // Emit any remaining accumulated text as a final, complete response
+                      LlmResponse finalAggregatedTextResponse =
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(
+                                          ImmutableList.of(
+                                              Part.builder()
+                                                  .text(accumulatedText.toString())
+                                                  .build()))
+                                      .build())
+                              .partial(false) // This is a final content part
+                              .build();
+                            finalAggregatedTextResponse);
+                      emitter.onNext(finalAggregatedTextResponse);
+                      accumulatedText.setLength(0); // Clear buffer
+                    }
+                    break outer;
+                  }
+                  if (line.isEmpty()) {
+                    logger.info("Skipping empty line");
+                    continue;
+                  }
+                  JSONObject chunk = null;
+                  try {
+                    if (!line.trim().isEmpty()) {
+                      chunk = new JSONObject(line);
+                      logger.info("Parsed JSON chunk: {}", chunk.toString(1));
+                    } else {
+                      logger.info("Skipping empty or null line after trim");
+                    }
+                  } catch (JSONException e) {
+                    logger.warn("Failed to parse JSON line: [{}]", line);
+                    logger.warn("Error: {}", e.getMessage());
+                    continue;
+                  } catch (NullPointerException e) {
+                    logger.warn("NullPointerException: 'line' variable is null.");
+                    continue;
+                  }
+                  if (chunk == null) {
+                    logger.info("Chunk is null, skipping");
+                    continue;
+                  }
+                  if (chunk.has("choices")) {
+                    JSONArray choices = chunk.optJSONArray("choices");
+                    logger.info(
+                        "Choices array found, length: {}", choices != null ? choices.length() : 0);
+                    if (choices == null || choices.length() == 0) {
+                      logger.info("Choices array is null or empty, skipping");
+                      continue;
+                    }
+                    for (int i = 0; i < choices.length(); i++) {
+                      JSONObject choice = choices.optJSONObject(i);
+                      if (choice != null) {
+                        boolean done = "stop".equals(choice.optString("finish_reason", ""));
+                        JSONObject delta = choice.optJSONObject("delta");
+                        if (delta != null) {
+                          // Buffer function_call arguments
+                          if (delta.has("function_call")) {
+                            // If there's accumulated text, emit it as a complete response before
+                            // the function call
+                            if (accumulatedText.length() > 0) {
+                              LlmResponse aggregatedTextResponse =
+                                  LlmResponse.builder()
+                                      .content(
+                                          Content.builder()
+                                              .role("model")
+                                              .parts(
+                                                  ImmutableList.of(
+                                                      Part.builder()
+                                                          .text(accumulatedText.toString())
+                                                          .build()))
+                                              .build())
+                                      .partial(
+                                          false) // This is a complete text turn before function
+                                      // call
+                                      .build();
+                                         aggregatedTextResponse);
+                              emitter.onNext(aggregatedTextResponse);
+                              accumulatedText.setLength(0); // Clear buffer after emitting
+                            }
+                            JSONObject functionCallJson = delta.getJSONObject("function_call");
+                            String functionName = functionCallJson.optString("name", null);
+                            String argumentsFragment =
+                                functionCallJson.optString("arguments", null);
+                            if (functionName != null) {
+                              functionCallNameBuffer.put(i, functionName);
+                            }
+                            if (argumentsFragment != null) {
+                              functionCallArgsBuffer
+                                  .computeIfAbsent(i, k -> new StringBuilder())
+                                  .append(argumentsFragment);
+                            }
+                          } else if (choice.has(
+                              "function_call")) { // Check function_call directly in choice if delta
+                                                  // is null
+                            JSONObject functionCallJson = choice.getJSONObject("function_call");
+                            String functionName = functionCallJson.optString("name", null);
+                            String argumentsFragment =
+                                functionCallJson.optString("arguments", null);
+                            if (functionName != null) {
+                              functionCallNameBuffer.put(i, functionName);
+                            }
+                            if (argumentsFragment != null) {
+                              functionCallArgsBuffer
+                                  .computeIfAbsent(i, k -> new StringBuilder())
+                                  .append(argumentsFragment);
+                            }
+                            functionCallDetected.set(true); // Set flag if function call is found
+                          }
+                          // If finish_reason is function_call, emit the function call event
+                          if (choice.has("finish_reason")
+                              && "function_call".equals(choice.optString("finish_reason"))) {
+                            String functionName = functionCallNameBuffer.get(i);
+                            StringBuilder argsBuilder = functionCallArgsBuffer.get(i);
+                            Map<String, Object> functionArgs = new HashMap<>();
+                            if (argsBuilder != null) {
+                              String argsString = argsBuilder.toString();
+                              try {
+                                if (!argsString.isEmpty()) {
+                                  JSONObject argsJson = new JSONObject(argsString);
+                                  for (String key : argsJson.keySet()) {
+                                    functionArgs.put(key, argsJson.get(key));
+                                  }
+                                }
+                              } catch (JSONException e) {
+                                logger.warn(
+                                    "Failed to parse accumulated function_call arguments as JSON: {}",
+                                    argsString,
+                                    e);
+                              }
+                            }
+                            if (functionName != null) {
+                              FunctionCall functionCall =
+                                  FunctionCall.builder()
+                                      .name(functionName)
+                                      .args(functionArgs)
+                                      .build();
+                              LlmResponse functionCallResponse =
+                                  LlmResponse.builder()
+                                      .content(
+                                          Content.builder()
+                                              .role("model")
+                                              .parts(
+                                                  ImmutableList.of(
+                                                      Part.builder()
+                                                          .functionCall(functionCall)
+                                                          .build()))
+                                              .build())
+                                      .partial(false) // Function call is a complete turn
+                                      .build();
+                              logger.info(
+                                  "Emitting FunctionCall LlmResponse: {}", functionCallResponse);
+                              emitter.onNext(functionCallResponse);
+                            }
+                            // Clear buffers for this index
+                            functionCallArgsBuffer.remove(i);
+                            functionCallNameBuffer.remove(i);
+                            functionCallDetected.set(true); // Set flag if function call is found
+                          }
+
+                          // Handle text content as a separate event
+                          String text = delta.optString("content", "");
+                          if (text != null && !text.isEmpty()) {
+                            accumulatedText.append(text);
+                            LlmResponse textResponse =
+                                LlmResponse.builder()
+                                    .content(
+                                        Content.builder()
+                                            .role("model")
+                                            .parts(ImmutableList.of(Part.fromText(text)))
+                                            .build())
+                                    .partial(true) // Text chunks are usually partial
+                                    .build();
+                            emitter.onNext(textResponse);
+                          }
+                        } else if (choice.has(
+                            "content")) { // This handles non-delta content, likely for final
+                          // response
+                          String text = choice.optString("content", "");
+                          if (text != null && !text.isEmpty()) {
+                            LlmResponse finalResponse =
+                                LlmResponse.builder()
+                                    .content(
+                                        Content.builder()
+                                            .role("model")
+                                            .parts(ImmutableList.of(Part.fromText(text)))
+                                            .build())
+                                    .partial(false) // This is a final content part
+                                    .build();
+                            emitter.onNext(finalResponse);
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
-                if (functionCall.has("arguments")) {
-                  functionCallArgs.append(functionCall.getString("arguments"));
-                }
-              } else if (delta.has("content")) {
-                String text = delta.optString("content", null);
-                if (text != null && !text.isEmpty()) {
-                  Part part = Part.builder().text(text).build();
-                  LlmResponse response =
-                      LlmResponse.builder()
-                          .content(
-                              Content.builder().role("model").parts(ImmutableList.of(part)).build())
-                          .partial(true)
-                          .build();
-                  emitter.onNext(response);
-                  emitted = true;
+                emitter.onComplete();
+              } catch (IOException e) {
+                logger.error("IOException in stream: {}", e.getMessage());
+                emitter.onError(e);
+              } finally {
+                try {
+                  if (reader != null) {
+                    logger.info("Closing BufferedReader");
+                    reader.close();
+                  }
+                } catch (IOException e) {
+                  logger.error("Error closing stream reader", e);
                 }
               }
-
-              if (choice.optString("finish_reason", null) != null) {
-                break;
-              }
-            }
-
-            if (inFunctionCall.get()) {
-              Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
-              FunctionCall fc =
-                  FunctionCall.builder().name(functionCallName.toString()).args(args).build();
-              Part part = Part.builder().functionCall(fc).build();
-              LlmResponse response =
-                  LlmResponse.builder()
-                      .content(
-                          Content.builder().role("model").parts(ImmutableList.of(part)).build())
-                      .build();
-              emitter.onNext(response);
-              emitted = true;
-            }
-
-            if (!emitted) {
-              emitter.onNext(
-                  LlmResponse.builder().content(Content.fromParts(Part.fromText(""))).build());
-            }
-            emitter.onComplete();
-          } catch (Exception e) {
-            emitter.onError(e);
-          }
-        },
-        io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+            },
+            io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+    return flowable;
   }
 
   /**
@@ -514,14 +659,29 @@ public class RedbusADG extends BaseLlm {
     if (message.has("function_call")) {
       JSONObject function = message.getJSONObject("function_call");
 
-      if (function.has("name") && function.has("arguments")) {
+      if (function.has("name")) {
         String name = function.optString("name", null);
-        // Arguments are usually a stringified JSON in OpenAI's non-streaming response.
-        String argsString = function.getString("arguments");
-        JSONObject argsJson = new JSONObject(argsString);
+        Map<String, Object> args = new HashMap<>();
 
-        if (name != null && argsJson != null) {
-          Map<String, Object> args = argsJson.toMap();
+        // Try to get arguments as a JSONObject directly
+        JSONObject argsJson = function.optJSONObject("arguments");
+        if (argsJson != null) {
+          args = argsJson.toMap();
+        } else if (function.has("arguments")) {
+          // If not a direct JSONObject, try to parse as a stringified JSON
+          String argsString = function.optString("arguments", null);
+          if (argsString != null && !argsString.isEmpty()) {
+            try {
+              argsJson = new JSONObject(argsString);
+              args = argsJson.toMap();
+            } catch (JSONException e) {
+              logger.warn("Failed to parse function arguments as JSON string: {}", argsString, e);
+              // Continue with empty args if parsing fails
+            }
+          }
+        }
+
+        if (name != null) {
           FunctionCall functionCall = FunctionCall.builder().name(name).args(args).build();
           return Part.builder().functionCall(functionCall).build();
         }
@@ -575,7 +735,8 @@ public class RedbusADG extends BaseLlm {
     JSONObject request = new JSONObject();
     request.put("messages", messages);
     if (tools != null) {
-      request.put("functions", tools);
+      request.put(
+          "functions", tools); // Assuming 'functions' is the correct key for RedbusADG's backend
     }
     request.put("temperature", 0.9);
     request.put("stream", stream); // Ensure this matches the payload's stream parameter
@@ -590,26 +751,19 @@ public class RedbusADG extends BaseLlm {
               .header("Content-Type", "application/json; charset=UTF-8")
               .POST(HttpRequest.BodyPublishers.ofString(jsonString, StandardCharsets.UTF_8))
               .build();
-
       HttpResponse<InputStream> response =
           httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-
       int statusCode = response.statusCode();
+      StringBuilder responseBody = new StringBuilder();
       System.out.println("Response Code: " + statusCode);
-
       if (statusCode >= 200 && statusCode < 300) {
+
         return new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8));
       } else {
         // Read error stream for more details if available
-        try (InputStream errorStream = response.body();
-            BufferedReader errorReader =
-                new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8))) {
-          String errorBody = errorReader.lines().collect(Collectors.joining("\n"));
-          System.err.println("Error Response Body: " + errorBody);
-          logger.error("HTTP request failed with status code {}: {}", statusCode, errorBody);
-        } catch (IOException e) {
-          logger.error("Failed to read error stream.", e);
-        }
+        System.err.println("Error Response Body: " + responseBody.toString());
+        logger.error(
+            "HTTP request failed with status code {}: {}", statusCode, responseBody.toString());
         return null;
       }
 
@@ -677,9 +831,6 @@ public class RedbusADG extends BaseLlm {
       int statusCode = response.statusCode();
       String responseBody = response.body();
 
-      System.out.println("Response Code: " + statusCode);
-      System.out.println("Response Body: " + responseBody);
-
       if (statusCode >= 200 && statusCode < 300) {
         return new JSONObject(responseBody);
       } else {
@@ -741,7 +892,6 @@ public class RedbusADG extends BaseLlm {
           LlmRequest.builder()
               .contents(ImmutableList.of(Content.fromParts(Part.fromText("Tell me a joke."))))
               .build();
-      System.out.println("Attempting to call API in streaming mode...");
       llm.generateContent(request, true)
           .blockingSubscribe(
               response -> {
