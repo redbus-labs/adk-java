@@ -26,8 +26,7 @@ import com.google.adk.tools.BaseToolset;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.spec.McpSchema.ListToolsResult;
-import io.reactivex.rxjava3.core.Single;
-import java.util.List;
+import io.reactivex.rxjava3.core.Flowable;
 import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -151,69 +150,74 @@ public class McpToolset implements BaseToolset {
   }
 
   @Override
-  public Single<List<BaseTool>> getTools(ReadonlyContext readonlyContext) {
-    return Single.fromCallable(
-        () -> {
-          for (int i = 0; i < MAX_RETRIES; i++) {
-            try {
-              if (this.mcpSession == null) {
-                logger.info("MCP session is null or closed, initializing (attempt {}).", i + 1);
-                this.mcpSession = this.mcpSessionManager.createSession();
-              }
-
-              ListToolsResult toolsResponse = this.mcpSession.listTools();
-              return toolsResponse.tools().stream()
-                  .map(
-                      tool ->
-                          new McpTool(
-                              tool, this.mcpSession, this.mcpSessionManager, this.objectMapper))
-                  .filter(
-                      tool ->
-                          isToolSelected(tool, toolFilter, Optional.ofNullable(readonlyContext)))
-                  .collect(toImmutableList());
-            } catch (IllegalArgumentException e) {
-              // This could happen if parameters for tool loading are somehow invalid.
-              // This is likely a fatal error and should not be retried.
-              logger.error("Invalid argument encountered during tool loading.", e);
-              throw new McpToolLoadingException(
-                  "Invalid argument encountered during tool loading.", e);
-            } catch (RuntimeException e) { // Catch any other unexpected runtime exceptions
-              logger.error("Unexpected error during tool loading, retry attempt " + (i + 1), e);
-              if (i < MAX_RETRIES - 1) {
-                // For other general exceptions, we might still want to retry if they are
-                // potentially transient, or if we don't have more specific handling. But it's
-                // better to be specific. For now, we'll treat them as potentially retryable but log
-                // them at a higher level.
+  public Flowable<BaseTool> getTools(ReadonlyContext readonlyContext) {
+    return Flowable.fromCallable(
+            () -> {
+              for (int i = 0; i < MAX_RETRIES; i++) {
                 try {
-                  logger.info("Reinitializing MCP session before next retry for unexpected error.");
-                  this.mcpSession = this.mcpSessionManager.createSession();
-                  Thread.sleep(RETRY_DELAY_MILLIS);
-                } catch (InterruptedException ie) {
-                  Thread.currentThread().interrupt();
-                  logger.error(
-                      "Interrupted during retry delay for loadTools (unexpected error).", ie);
+                  if (this.mcpSession == null) {
+                    logger.info("MCP session is null or closed, initializing (attempt {}).", i + 1);
+                    this.mcpSession = this.mcpSessionManager.createSession();
+                  }
+
+                  ListToolsResult toolsResponse = this.mcpSession.listTools();
+                  return toolsResponse.tools().stream()
+                      .map(
+                          tool ->
+                              new McpTool(
+                                  tool, this.mcpSession, this.mcpSessionManager, this.objectMapper))
+                      .filter(
+                          tool ->
+                              isToolSelected(
+                                  tool, toolFilter, Optional.ofNullable(readonlyContext)))
+                      .collect(toImmutableList());
+                } catch (IllegalArgumentException e) {
+                  // This could happen if parameters for tool loading are somehow invalid.
+                  // This is likely a fatal error and should not be retried.
+                  logger.error("Invalid argument encountered during tool loading.", e);
                   throw new McpToolLoadingException(
-                      "Interrupted during retry delay (unexpected error)", ie);
-                } catch (RuntimeException reinitE) {
-                  logger.error(
-                      "Failed to reinitialize session during retry (unexpected error).", reinitE);
-                  throw new McpInitializationException(
-                      "Failed to reinitialize session during tool loading retry (unexpected"
-                          + " error).",
-                      reinitE);
+                      "Invalid argument encountered during tool loading.", e);
+                } catch (RuntimeException e) { // Catch any other unexpected runtime exceptions
+                  logger.error("Unexpected error during tool loading, retry attempt " + (i + 1), e);
+                  if (i < MAX_RETRIES - 1) {
+                    // For other general exceptions, we might still want to retry if they are
+                    // potentially transient, or if we don't have more specific handling. But it's
+                    // better to be specific. For now, we'll treat them as potentially retryable but
+                    // log
+                    // them at a higher level.
+                    try {
+                      logger.info(
+                          "Reinitializing MCP session before next retry for unexpected error.");
+                      this.mcpSession = this.mcpSessionManager.createSession();
+                      Thread.sleep(RETRY_DELAY_MILLIS);
+                    } catch (InterruptedException ie) {
+                      Thread.currentThread().interrupt();
+                      logger.error(
+                          "Interrupted during retry delay for loadTools (unexpected error).", ie);
+                      throw new McpToolLoadingException(
+                          "Interrupted during retry delay (unexpected error)", ie);
+                    } catch (RuntimeException reinitE) {
+                      logger.error(
+                          "Failed to reinitialize session during retry (unexpected error).",
+                          reinitE);
+                      throw new McpInitializationException(
+                          "Failed to reinitialize session during tool loading retry (unexpected"
+                              + " error).",
+                          reinitE);
+                    }
+                  } else {
+                    logger.error(
+                        "Failed to load tools after multiple retries due to unexpected error.", e);
+                    throw new McpToolLoadingException(
+                        "Failed to load tools after multiple retries due to unexpected error.", e);
+                  }
                 }
-              } else {
-                logger.error(
-                    "Failed to load tools after multiple retries due to unexpected error.", e);
-                throw new McpToolLoadingException(
-                    "Failed to load tools after multiple retries due to unexpected error.", e);
               }
-            }
-          }
-          // This line should ideally not be reached if retries are handled correctly or an
-          // exception is always thrown.
-          throw new IllegalStateException("Unexpected state in getTools retry loop");
-        });
+              // This line should ideally not be reached if retries are handled correctly or an
+              // exception is always thrown.
+              throw new IllegalStateException("Unexpected state in getTools retry loop");
+            })
+        .flatMapIterable(tools -> tools);
   }
 
   @Override
