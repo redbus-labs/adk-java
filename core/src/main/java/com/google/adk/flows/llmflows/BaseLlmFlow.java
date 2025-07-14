@@ -115,13 +115,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
           return agent
               .canonicalTools(new ReadonlyContext(context))
-              .flatMapCompletable(
-                  tools ->
-                      Flowable.fromIterable(tools)
-                          .concatMapCompletable(
-                              tool ->
-                                  tool.processLlmRequest(
-                                      updatedRequestBuilder, ToolContext.builder(context).build())))
+              .concatMapCompletable(
+                  tool ->
+                      tool.processLlmRequest(
+                          updatedRequestBuilder, ToolContext.builder(context).build()))
               .andThen(
                   Single.fromCallable(
                       () -> {
