@@ -483,20 +483,24 @@ public class RedbusADG extends BaseLlm {
                             // If there's accumulated text, emit it as a complete response before
                             // the function call
                             if (accumulatedText.length() > 0) {
-
-                              LlmResponse.builder()
-                                  .content(
-                                      Content.builder()
-                                          .role("model")
-                                          .parts(
-                                              ImmutableList.of(
-                                                  Part.builder()
-                                                      .text(accumulatedText.toString())
-                                                      .build()))
-                                          .build())
-                                  .partial(false) // This is a complete text turn before function
-                                  // call
-                                  .build();
+                              LlmResponse aggregatedTextResponse =
+                                  LlmResponse.builder()
+                                      .content(
+                                          Content.builder()
+                                              .role("model")
+                                              .parts(
+                                                  ImmutableList.of(
+                                                      Part.builder()
+                                                          .text(accumulatedText.toString())
+                                                          .build()))
+                                              .build())
+                                      .partial(
+                                          false) // This is a complete text turn before function
+                                      // call
+                                      .build();
+                              logger.info(
+                                  "Emitting aggregated text before FunctionCall: {}",
+                                  aggregatedTextResponse);
                               emitter.onNext(aggregatedTextResponse);
                               accumulatedText.setLength(0); // Clear buffer after emitting
                             }
@@ -609,6 +613,7 @@ public class RedbusADG extends BaseLlm {
                                             .build())
                                     .partial(false) // This is a final content part
                                     .build();
+                            logger.info("Emitting Final Text LlmResponse: {}", finalResponse);
                             emitter.onNext(finalResponse);
                           }
                         }
@@ -742,6 +747,7 @@ public class RedbusADG extends BaseLlm {
     String jsonString = payload.toString();
 
     try {
+
       HttpRequest httpRequest =
           HttpRequest.newBuilder()
               .uri(URI.create(apiUrl))
@@ -756,6 +762,7 @@ public class RedbusADG extends BaseLlm {
       if (statusCode >= 200 && statusCode < 300) {
 
         return new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8));
+
       } else {
         // Read error stream for more details if available
         System.err.println("Error Response Body: " + responseBody.toString());
@@ -827,7 +834,6 @@ public class RedbusADG extends BaseLlm {
 
       int statusCode = response.statusCode();
       String responseBody = response.body();
-
       if (statusCode >= 200 && statusCode < 300) {
         return new JSONObject(responseBody);
       } else {
@@ -850,61 +856,7 @@ public class RedbusADG extends BaseLlm {
 
   @Override // Re-added @Override based on BaseLlm abstract method
   public BaseLlmConnection connect(LlmRequest llmRequest) {
-    return new RedbusLlmConnection(llmRequest);
-  }
-
-  private class RedbusLlmConnection implements BaseLlmConnection {
-    private final LlmRequest initialLlmRequest;
-    private List<Content> history;
-
-    public RedbusLlmConnection(LlmRequest llmRequest) {
-      this.initialLlmRequest = llmRequest;
-      this.history = new ArrayList<>(llmRequest.contents());
-    }
-
-    @Override
-    public Completable sendHistory(List<Content> history) {
-      this.history = new ArrayList<>(history);
-      return Completable.complete();
-    }
-
-    @Override
-    public Completable sendContent(Content content) {
-      this.history.add(content);
-      return Completable.complete();
-    }
-
-    @Override
-    public Completable sendRealtime(Blob blob) {
-      // Realtime audio/video is not supported by the current HTTP-based LLM calls.
-      // This would require a different communication protocol (e.g., WebSockets with binary data).
-      return Completable.error(
-          new UnsupportedOperationException("Realtime content not supported."));
-    }
-
-    @Override
-    public Flowable<LlmResponse> receive() {
-      // Create a new LlmRequest with the accumulated history
-      LlmRequest currentRequest =
-          LlmRequest.builder()
-              .contents(ImmutableList.copyOf(history))
-              .config(initialLlmRequest.config())
-              .tools(initialLlmRequest.tools())
-              .build();
-      // Use the outer class's streaming content generation
-      return generateContentStream(currentRequest);
-    }
-
-    @Override
-    public void close() {
-      // No explicit connection to close for HTTP-based stateless calls
-      logger.info("RedbusLlmConnection closed.");
-    }
-
-    @Override
-    public void close(Throwable throwable) {
-      logger.error("RedbusLlmConnection closed with error: {}", throwable.getMessage(), throwable);
-    }
+    throw new UnsupportedOperationException("Not supported yet.");
   }
 
   private void updateTypeString(Map<String, Object> valueDict) {
@@ -946,7 +898,7 @@ public class RedbusADG extends BaseLlm {
       llm.generateContent(request, true)
           .blockingSubscribe(
               response -> {
-                System.out.println("Received response chunk:");
+                // Print each streaming response chunk
                 response
                     .content()
                     .ifPresent(
