@@ -34,7 +34,7 @@
     <errorprone.version>2.38.0</errorprone.version>
     <google.auth.version>1.33.1</google.auth.version>
     <google.cloud.storage.version>2.28.0</google.cloud.storage.version>
-    <google.genai.version>1.0.0</google.genai.version>
+    <google.genai.version>1.8.0</google.genai.version>
     <protobuf.version>4.31.0-RC1</protobuf.version>
     <junit.version>5.11.4</junit.version>
     <mockito.version>5.17.0</mockito.version>

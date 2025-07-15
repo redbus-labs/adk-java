@@ -193,8 +193,6 @@ public class Gemini extends BaseLlm {
      *
      * @return A new {@link Gemini} instance.
      * @throws NullPointerException if modelName is null.
-     * @throws IllegalStateException if none of apiKey, VertexCredentials, or an explicit apiClient
-     *     is set.
      */
     public Gemini build() {
       Objects.requireNonNull(modelName, "modelName must be set.");
@@ -206,9 +204,11 @@ public class Gemini extends BaseLlm {
       } else if (vertexCredentials != null) {
         return new Gemini(modelName, vertexCredentials);
       } else {
-        throw new IllegalStateException(
-            "Authentication strategy not set: Either apiKey, VertexCredentials, or an explicit"
-                + " apiClient must be provided.");
+        return new Gemini(
+            modelName,
+            Client.builder()
+                .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
+                .build());
       }
     }
   }

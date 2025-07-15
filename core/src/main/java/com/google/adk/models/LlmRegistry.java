@@ -16,7 +16,6 @@
 
 package com.google.adk.models;
 
-import com.google.genai.Client;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -32,22 +31,12 @@ public final class LlmRegistry {
     BaseLlm create(String modelName);
   }
 
-  /** API client for interacting with the Gemini model. */
-  private static final Client geminiApiClient = Client.builder().build();
-
   /** Map of model name patterns regex to factories. */
   private static final Map<String, LlmFactory> llmFactories = new ConcurrentHashMap<>();
 
-  /** Returns the singleton instance of the Gemini API client. */
-  private static Client getGeminiApiClient() {
-    return geminiApiClient;
-  }
-
   /** Registers default LLM factories, e.g. for Gemini models. */
   static {
-    registerLlm(
-        "gemini-.*",
-        modelName -> Gemini.builder().modelName(modelName).apiClient(getGeminiApiClient()).build());
+    registerLlm("gemini-.*", modelName -> Gemini.builder().modelName(modelName).build());
   }
 
   /**
