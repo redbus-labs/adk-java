@@ -16,10 +16,10 @@
 | **Interoperability (Tools/Functions)** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Interoperability (Agents as Tool/Function)** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Agent Workflow** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Parallel Agents** | ✅ | ✅ | ✅ | ✅ | ✅ (Through custom orchestration) |
+| **Parallel Agents** | ✅ | ✅ | ✅ | ✅ | ✅   |
 | **Sequential Agents** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Agent Orchestration** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Hierarchical Task Decomposition** | ✅ | ✅ | ✅ | ✅ | ✅ (Supported by agent capabilities) |
+| **Hierarchical Task Decomposition** | ✅ | ✅ | ✅ | ✅ | ✅   |
 
 
 # Core Differences
