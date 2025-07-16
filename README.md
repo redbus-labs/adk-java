@@ -1,26 +1,25 @@
 
 # Capability Supported
 
-| Feature                 | Gemini                     | Anthropic                  | Ollama                      | RedbusADG + Azure   |
-| :---------------------- | :------------------------- | :------------------------- | :-------------------------- | :---------- |
-| Chat                    | ✅                          | ✅                          | ✅          | ✅          |
-| Tools/Function                    | ✅                          | ✅                          | ✅          | ✅          |
-| Chat Stream             | ✅                          | ❌                          | ✅           | ✅           |
-| Image (Input)           | ✅ (Multimodal models)      | ❌       | ❌   | ❓           |
-| Image Gen (Output)      | ✅                          | ❌                          | ❌                          | ❓           |
-| Audio Streaming (Input) | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
-| Transcription           | ✅ (Some APIs/integrations) | ❌                          | ❌                          | ❓           |
-| Persistent session                    | ✅                          | ✅                          | ✅          | ✅          |
-| Agents as Tool/Function  | ✅                          | ✅                          | ✅          | ✅          |
-| Interoperability (A2A) | ✅                          | ✅                          | ✅          | ✅          |
-| Interoperability (Tools/Functions) | ✅                          | ✅                          | ✅          | ✅          |
-| Interoperability (Agents as Tool/Function) | ✅                          | ✅                          | ✅          | ✅          |
-| Interoperability (Agents as Tool/Function) | ✅                          | ✅                          | ✅          | ✅          |
-| Agent Workflow | ✅                          | ✅                          | ✅          | ✅          |
-| Parallel Agents | ✅                          | ✅                          | ✅          | ✅          |
-| Sequential Agents | ✅                          | ✅                          | ✅          | ✅          |
-| Agent Orchestration | ✅                          | ✅                          | ✅          | ✅          |
-| Hierarchical Task Decomposition | ✅                          | ✅                          | ✅          | ✅          |
+| Feature | Gemini | Anthropic | Ollama | RedbusADG + Azure | Bedrock+Anthropic |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Chat** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Tools/Function** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Chat Stream** | ✅ | ❌ | ✅ | ✅ | ❌ |
+| **Image (Input)** | ✅ (Multimodal models) | ❌ | ❌ | ❓ | ❌ (Claude 3 models) |
+| **Image Gen (Output)** | ✅ | ❌ | ❌ | ❓ | ❌ (Via other models like Titan Image Generator) |
+| **Audio Streaming (Input)** | ✅ (Some APIs/integrations) | ❌ | ❌ | ❓ |❌ (Via services like Amazon Transcribe) |
+| **Transcription** | ✅ (Some APIs/integrations) | ❌ | ❌ | ❓ | ❌ (Via Amazon Transcribe) |
+| **Persistent session (MapDB)** | ✅ | ✅ | ✅ | ✅ | ✅  |
+| **Agents as Tool/Function** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Interoperability (A2A)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Interoperability (Tools/Functions)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Interoperability (Agents as Tool/Function)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Agent Workflow** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Parallel Agents** | ✅ | ✅ | ✅ | ✅ | ✅ (Through custom orchestration) |
+| **Sequential Agents** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Agent Orchestration** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Hierarchical Task Decomposition** | ✅ | ✅ | ✅ | ✅ | ✅ (Supported by agent capabilities) |
 
 
 # Core Differences
