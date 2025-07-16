@@ -41,18 +41,25 @@
     <java-websocket.version>1.6.0</java-websocket.version>
     <jackson.version>2.19.0</jackson.version>
     <okhttp.version>4.12.0</okhttp.version>
+    <anthropic-java-version>1.4.0</anthropic-java-version>
   </properties>
 
   <dependencies>
     <dependency>
       <groupId>com.anthropic</groupId>
       <artifactId>anthropic-java</artifactId>
-      <version>1.4.0</version>
+      <version>${anthropic-java-version}</version>
     </dependency>
     <dependency>
       <groupId>com.anthropic</groupId>
       <artifactId>anthropic-java-vertex</artifactId>
-      <version>1.4.0</version>
+      <version>${anthropic-java-version}</version>
+    </dependency>
+    <!-- https://mvnrepository.com/artifact/com.anthropic/anthropic-java-bedrock -->
+    <dependency>
+      <groupId>com.anthropic</groupId>
+      <artifactId>anthropic-java-bedrock</artifactId>
+      <version>${anthropic-java-version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.cloud</groupId>
