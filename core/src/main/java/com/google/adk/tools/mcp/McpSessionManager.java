@@ -16,27 +16,20 @@
 
 package com.google.adk.tools.mcp;
 
-import com.google.common.collect.ImmutableMap;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
-import io.modelcontextprotocol.client.transport.ServerParameters;
-import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.spec.McpClientTransport;
 import io.modelcontextprotocol.spec.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.InitializeResult;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.time.Duration;
-import java.util.Collection;
-import java.util.Optional;
 
 /**
  * Manages MCP client sessions.
  *
  * <p>This class provides methods for creating and initializing MCP client sessions, handling
- * different connection parameters (Stdio and SSE).
+ * different connection parameters and transport builders.
  */
 // TODO(b/413489523): Implement this class.
 public class McpSessionManager {
@@ -53,31 +46,21 @@ public class McpSessionManager {
   }
 
   public static McpSyncClient initializeSession(Object connectionParams) {
-    McpClientTransport transport;
-    if (connectionParams instanceof ServerParameters serverParameters) {
-      transport = new StdioClientTransport(serverParameters);
-    } else if (connectionParams instanceof SseServerParameters sseServerParams) {
-        transport = HttpClientSseClientTransport.builder(sseServerParams.url())
-                .sseEndpoint("sse")
-                .customizeRequest(builder ->
-                        Optional.ofNullable(sseServerParams.headers())
-                                .map(ImmutableMap::entrySet)
-                                .stream().flatMap(Collection::stream)
-                                .forEach(entry ->
-                                        builder.header(
-                                                entry.getKey(),
-                                                Optional.ofNullable(entry.getValue())
-                                                        .map(Object::toString)
-                                                        .orElse("")
-                                        )
-                                )
-                )
-                .build();
-    } else {
-      throw new IllegalArgumentException(
-          "Connection parameters must be either ServerParameters or SseServerParameters, but got "
-              + connectionParams.getClass().getName());
-    }
+    McpClientTransport transport = new DefaultMcpTransportBuilder().build(connectionParams);
+    McpSyncClient client =
+        McpClient.sync(transport)
+            .requestTimeout(Duration.ofSeconds(10))
+            .capabilities(ClientCapabilities.builder().build())
+            .build();
+    InitializeResult initResult = client.initialize();
+    logger.debug("Initialize Client Result: {}", initResult);
+    return client;
+  }
+
+  public static McpSyncClient initializeSession(
+      Object connectionParams, McpTransportBuilder transportBuilder) {
+    McpClientTransport transport = transportBuilder.build(connectionParams);
+
     McpSyncClient client =
         McpClient.sync(transport)
             .requestTimeout(Duration.ofSeconds(10))
