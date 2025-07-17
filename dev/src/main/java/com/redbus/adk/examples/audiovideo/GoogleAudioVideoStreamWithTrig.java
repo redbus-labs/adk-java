@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+
 // Import Math class for trig functions
 
 /**
@@ -24,7 +25,7 @@ import java.util.concurrent.CountDownLatch;
  *
  * <p>Author: Sandeep Belgavi Date: July 17, 2025
  */
-public class GoogleVoiceStreamWithTrig {
+public class GoogleAudioVideoStreamWithTrig {
 
   private static final String NAME = "GoogleAudioVideoStreamWithTrig";
   public static BaseAgent ROOT_AGENT = initAgent();
@@ -44,9 +45,9 @@ public class GoogleVoiceStreamWithTrig {
             "You are a helpful voice assistant. Use the provided tools to answer the user's"
                 + " questions. Respond clearly and concisely. You can get stock prices and calculate sine, cosine, and tangent of angles.")
         .tools(
-            FunctionTool.create(GoogleVoiceStreamWithTrig.class, "calculate_sin"),
-            FunctionTool.create(GoogleVoiceStreamWithTrig.class, "calculateCosine"),
-            FunctionTool.create(GoogleVoiceStreamWithTrig.class, "calculate_tan"))
+            FunctionTool.create(GoogleAudioVideoStreamWithTrig.class, "calculate_sin"),
+            FunctionTool.create(GoogleAudioVideoStreamWithTrig.class, "calculateCosine"),
+            FunctionTool.create(GoogleAudioVideoStreamWithTrig.class, "calculate_tan"))
         .build();
   }
 
