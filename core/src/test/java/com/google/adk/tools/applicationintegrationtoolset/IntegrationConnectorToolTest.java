@@ -72,7 +72,7 @@ public final class IntegrationConnectorToolTest {
           + " for Executing"
           + " Action\\\"},\\\"paths\\\":{\\\"/v2/projects/test-project/locations/test-region/integrations/ExecuteConnection:execute\\\":{\\\"post\\\":{\\\"summary\\\":\\\"Execute"
           + " a custom"
-          + " action\\\",\\\"operationId\\\":\\\"execute_custom_action\\\",\\\"x-action\\\":\\\"CUSTOM_ACTION\\\",\\\"requestBody\\\":{\\\"required\\\":true,\\\"content\\\":{\\\"application/json\\\":{\\\"schema\\\":{\\\"$ref\\\":\\\"#/components/schemas/ActionRequest\\\"}}}}}}},\\\"components\\\":{\\\"schemas\\\":{\\\"ActionRequest\\\":{\\\"type\\\":\\\"object\\\",\\\"required\\\":[\\\"connectionName\\\",\\\"action\\\",\\\"payload\\\"],\\\"properties\\\":{\\\"connectionName\\\":{\\\"type\\\":\\\"string\\\"},\\\"action\\\":{\\\"type\\\":\\\"string\\\"},\\\"payload\\\":{\\\"type\\\":\\\"string\\\"}}}}}}\"}";
+          + " action\\\",\\\"operationId\\\":\\\"execute_custom_action\\\",\\\"x-action\\\":\\\"CUSTOM_ACTION\\\",\\\"x-operation\\\":\\\"EXECUTE_ACTION\\\",\\\"requestBody\\\":{\\\"required\\\":true,\\\"content\\\":{\\\"application/json\\\":{\\\"schema\\\":{\\\"$ref\\\":\\\"#/components/schemas/ActionRequest\\\"}}}}}}},\\\"components\\\":{\\\"schemas\\\":{\\\"ActionRequest\\\":{\\\"type\\\":\\\"object\\\",\\\"required\\\":[\\\"connectionName\\\",\\\"action\\\",\\\"operation\\\"],\\\"properties\\\":{\\\"connectionName\\\":{\\\"type\\\":\\\"string\\\"},\\\"serviceName\\\":{\\\"type\\\":\\\"string\\\"},\\\"host\\\":{\\\"type\\\":\\\"string\\\"},\\\"action\\\":{\\\"type\\\":\\\"string\\\"},\\\"operation\\\":{\\\"type\\\":\\\"string\\\"}}}}}}\"}";
 
   @Before
   public void setUp() {
@@ -242,8 +242,8 @@ public final class IntegrationConnectorToolTest {
     assertThat(inputArgs).containsEntry("serviceName", "test-service-action");
     assertThat(inputArgs).containsEntry("host", "test-host-action");
     assertThat(inputArgs).containsEntry("action", "CUSTOM_ACTION");
+    assertThat(inputArgs).containsEntry("operation", "EXECUTE_ACTION");
     assertThat(inputArgs).doesNotContainKey("entity");
-    assertThat(inputArgs).doesNotContainKey("operation");
   }
 
   @Test

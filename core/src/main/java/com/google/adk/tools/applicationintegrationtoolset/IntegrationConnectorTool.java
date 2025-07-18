@@ -159,11 +159,13 @@ public class IntegrationConnectorTool extends BaseTool {
       args.put("connectionName", this.connectionName);
       args.put("serviceName", this.serviceName);
       args.put("host", this.host);
-      if (!isNullOrEmpty(this.entity) && !isNullOrEmpty(this.operation)) {
+      if (!isNullOrEmpty(this.entity)) {
         args.put("entity", this.entity);
-        args.put("operation", this.operation);
       } else if (!isNullOrEmpty(this.action)) {
         args.put("action", this.action);
+      }
+      if (!isNullOrEmpty(this.operation)) {
+        args.put("operation", this.operation);
       }
     }
 
@@ -237,9 +239,11 @@ public class IntegrationConnectorTool extends BaseTool {
         this.action = "";
         if (operationNode.has("x-entity")) {
           this.entity = operationNode.path("x-entity").asText();
-          this.operation = operationNode.path("x-operation").asText();
         } else if (operationNode.has("x-action")) {
           this.action = operationNode.path("x-action").asText();
+        }
+        if (operationNode.has("x-operation")) {
+          this.operation = operationNode.path("x-operation").asText();
         }
         // Get the operationId from the operationNode
         if (operationNode.has("operationId")) {

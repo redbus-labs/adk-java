@@ -46,15 +46,7 @@ public class McpSessionManager {
   }
 
   public static McpSyncClient initializeSession(Object connectionParams) {
-    McpClientTransport transport = new DefaultMcpTransportBuilder().build(connectionParams);
-    McpSyncClient client =
-        McpClient.sync(transport)
-            .requestTimeout(Duration.ofSeconds(10))
-            .capabilities(ClientCapabilities.builder().build())
-            .build();
-    InitializeResult initResult = client.initialize();
-    logger.debug("Initialize Client Result: {}", initResult);
-    return client;
+    return initializeSession(connectionParams, new DefaultMcpTransportBuilder());
   }
 
   public static McpSyncClient initializeSession(
