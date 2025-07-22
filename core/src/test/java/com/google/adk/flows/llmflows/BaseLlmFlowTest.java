@@ -136,6 +136,39 @@ public final class BaseLlmFlowTest {
   }
 
   @Test
+  public void run_withLongRunningFunctionCall_returnsCorrectEventsWithLongRunningToolIds() {
+    Content firstContent =
+        Content.fromParts(
+            Part.fromText("LLM response with function call"),
+            Part.fromFunctionCall("my_function", ImmutableMap.of("arg1", "value1")));
+    Content secondContent =
+        Content.fromParts(Part.fromText("LLM response after function response"));
+    TestLlm testLlm =
+        createTestLlm(
+            Flowable.just(createLlmResponse(firstContent)),
+            Flowable.just(createLlmResponse(secondContent)));
+    ImmutableMap<String, Object> testResponse =
+        ImmutableMap.<String, Object>of("response", "response for my_function");
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .tools(ImmutableList.of(new TestLongRunningTool("my_function", testResponse)))
+                .build());
+    BaseLlmFlow baseLlmFlow = createBaseLlmFlowWithoutProcessors();
+
+    List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(3);
+    assertEqualIgnoringFunctionIds(events.get(0).content().get(), firstContent);
+    assertThat(events.get(0).longRunningToolIds().get())
+        .contains(events.get(0).functionCalls().get(0).id().get());
+    assertEqualIgnoringFunctionIds(
+        events.get(1).content().get(),
+        Content.fromParts(Part.fromFunctionResponse("my_function", testResponse)));
+    assertThat(events.get(2).content()).hasValue(secondContent);
+  }
+
+  @Test
   public void run_withRequestProcessor_doesNotModifyRequest() {
     Content content = Content.fromParts(Part.fromText("LLM response"));
     TestLlm testLlm = createTestLlm(createLlmResponse(content));
@@ -280,6 +313,25 @@ public final class BaseLlmFlowTest {
 
     TestTool(String name, Map<String, Object> response) {
       super(name, "tool description for " + name);
+      this.response = response;
+    }
+
+    @Override
+    public Optional<FunctionDeclaration> declaration() {
+      return Optional.of(FunctionDeclaration.builder().name(name()).build());
+    }
+
+    @Override
+    public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
+      return Single.just(response);
+    }
+  }
+
+  private static class TestLongRunningTool extends BaseTool {
+    private final Map<String, Object> response;
+
+    TestLongRunningTool(String name, Map<String, Object> response) {
+      super(name, "tool description for " + name, /* isLongRunning= */ true);
       this.response = response;
     }
 

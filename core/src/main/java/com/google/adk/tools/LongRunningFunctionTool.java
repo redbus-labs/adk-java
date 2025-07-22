@@ -35,7 +35,22 @@ public class LongRunningFunctionTool extends FunctionTool {
         String.format("Method %s not found in class %s.", methodName, cls.getName()));
   }
 
+  public static LongRunningFunctionTool create(Object instance, String methodName) {
+    Class<?> cls = instance.getClass();
+    for (Method method : cls.getMethods()) {
+      if (method.getName().equals(methodName)) {
+        return new LongRunningFunctionTool(instance, method);
+      }
+    }
+    throw new IllegalArgumentException(
+        String.format("Method %s not found in class %s.", methodName, cls.getName()));
+  }
+
   private LongRunningFunctionTool(Method func) {
     super(null, func, /* isLongRunning= */ true);
+  }
+
+  private LongRunningFunctionTool(Object instance, Method func) {
+    super(instance, func, /* isLongRunning= */ true);
   }
 }

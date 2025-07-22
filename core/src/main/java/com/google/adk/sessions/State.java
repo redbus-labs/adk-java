@@ -119,12 +119,19 @@ public final class State implements ConcurrentMap<String, Object> {
 
   @Override
   public Object remove(Object key) {
+    if (state.containsKey(key)) {
+      delta.put((String) key, null);
+    }
     return state.remove(key);
   }
 
   @Override
   public boolean remove(Object key, Object value) {
-    return state.remove(key, value);
+    boolean removed = state.remove(key, value);
+    if (removed) {
+      delta.put((String) key, null);
+    }
+    return removed;
   }
 
   @Override
