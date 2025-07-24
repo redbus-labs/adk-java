@@ -182,24 +182,6 @@ public final class InstructionsTest {
   }
 
   @Test
-  public void processRequest_agentInstructionProvider_bypassesStateInjection() {
-    Session session = createSession();
-    session.state().put("name", "TestBot");
-    // This would throw an error if state injection was attempted.
-    String instructionFromProvider = "My name is {name}. But my friend is {friend_name}.";
-    Instruction provider = new Instruction.Provider(ctx -> Single.just(instructionFromProvider));
-
-    LlmAgent agent = LlmAgent.builder().name("agent").instruction(provider).build();
-    InvocationContext context = createContext(agent, createSession());
-
-    RequestProcessor.RequestProcessingResult result =
-        instructionsProcessor.processRequest(context, initialRequest).blockingGet();
-
-    assertThat(result.updatedRequest().getSystemInstructions())
-        .containsExactly(instructionFromProvider);
-  }
-
-  @Test
   public void
       processRequest_agentInstructionString_withInvalidPlaceholderSyntax_appendsInstructionWithLiteral() {
     LlmAgent agent =

@@ -26,8 +26,10 @@ import com.google.common.collect.Iterables;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.Client;
 import com.google.genai.ResponseStream;
+import com.google.genai.types.Blob;
 import com.google.genai.types.Candidate;
 import com.google.genai.types.Content;
+import com.google.genai.types.FileData;
 import com.google.genai.types.FinishReason;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponse;
@@ -213,9 +215,76 @@ public class Gemini extends BaseLlm {
     }
   }
 
+  /**
+   * Sanitizes the request to ensure it is compatible with the configured API backend. Required as
+   * there are some parameters that if included in the request will raise a runtime error if sent to
+   * the wrong backend (e.g. image names when the backend isn't Vertex AI).
+   *
+   * @param llmRequest The request to sanitize.
+   * @return The sanitized request.
+   */
+  private LlmRequest sanitizeRequest(LlmRequest llmRequest) {
+    if (apiClient.vertexAI()) {
+      return llmRequest;
+    }
+    LlmRequest.Builder requestBuilder = llmRequest.toBuilder();
+
+    // Using API key from Google AI Studio to call model doesn't support labels.
+    llmRequest
+        .config()
+        .ifPresent(
+            config -> {
+              if (config.labels().isPresent()) {
+                requestBuilder.config(config.toBuilder().labels(null).build());
+              }
+            });
+
+    if (llmRequest.contents().isEmpty()) {
+      return requestBuilder.build();
+    }
+
+    // This backend does not support the display_name parameter for file uploads,
+    // so it must be removed to prevent request failures.
+    ImmutableList<Content> updatedContents =
+        llmRequest.contents().stream()
+            .map(
+                content -> {
+                  if (content.parts().isEmpty() || content.parts().get().isEmpty()) {
+                    return content;
+                  }
+
+                  ImmutableList<Part> updatedParts =
+                      content.parts().get().stream()
+                          .map(
+                              part -> {
+                                Part.Builder partBuilder = part.toBuilder();
+                                if (part.inlineData().flatMap(Blob::displayName).isPresent()) {
+                                  Blob blob = part.inlineData().get();
+                                  Blob.Builder newBlobBuilder = Blob.builder();
+                                  blob.data().ifPresent(newBlobBuilder::data);
+                                  blob.mimeType().ifPresent(newBlobBuilder::mimeType);
+                                  partBuilder.inlineData(newBlobBuilder.build());
+                                }
+                                if (part.fileData().flatMap(FileData::displayName).isPresent()) {
+                                  FileData fileData = part.fileData().get();
+                                  FileData.Builder newFileDataBuilder = FileData.builder();
+                                  fileData.fileUri().ifPresent(newFileDataBuilder::fileUri);
+                                  fileData.mimeType().ifPresent(newFileDataBuilder::mimeType);
+                                  partBuilder.fileData(newFileDataBuilder.build());
+                                }
+                                return partBuilder.build();
+                              })
+                          .collect(toImmutableList());
+
+                  return content.toBuilder().parts(updatedParts).build();
+                })
+            .collect(toImmutableList());
+    return requestBuilder.contents(updatedContents).build();
+  }
+
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
-
+    llmRequest = sanitizeRequest(llmRequest);
     List<Content> contents = llmRequest.contents();
     // Last content must be from the user, otherwise the model won't respond.
     if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
@@ -377,6 +446,7 @@ public class Gemini extends BaseLlm {
 
   @Override
   public BaseLlmConnection connect(LlmRequest llmRequest) {
+    llmRequest = sanitizeRequest(llmRequest);
     logger.debug("Establishing Gemini connection.");
     LiveConnectConfig liveConnectConfig = llmRequest.liveConnectConfig();
     String effectiveModelName = llmRequest.model().orElse(model());
