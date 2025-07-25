@@ -60,7 +60,7 @@ import org.slf4j.LoggerFactory;
 public class Claude extends BaseLlm {
 
   private static final Logger logger = LoggerFactory.getLogger(Claude.class);
-  private static final int MAX_TOKEN = 1024;
+  private static final int MAX_TOKEN = 8192;
   private final AnthropicClient anthropicClient;
 
   /**

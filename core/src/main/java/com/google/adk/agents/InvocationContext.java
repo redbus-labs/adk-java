@@ -121,7 +121,7 @@ public class InvocationContext {
         other.endInvocation);
   }
 
-  protected BaseSessionService sessionService() {
+  public BaseSessionService sessionService() {
     return sessionService;
   }
 

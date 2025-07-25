@@ -84,7 +84,7 @@ public class Runner {
    *
    * @throws IllegalArgumentException if message has no parts.
    */
-  private Completable appendNewMessageToSession(
+  private void appendNewMessageToSession(
       Session session,
       Content newMessage,
       InvocationContext invocationContext,
@@ -124,7 +124,7 @@ public class Runner {
             .author("user")
             .content(Optional.of(newMessage))
             .build();
-    return this.sessionService.appendEvent(session, event).ignoreElement();
+    this.sessionService.appendEvent(session, event);
   }
 
   /**
@@ -191,20 +191,14 @@ public class Runner {
                         newMessage,
                         runConfig);
 
-                Completable newMessageCompletable = Completable.complete();
                 if (newMessage != null) {
-                  newMessageCompletable =
-                      appendNewMessageToSession(
-                          sess,
-                          newMessage,
-                          invocationContext,
-                          runConfig.saveInputBlobsAsArtifacts());
+                  appendNewMessageToSession(
+                      sess, newMessage, invocationContext, runConfig.saveInputBlobsAsArtifacts());
                 }
 
                 invocationContext.agent(this.findAgentToRun(sess, rootAgent));
                 Flowable<Event> events = invocationContext.agent().runAsync(invocationContext);
-                return newMessageCompletable.andThen(
-                    events.concatMapSingle(event -> this.sessionService.appendEvent(sess, event)));
+                return events.doOnNext(event -> this.sessionService.appendEvent(sess, event));
               })
           .doOnError(
               throwable -> {

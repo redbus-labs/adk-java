@@ -39,7 +39,6 @@ import com.google.adk.models.LlmResponse;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
@@ -621,11 +620,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
     Event event = eventBuilder.build();
 
-    ImmutableList<FunctionCall> functionCalls = event.functionCalls();
-    if (!functionCalls.isEmpty()) {
+    if (!event.functionCalls().isEmpty()) {
       Functions.populateClientFunctionCallId(event);
       Set<String> longRunningToolIds =
-          Functions.getLongRunningFunctionCalls(functionCalls, llmRequest.tools());
+          Functions.getLongRunningFunctionCalls(event.functionCalls(), llmRequest.tools());
       if (!longRunningToolIds.isEmpty()) {
         event.setLongRunningToolIds(Optional.of(longRunningToolIds));
       }
