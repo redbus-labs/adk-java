@@ -32,6 +32,9 @@ public final class State implements ConcurrentMap<String, Object> {
   public static final String USER_PREFIX = "user:";
   public static final String TEMP_PREFIX = "temp:";
 
+  // Sentinel object to mark removed entries in the delta map
+  private static final Object REMOVED = new Object();
+
   private final ConcurrentMap<String, Object> state;
   private final ConcurrentMap<String, Object> delta;
 
@@ -120,7 +123,7 @@ public final class State implements ConcurrentMap<String, Object> {
   @Override
   public Object remove(Object key) {
     if (state.containsKey(key)) {
-      delta.put((String) key, null);
+      delta.put((String) key, REMOVED);
     }
     return state.remove(key);
   }
@@ -129,7 +132,7 @@ public final class State implements ConcurrentMap<String, Object> {
   public boolean remove(Object key, Object value) {
     boolean removed = state.remove(key, value);
     if (removed) {
-      delta.put((String) key, null);
+      delta.put((String) key, REMOVED);
     }
     return removed;
   }

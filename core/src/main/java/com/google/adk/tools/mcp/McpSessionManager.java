@@ -22,6 +22,7 @@ import io.modelcontextprotocol.spec.McpClientTransport;
 import io.modelcontextprotocol.spec.McpSchema.ClientCapabilities;
 import io.modelcontextprotocol.spec.McpSchema.InitializeResult;
 import java.time.Duration;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,16 +52,22 @@ public class McpSessionManager {
 
   public static McpSyncClient initializeSession(
       Object connectionParams, McpTransportBuilder transportBuilder) {
+    Duration initializationTimeout = null;
+    Duration requestTimeout = null;
     McpClientTransport transport = transportBuilder.build(connectionParams);
-
+    if (connectionParams instanceof SseServerParameters sseServerParams) {
+      initializationTimeout = sseServerParams.timeout();
+      requestTimeout = sseServerParams.sseReadTimeout();
+    }
     McpSyncClient client =
         McpClient.sync(transport)
-            .requestTimeout(Duration.ofSeconds(10))
+            .initializationTimeout(
+                Optional.ofNullable(initializationTimeout).orElse(Duration.ofSeconds(10)))
+            .requestTimeout(Optional.ofNullable(requestTimeout).orElse(Duration.ofSeconds(10)))
             .capabilities(ClientCapabilities.builder().build())
             .build();
     InitializeResult initResult = client.initialize();
     logger.debug("Initialize Client Result: {}", initResult);
-
     return client;
   }
 }
