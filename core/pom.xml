@@ -221,6 +221,11 @@
       <artifactId>mongo-java-driver</artifactId>
       <version>3.11.2</version>
     </dependency>
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>42.7.3</version> <!-- IMPORTANT: Check Maven Central for the LATEST stable version -->
+    </dependency>
   </dependencies>
   <build>
     <resources>
