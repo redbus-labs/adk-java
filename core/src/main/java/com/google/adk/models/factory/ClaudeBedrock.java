@@ -13,8 +13,8 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 
 /**
- * Factory class for creating Claude models backed by AWS Bedrock.
- * Provides convenient methods to create Claude instances with AWS Bedrock integration.
+ * Factory class for creating Claude models backed by AWS Bedrock. Provides convenient methods to
+ * create Claude instances with AWS Bedrock integration.
  *
  * @author Akshaya Rawat
  * @version 1.0
@@ -32,7 +32,7 @@ public class ClaudeBedrock {
 
   /**
    * Creates a Claude instance using the default Bedrock model ID.
-   * 
+   *
    * @return a new Claude instance configured with AWS Bedrock
    */
   public static Claude create() {
@@ -41,7 +41,7 @@ public class ClaudeBedrock {
 
   /**
    * Creates a Claude instance with the specified model ID.
-   * 
+   *
    * @param modelId the Bedrock model ID to use
    * @return a new Claude instance configured with AWS Bedrock
    */
@@ -51,7 +51,7 @@ public class ClaudeBedrock {
 
   /**
    * Creates a Claude instance with the specified model ID and AWS region.
-   * 
+   *
    * @param _modelId the Bedrock model ID to use (null uses default)
    * @param _region the AWS region to use (null uses environment variable or default)
    * @return a new Claude instance configured with AWS Bedrock

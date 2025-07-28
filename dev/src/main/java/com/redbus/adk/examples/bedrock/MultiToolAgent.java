@@ -22,8 +22,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Agent implementation that demonstrates using multiple tools with Claude on AWS Bedrock.
- * This class provides examples of different ways to configure and use Claude with Bedrock.
+ * Agent implementation that demonstrates using multiple tools with Claude on AWS Bedrock. This
+ * class provides examples of different ways to configure and use Claude with Bedrock.
  *
  * @author Akshaya Rawat
  * @version 1.0
@@ -74,8 +74,7 @@ public class MultiToolAgent {
   }
 
   /**
-   * Gets the weather information for a specified city.
-   * Currently only supports New York as a demo.
+   * Gets the weather information for a specified city. Currently only supports New York as a demo.
    *
    * @param city the name of the city for which to retrieve the weather report
    * @return a map containing status and report with the weather information
@@ -122,7 +121,8 @@ public class MultiToolAgent {
    * You pass model id. Region is read from AWS_REGION and AWS_DEFAULT_REGION in that order. AWS
    * credentials are read from env variable or aws credentials file (based on the profile).
    *
-   * @return a BaseAgent instance configured with Claude on Bedrock using specified model and default region
+   * @return a BaseAgent instance configured with Claude on Bedrock using specified model and
+   *     default region
    */
   public BaseAgent exampleTwoAgent() {
     return LlmAgent.builder()
@@ -162,8 +162,8 @@ public class MultiToolAgent {
   }
 
   /**
-   * Main method to run the MultiToolAgent example.
-   * Accepts an optional argument to specify which example to run (1, 2, or 3).
+   * Main method to run the MultiToolAgent example. Accepts an optional argument to specify which
+   * example to run (1, 2, or 3).
    *
    * @param args command line arguments, first argument can be 1, 2, or 3 to select the example
    * @throws Exception if an error occurs during execution
