@@ -25,6 +25,12 @@
 # Core Differences
 
 ## Persistent session storage added, 
+ 
+| Store | Chat | Stream | Artifact | 
+| :--- | :--- | :--- | :--- | 
+| **MapDB** | ✅ | ✅ | ✅ |  
+| **MongoDB** | ✅ | ✅ | ❌ |  
+| **Postgres** | ✅ | ✅ | ❌ |  
 
 ### MapDbSessionService("map.db")
 
