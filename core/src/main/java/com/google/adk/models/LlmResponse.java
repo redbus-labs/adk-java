@@ -28,6 +28,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FinishReason;
 import com.google.genai.types.GenerateContentResponse;
 import com.google.genai.types.GenerateContentResponsePromptFeedback;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.GroundingMetadata;
 import java.util.List;
 import java.util.Optional;
@@ -89,6 +90,10 @@ public abstract class LlmResponse extends JsonBaseModel {
   @JsonProperty("interrupted")
   public abstract Optional<Boolean> interrupted();
 
+  /** Usage metadata about the response(s). */
+  @JsonProperty("usageMetadata")
+  public abstract Optional<GenerateContentResponseUsageMetadata> usageMetadata();
+
   public abstract Builder toBuilder();
 
   /** Builder for constructing {@link LlmResponse} instances. */
@@ -134,6 +139,13 @@ public abstract class LlmResponse extends JsonBaseModel {
 
     public abstract Builder errorMessage(Optional<String> errorMessage);
 
+    @JsonProperty("usageMetadata")
+    public abstract Builder usageMetadata(
+        @Nullable GenerateContentResponseUsageMetadata usageMetadata);
+
+    public abstract Builder usageMetadata(
+        Optional<GenerateContentResponseUsageMetadata> usageMetadata);
+
     @CanIgnoreReturnValue
     public final Builder response(GenerateContentResponse response) {
       Optional<List<Candidate>> candidatesOpt = response.candidates();
@@ -160,6 +172,7 @@ public abstract class LlmResponse extends JsonBaseModel {
           this.errorMessage("Unknown error.");
         }
       }
+      this.usageMetadata(response.usageMetadata());
       return this;
     }
 
