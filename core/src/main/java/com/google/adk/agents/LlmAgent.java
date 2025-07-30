@@ -655,38 +655,45 @@ public class LlmAgent extends BaseAgent {
   }
 
   /**
-   * Constructs the text instruction for this agent based on the {@link #instruction} field.
+   * Constructs the text instruction for this agent based on the {@link #instruction} field. Also
+   * returns a boolean indicating that state injection should be bypassed when the instruction is
+   * constructed with an {@link Instruction.Provider}.
    *
    * <p>This method is only for use by Agent Development Kit.
    *
    * @param context The context to retrieve the session state.
-   * @return The resolved instruction as a {@link Single} wrapped string.
+   * @return The resolved instruction as a {@link Single} wrapped Map.Entry. The key is the
+   *     instruction string and the value is a boolean indicating if state injection should be
+   *     bypassed.
    */
-  public Single<String> canonicalInstruction(ReadonlyContext context) {
+  public Single<Map.Entry<String, Boolean>> canonicalInstruction(ReadonlyContext context) {
     if (instruction instanceof Instruction.Static staticInstr) {
-      return Single.just(staticInstr.instruction());
+      return Single.just(Map.entry(staticInstr.instruction(), false));
     } else if (instruction instanceof Instruction.Provider provider) {
-      return provider.getInstruction().apply(context);
+      return provider.getInstruction().apply(context).map(instr -> Map.entry(instr, true));
     }
     throw new IllegalStateException("Unknown Instruction subtype: " + instruction.getClass());
   }
 
   /**
    * Constructs the text global instruction for this agent based on the {@link #globalInstruction}
-   * field.
+   * field. Also returns a boolean indicating that state injection should be bypassed when the
+   * instruction is constructed with an {@link Instruction.Provider}.
    *
    * <p>This method is only for use by Agent Development Kit.
    *
    * @param context The context to retrieve the session state.
-   * @return The resolved global instruction as a {@link Single} wrapped string.
+   * @return The resolved global instruction as a {@link Single} wrapped Map.Entry. The key is the
+   *     instruction string and the value is a boolean indicating if state injection should be
+   *     bypassed.
    */
-  public Single<String> canonicalGlobalInstruction(ReadonlyContext context) {
+  public Single<Map.Entry<String, Boolean>> canonicalGlobalInstruction(ReadonlyContext context) {
     if (globalInstruction instanceof Instruction.Static staticInstr) {
-      return Single.just(staticInstr.instruction());
+      return Single.just(Map.entry(staticInstr.instruction(), false));
     } else if (globalInstruction instanceof Instruction.Provider provider) {
-      return provider.getInstruction().apply(context);
+      return provider.getInstruction().apply(context).map(instr -> Map.entry(instr, true));
     }
-    throw new IllegalStateException("Unknown Instruction subtype: " + instruction.getClass());
+    throw new IllegalStateException("Unknown Instruction subtype: " + globalInstruction.getClass());
   }
 
   /**

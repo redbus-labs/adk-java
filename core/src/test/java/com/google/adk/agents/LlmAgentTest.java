@@ -225,7 +225,8 @@ public final class LlmAgentTest {
             .build();
     ReadonlyContext invocationContext = new ReadonlyContext(createInvocationContext(agent));
 
-    String canonicalInstruction = agent.canonicalInstruction(invocationContext).blockingGet();
+    String canonicalInstruction =
+        agent.canonicalInstruction(invocationContext).blockingGet().getKey();
 
     assertThat(canonicalInstruction).isEqualTo(instruction);
   }
@@ -241,7 +242,8 @@ public final class LlmAgentTest {
             .build();
     ReadonlyContext invocationContext = new ReadonlyContext(createInvocationContext(agent));
 
-    String canonicalInstruction = agent.canonicalInstruction(invocationContext).blockingGet();
+    String canonicalInstruction =
+        agent.canonicalInstruction(invocationContext).blockingGet().getKey();
 
     assertThat(canonicalInstruction).isEqualTo(instruction + invocationContext.invocationId());
   }
@@ -265,7 +267,8 @@ public final class LlmAgentTest {
             .build();
     ReadonlyContext invocationContext = new ReadonlyContext(createInvocationContext(agent));
 
-    String canonicalInstruction = agent.canonicalGlobalInstruction(invocationContext).blockingGet();
+    String canonicalInstruction =
+        agent.canonicalGlobalInstruction(invocationContext).blockingGet().getKey();
 
     assertThat(canonicalInstruction).isEqualTo(instruction);
   }
@@ -281,7 +284,8 @@ public final class LlmAgentTest {
             .build();
     ReadonlyContext invocationContext = new ReadonlyContext(createInvocationContext(agent));
 
-    String canonicalInstruction = agent.canonicalGlobalInstruction(invocationContext).blockingGet();
+    String canonicalInstruction =
+        agent.canonicalGlobalInstruction(invocationContext).blockingGet().getKey();
 
     assertThat(canonicalInstruction).isEqualTo(instruction + invocationContext.invocationId());
   }
