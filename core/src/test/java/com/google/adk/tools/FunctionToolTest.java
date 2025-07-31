@@ -338,13 +338,6 @@ public final class FunctionToolTest {
   }
 
   @Test
-  public void create_withMaybeStringReturnType() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> FunctionTool.create(Functions.class, "returnsMaybeString"));
-  }
-
-  @Test
   public void create_withSingleMapReturnType() {
     FunctionTool tool = FunctionTool.create(Functions.class, "returnsSingleMap");
 
@@ -360,6 +353,27 @@ public final class FunctionToolTest {
     Map<String, Object> result = tool.runAsync(new HashMap<>(), null).blockingGet();
 
     assertThat(result).containsExactly("key", "value");
+  }
+
+  @Test
+  public void call_withPojoReturnType() throws Exception {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsPojo");
+    Map<String, Object> result = tool.runAsync(ImmutableMap.of(), null).blockingGet();
+    assertThat(result).containsExactly("field1", "abc", "field2", 123);
+  }
+
+  @Test
+  public void call_withSinglePojoReturnType() throws Exception {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsSinglePojo");
+    Map<String, Object> result = tool.runAsync(ImmutableMap.of(), null).blockingGet();
+    assertThat(result).containsExactly("field1", "abc", "field2", 123);
+  }
+
+  @Test
+  public void call_withMaybePojoReturnType() throws Exception {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsMaybePojo");
+    Map<String, Object> result = tool.runAsync(ImmutableMap.of(), null).blockingGet();
+    assertThat(result).containsExactly("field1", "abc", "field2", 123);
   }
 
   @Test
@@ -484,6 +498,27 @@ public final class FunctionToolTest {
 
     public static Single<Map<String, Object>> returnsSingleMap() {
       return Single.just(ImmutableMap.of("key", "value"));
+    }
+
+    public static PojoWithGettersAndSetters returnsPojo() {
+      PojoWithGettersAndSetters pojo = new PojoWithGettersAndSetters();
+      pojo.setField1("abc");
+      pojo.setField2(123);
+      return pojo;
+    }
+
+    public static Single<PojoWithGettersAndSetters> returnsSinglePojo() {
+      PojoWithGettersAndSetters pojo = new PojoWithGettersAndSetters();
+      pojo.setField1("abc");
+      pojo.setField2(123);
+      return Single.just(pojo);
+    }
+
+    public static Maybe<PojoWithGettersAndSetters> returnsMaybePojo() {
+      PojoWithGettersAndSetters pojo = new PojoWithGettersAndSetters();
+      pojo.setField1("abc");
+      pojo.setField2(123);
+      return Maybe.just(pojo);
     }
 
     public void nonStaticVoidReturnWithoutSchema() {}

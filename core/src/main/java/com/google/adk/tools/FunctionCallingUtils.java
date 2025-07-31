@@ -70,26 +70,15 @@ public final class FunctionCallingUtils {
 
     Type returnType = func.getGenericReturnType();
     if (returnType != Void.TYPE) {
-      Type realReturnType = returnType;
-      if (returnType instanceof ParameterizedType) {
-        ParameterizedType parameterizedReturnType = (ParameterizedType) returnType;
-        String returnTypeName = ((Class<?>) parameterizedReturnType.getRawType()).getName();
-        if (returnTypeName.equals("io.reactivex.rxjava3.core.Maybe")
-            || returnTypeName.equals("io.reactivex.rxjava3.core.Single")) {
-          returnType = parameterizedReturnType.getActualTypeArguments()[0];
-          if (returnType instanceof ParameterizedType) {
-            ParameterizedType maybeParameterizedType = (ParameterizedType) returnType;
-            returnTypeName = ((Class<?>) maybeParameterizedType.getRawType()).getName();
-          }
-        }
-        if (returnTypeName.equals("java.util.Map")
-            || returnTypeName.equals("com.google.common.collect.ImmutableMap")) {
-          return builder.response(buildSchemaFromType(returnType)).build();
+      Type actualReturnType = returnType;
+      if (returnType instanceof ParameterizedType parameterizedReturnType) {
+        String rawTypeName = ((Class<?>) parameterizedReturnType.getRawType()).getName();
+        if (rawTypeName.equals("io.reactivex.rxjava3.core.Maybe")
+            || rawTypeName.equals("io.reactivex.rxjava3.core.Single")) {
+          actualReturnType = parameterizedReturnType.getActualTypeArguments()[0];
         }
       }
-      throw new IllegalArgumentException(
-          "Return type should be Map or Maybe<Map> or Single<Map>, but it was "
-              + realReturnType.getTypeName());
+      builder.response(buildSchemaFromType(actualReturnType));
     }
     return builder.build();
   }
@@ -107,50 +96,31 @@ public final class FunctionCallingUtils {
   }
 
   private static Schema buildSchemaFromParameter(Parameter param) {
-    Schema.Builder builder = Schema.builder();
+    Schema schema = buildSchemaFromType(param.getParameterizedType());
     if (param.isAnnotationPresent(Annotations.Schema.class)
         && !param.getAnnotation(Annotations.Schema.class).description().isEmpty()) {
-      builder.description(param.getAnnotation(Annotations.Schema.class).description());
+      return schema.toBuilder()
+          .description(param.getAnnotation(Annotations.Schema.class).description())
+          .build();
     }
-    switch (param.getType().getName()) {
-      case "java.lang.String" -> builder.type("STRING");
-      case "boolean", "java.lang.Boolean" -> builder.type("BOOLEAN");
-      case "int", "java.lang.Integer" -> builder.type("INTEGER");
-      case "double", "java.lang.Double", "float", "java.lang.Float", "long", "java.lang.Long" ->
-          builder.type("NUMBER");
-      case "java.util.List" ->
-          builder
-              .type("ARRAY")
-              .items(
-                  buildSchemaFromType(
-                      ((ParameterizedType) param.getParameterizedType())
-                          .getActualTypeArguments()[0]));
-      case "java.util.Map" -> builder.type("OBJECT");
-      default -> {
-        BeanDescription beanDescription =
-            OBJECT_MAPPER
-                .getSerializationConfig()
-                .introspect(OBJECT_MAPPER.constructType(param.getType()));
-        Map<String, Schema> properties = new LinkedHashMap<>();
-        for (BeanPropertyDefinition property : beanDescription.findProperties()) {
-          properties.put(property.getName(), buildSchemaFromType(property.getRawPrimaryType()));
-        }
-        builder.type("OBJECT").properties(properties);
-      }
-    }
-    return builder.build();
+    return schema;
   }
 
   public static Schema buildSchemaFromType(Type type) {
     Schema.Builder builder = Schema.builder();
     if (type instanceof ParameterizedType parameterizedType) {
-      switch (((Class<?>) parameterizedType.getRawType()).getName()) {
-        case "java.util.List" ->
-            builder
-                .type("ARRAY")
-                .items(buildSchemaFromType(parameterizedType.getActualTypeArguments()[0]));
-        case "java.util.Map", "com.google.common.collect.ImmutableMap" -> builder.type("OBJECT");
-        default -> throw new IllegalArgumentException("Unsupported generic type: " + type);
+      String rawTypeName = ((Class<?>) parameterizedType.getRawType()).getName();
+      switch (rawTypeName) {
+        case "java.util.List", "com.google.common.collect.ImmutableList":
+          Schema itemSchema = buildSchemaFromType(parameterizedType.getActualTypeArguments()[0]);
+          builder.type("ARRAY").items(itemSchema);
+          break;
+        case "java.util.Map":
+        case "com.google.common.collect.ImmutableMap":
+          builder.type("OBJECT");
+          break;
+        default:
+          throw new IllegalArgumentException("Unsupported generic type: " + type);
       }
     } else if (type instanceof Class<?> clazz) {
       switch (clazz.getName()) {

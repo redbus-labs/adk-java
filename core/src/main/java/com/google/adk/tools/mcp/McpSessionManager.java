@@ -37,14 +37,20 @@ import org.slf4j.LoggerFactory;
 public class McpSessionManager {
 
   private final Object connectionParams; // ServerParameters or SseServerParameters
+  private final McpTransportBuilder transportBuilder;
   private static final Logger logger = LoggerFactory.getLogger(McpSessionManager.class);
 
   public McpSessionManager(Object connectionParams) {
+    this(connectionParams, new DefaultMcpTransportBuilder());
+  }
+
+  public McpSessionManager(Object connectionParams, McpTransportBuilder transportBuilder) {
     this.connectionParams = connectionParams;
+    this.transportBuilder = transportBuilder;
   }
 
   public McpSyncClient createSession() {
-    return initializeSession(this.connectionParams);
+    return initializeSession(this.connectionParams, this.transportBuilder);
   }
 
   public static McpSyncClient initializeSession(Object connectionParams) {

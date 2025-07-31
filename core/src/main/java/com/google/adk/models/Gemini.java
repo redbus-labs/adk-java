@@ -334,6 +334,7 @@ public class Gemini extends BaseLlm {
                               LlmResponse.builder()
                                   .content(
                                       Content.builder()
+                                          .role("model")
                                           .parts(
                                               ImmutableList.of(
                                                   Part.builder()
@@ -374,6 +375,7 @@ public class Gemini extends BaseLlm {
                                   LlmResponse.builder()
                                       .content(
                                           Content.builder()
+                                              .role("model")
                                               .parts(
                                                   ImmutableList.of(
                                                       Part.builder()
