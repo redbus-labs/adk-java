@@ -47,8 +47,14 @@ public final class Instructions implements RequestProcessor {
                   rootAgent
                       .canonicalGlobalInstruction(readonlyContext)
                       .flatMap(
-                          globalInstr -> {
+                          instructionEntry -> {
+                            String globalInstr = instructionEntry.getKey();
+                            boolean bypassStateInjection = instructionEntry.getValue();
                             if (!globalInstr.isEmpty()) {
+                              if (bypassStateInjection) {
+                                return Single.just(
+                                    builder.appendInstructions(ImmutableList.of(globalInstr)));
+                              }
                               return InstructionUtils.injectSessionState(context, globalInstr)
                                   .map(
                                       resolvedGlobalInstr ->
@@ -65,8 +71,14 @@ public final class Instructions implements RequestProcessor {
                 agent
                     .canonicalInstruction(readonlyContext)
                     .flatMap(
-                        agentInstr -> {
+                        instructionEntry -> {
+                          String agentInstr = instructionEntry.getKey();
+                          boolean bypassStateInjection = instructionEntry.getValue();
                           if (!agentInstr.isEmpty()) {
+                            if (bypassStateInjection) {
+                              return Single.just(
+                                  builder.appendInstructions(ImmutableList.of(agentInstr)));
+                            }
                             return InstructionUtils.injectSessionState(context, agentInstr)
                                 .map(
                                     resolvedAgentInstr ->

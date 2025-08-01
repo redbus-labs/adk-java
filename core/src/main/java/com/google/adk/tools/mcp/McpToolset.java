@@ -149,6 +149,22 @@ public class McpToolset implements BaseToolset {
     this(connectionParams, JsonBaseModel.getMapper(), Optional.empty());
   }
 
+  /**
+   * Initializes the McpToolset with an McpSessionManager.
+   *
+   * @param mcpSessionManager A McpSessionManager instance for testing.
+   * @param objectMapper An ObjectMapper instance for parsing schemas.
+   * @param toolFilter An Optional containing either a ToolPredicate or a List of tool names.
+   */
+  public McpToolset(
+      McpSessionManager mcpSessionManager, ObjectMapper objectMapper, Optional<Object> toolFilter) {
+    Objects.requireNonNull(mcpSessionManager);
+    Objects.requireNonNull(objectMapper);
+    this.mcpSessionManager = mcpSessionManager;
+    this.objectMapper = objectMapper;
+    this.toolFilter = toolFilter;
+  }
+
   @Override
   public Flowable<BaseTool> getTools(ReadonlyContext readonlyContext) {
     return Flowable.fromCallable(

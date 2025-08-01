@@ -16,6 +16,7 @@
 
 package com.google.adk.tools;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -196,11 +197,18 @@ public class FunctionTool extends BaseTool {
     if (result == null) {
       return Maybe.empty();
     } else if (result instanceof Maybe) {
-      return (Maybe<Map<String, Object>>) result;
+      return ((Maybe<?>) result)
+          .map(
+              data ->
+                  OBJECT_MAPPER.convertValue(data, new TypeReference<Map<String, Object>>() {}));
     } else if (result instanceof Single) {
-      return ((Single<Map<String, Object>>) result).toMaybe();
+      return ((Single<?>) result)
+          .map(
+              data -> OBJECT_MAPPER.convertValue(data, new TypeReference<Map<String, Object>>() {}))
+          .toMaybe();
     } else {
-      return Maybe.just((Map<String, Object>) result);
+      return Maybe.just(
+          OBJECT_MAPPER.convertValue(result, new TypeReference<Map<String, Object>>() {}));
     }
   }
 
