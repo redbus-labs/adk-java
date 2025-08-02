@@ -60,7 +60,7 @@ import org.slf4j.LoggerFactory;
 public class Claude extends BaseLlm {
 
   private static final Logger logger = LoggerFactory.getLogger(Claude.class);
-  private static final int MAX_TOKEN = 8192;
+  private int maxTokens = 8192;
   private final AnthropicClient anthropicClient;
 
   /**
@@ -72,6 +72,12 @@ public class Claude extends BaseLlm {
   public Claude(String modelName, AnthropicClient anthropicClient) {
     super(modelName);
     this.anthropicClient = anthropicClient;
+  }
+
+  public Claude(String modelName, AnthropicClient anthropicClient, int maxTokens) {
+    super(modelName);
+    this.anthropicClient = anthropicClient;
+    this.maxTokens = maxTokens;
   }
 
   @Override
@@ -125,7 +131,7 @@ public class Claude extends BaseLlm {
                     .messages(messages)
                     .tools(tools)
                     .toolChoice(toolChoice)
-                    .maxTokens(MAX_TOKEN)
+                    .maxTokens(this.maxTokens)
                     .build());
 
     logger.debug("Claude response: {}", message);
