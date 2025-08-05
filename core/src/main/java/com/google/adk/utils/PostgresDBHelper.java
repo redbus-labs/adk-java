@@ -222,7 +222,7 @@ public class PostgresDBHelper {
             + " WHERE id = ?";
     JSONObject sessionJson = null;
 
-    try (Connection conn = getConnection();
+    try (Connection conn = PostgresDBHelper.getInstance().getConnection();
         PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
       pstmt.setString(1, id);
