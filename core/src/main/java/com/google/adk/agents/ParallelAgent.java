@@ -39,7 +39,7 @@ public class ParallelAgent extends BaseAgent {
    *
    * @param name The agent's name.
    * @param description The agent's description.
-   * @param subAgents The list of sub-agents to run sequentially.
+   * @param subAgents The list of sub-agents to run in parallel.
    * @param beforeAgentCallback Optional callback before the agent runs.
    * @param afterAgentCallback Optional callback after the agent runs.
    */

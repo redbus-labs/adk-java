@@ -127,7 +127,7 @@ public class PostgresDBHelper {
       conn.setAutoCommit(false);
       try (PreparedStatement stmtEvents =
               conn.prepareStatement(
-                  "INSERT INTO cart_rb.events (id, session_id, author, actions_state_delta, actions_artifact_delta, "
+                  "INSERT INTO events (id, session_id, author, actions_state_delta, actions_artifact_delta, "
                       + "actions_requested_auth_configs, actions_transfer_to_agent, content_role, timestamp, invocation_id) "
                       + "VALUES (?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET "
                       + "session_id=EXCLUDED.session_id, author=EXCLUDED.author, actions_state_delta=EXCLUDED.actions_state_delta, "
@@ -136,7 +136,7 @@ public class PostgresDBHelper {
                       + "timestamp=EXCLUDED.timestamp, invocation_id=EXCLUDED.invocation_id");
           PreparedStatement stmtParts =
               conn.prepareStatement(
-                  "INSERT INTO cart_rb.event_content_parts (event_id, session_id, part_type, text_content, function_call_id, "
+                  "INSERT INTO event_content_parts (event_id, session_id, part_type, text_content, function_call_id, "
                       + "function_call_name, function_call_args, function_response_id, function_response_name, function_response_data) "
                       + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?::jsonb) ON CONFLICT (event_id) DO UPDATE SET "
                       + "session_id=EXCLUDED.session_id, part_type=EXCLUDED.part_type, text_content=EXCLUDED.text_content, "

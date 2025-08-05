@@ -131,7 +131,9 @@ public final class Contents implements RequestProcessor {
     String originalAuthor = event.author();
 
     for (Part part : event.content().get().parts().get()) {
-      if (part.text().isPresent() && !part.text().get().isEmpty()) {
+      if (part.text().isPresent()
+          && !part.text().get().isEmpty()
+          && !part.thought().orElse(false)) {
         parts.add(Part.fromText(String.format("[%s] said: %s", originalAuthor, part.text().get())));
       } else if (part.functionCall().isPresent()) {
         FunctionCall functionCall = part.functionCall().get();
