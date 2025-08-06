@@ -17,10 +17,12 @@
 package com.google.adk.agents;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.adk.utils.FeatureDecorator.WorkInProgress;
 
-/** Base configuration for all agents. */
-@WorkInProgress
+/**
+ * Base configuration for all agents.
+ *
+ * <p>workInProgress: Config agent features are not yet ready for public use.
+ */
 public class BaseAgentConfig {
   private String name;
   private String description = "";

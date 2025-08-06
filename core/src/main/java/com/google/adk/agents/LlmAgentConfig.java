@@ -17,10 +17,12 @@
 package com.google.adk.agents;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.adk.utils.FeatureDecorator.WorkInProgress;
 
-/** Configuration for LlmAgent. */
-@WorkInProgress
+/**
+ * Configuration for LlmAgent.
+ *
+ * <p>workInProgress: Config agent features are not yet ready for public use.
+ */
 public class LlmAgentConfig extends BaseAgentConfig {
   private String model;
   private String instruction;
