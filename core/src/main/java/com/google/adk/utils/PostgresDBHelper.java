@@ -81,7 +81,7 @@ public class PostgresDBHelper {
       try (PreparedStatement pstmt = conn.prepareStatement(upsertSql)) {
         JSONObject eventJson = new JSONObject();
         eventJson.put("events", session.events().toString());
-        System.out.println("Event JSON: " + eventJson.toString());
+        // System.out.println("Event JSON: " + eventJson.toString());
         pstmt.setString(1, session.id());
         pstmt.setString(2, session.appName());
         pstmt.setString(3, session.userId());
@@ -159,7 +159,7 @@ public class PostgresDBHelper {
           stmtEvents.setString(8, content.optString("role"));
           stmtEvents.setLong(9, ev.getLong("timestamp"));
           stmtEvents.setString(10, ev.optString("invocationId"));
-          System.out.println("Executing event insert: " + stmtEvents.toString());
+          // System.out.println("Executing event insert: " + stmtEvents.toString());
           stmtEvents.executeUpdate();
           conn.commit();
 
@@ -185,7 +185,7 @@ public class PostgresDBHelper {
             stmtParts.setString(8, fr != null ? fr.optString("id", null) : null);
             stmtParts.setString(9, fr != null ? fr.optString("name", null) : null);
             stmtParts.setString(10, fr != null ? fr.opt("response").toString() : null);
-            System.out.println("Executing event insert: " + stmtParts.toString());
+            // System.out.println("Executing event insert: " + stmtParts.toString());
 
             stmtParts.executeUpdate();
           }
@@ -199,7 +199,7 @@ public class PostgresDBHelper {
         if (conn != null && !conn.isClosed()) {
           conn.rollback();
         }
-        throw ex;
+        // throw ex;
       }
 
     } catch (Exception e) {
