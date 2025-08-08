@@ -89,6 +89,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -130,6 +131,9 @@ public class AdkWebServer implements WebMvcConfigurer {
   @Value("${adk.web.ui.dir:#{null}}")
   private String webUiDir;
 
+  @Value("${adk.agent.hotReloadingEnabled:true}")
+  private boolean hotReloadingEnabled;
+
   @Bean
   public BaseSessionService sessionService() {
 
@@ -164,18 +168,38 @@ public class AdkWebServer implements WebMvcConfigurer {
 
   @Bean("loadedAgentRegistry")
   public Map<String, BaseAgent> loadedAgentRegistry(
-      AgentCompilerLoader loader, AgentLoadingProperties props) {
+      AgentLoadingProperties props, RunnerService runnerService) {
+    Map<String, BaseAgent> agents = new ConcurrentHashMap<>();
+
     if (props.getSourceDir() == null || props.getSourceDir().isEmpty()) {
       log.info("adk.agents.source-dir not set. Initializing with an empty agent registry.");
-      return Collections.emptyMap();
+      return agents;
     }
+
     try {
-      Map<String, BaseAgent> agents = loader.loadAgents();
-      log.info("Loaded {} dynamic agent(s): {}", agents.size(), agents.keySet());
+      // Create and use compiler loader
+      AgentCompilerLoader compilerLoader = new AgentCompilerLoader(props);
+      Map<String, BaseAgent> compiledAgents = compilerLoader.loadAgents();
+      agents.putAll(compiledAgents);
+      log.info("Loaded {} compiled agents: {}", compiledAgents.size(), compiledAgents.keySet());
+
+      // Create and use YAML hot loader
+      AgentYamlHotLoader yamlLoader =
+          new AgentYamlHotLoader(props, agents, runnerService, hotReloadingEnabled);
+      Map<String, BaseAgent> yamlAgents = yamlLoader.loadAgents();
+      agents.putAll(yamlAgents);
+      log.info("Loaded {} YAML agents: {}", yamlAgents.size(), yamlAgents.keySet());
+
+      // Start hot-reloading
+      if (yamlLoader.supportsHotReloading()) {
+        yamlLoader.start();
+        log.info("Started hot-reloading for YAML agents");
+      }
+
       return agents;
     } catch (IOException e) {
-      log.error("Failed to load dynamic agents", e);
-      return Collections.emptyMap();
+      log.error("Failed to load agents", e);
+      return agents;
     }
   }
 
@@ -197,7 +221,7 @@ public class AdkWebServer implements WebMvcConfigurer {
 
     @Autowired
     public RunnerService(
-        @Qualifier("loadedAgentRegistry") Map<String, BaseAgent> agentRegistry,
+        @Lazy @Qualifier("loadedAgentRegistry") Map<String, BaseAgent> agentRegistry,
         BaseArtifactService artifactService,
         BaseSessionService sessionService) {
       this.agentRegistry = agentRegistry;
@@ -231,6 +255,16 @@ public class AdkWebServer implements WebMvcConfigurer {
                 agent.name());
             return new Runner(agent, appName, this.artifactService, this.sessionService);
           });
+    }
+
+    /** Called by hot loader when agents are updated */
+    public void onAgentUpdated(String agentName) {
+      Runner removed = runnerCache.remove(agentName);
+      if (removed != null) {
+        log.info("Cleared cached Runner for updated agent: {}", agentName);
+      } else {
+        log.debug("No cached Runner found for agent: {}", agentName);
+      }
     }
   }
 

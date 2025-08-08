@@ -348,6 +348,9 @@ public abstract class BaseLlmFlow implements BaseFlow {
                       .author(context.agent().name())
                       .branch(context.branch())
                       .build();
+              // Explicitly set the event timestamp to 0 so the postprocessing logic would generate
+              // events with fresh timestamp.
+              mutableEventTemplate.setTimestamp(0L);
 
               Flowable<Event> restOfFlow =
                   callLlm(context, llmRequestAfterPreprocess, mutableEventTemplate)

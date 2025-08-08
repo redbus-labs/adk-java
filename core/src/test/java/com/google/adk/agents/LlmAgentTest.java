@@ -27,7 +27,9 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.events.Event;
+import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.Model;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils.EchoTool;
 import com.google.adk.tools.BaseTool;
@@ -288,5 +290,17 @@ public final class LlmAgentTest {
         agent.canonicalGlobalInstruction(invocationContext).blockingGet().getKey();
 
     assertThat(canonicalInstruction).isEqualTo(instruction + invocationContext.invocationId());
+  }
+
+  @Test
+  public void resolveModel_withModelName_resolvesFromRegistry() {
+    String modelName = "test-model";
+    TestLlm testLlm = createTestLlm(LlmResponse.builder().build());
+    LlmRegistry.registerLlm(modelName, (name) -> testLlm);
+    LlmAgent agent = createTestAgentBuilder(testLlm).model(modelName).build();
+    Model resolvedModel = agent.resolvedModel();
+
+    assertThat(resolvedModel.modelName()).hasValue(modelName);
+    assertThat(resolvedModel.model()).hasValue(testLlm);
   }
 }

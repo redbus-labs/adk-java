@@ -54,11 +54,21 @@ import org.springframework.stereotype.Service;
  * subdirectories or as individual {@code .java} files.
  */
 @Service
-public class AgentCompilerLoader {
+public class AgentCompilerLoader implements AgentLoader {
   private static final Logger logger = LoggerFactory.getLogger(AgentCompilerLoader.class);
   private final AgentLoadingProperties properties;
   private Path compiledAgentsOutputDir;
   private final String adkCoreJarPathForCompilation;
+
+  @Override
+  public String getLoaderType() {
+    return "Compiled Java Agents";
+  }
+
+  @Override
+  public boolean supportsHotReloading() {
+    return false;
+  }
 
   /**
    * Initializes the loader with agent configuration and proactively attempts to locate the ADK core

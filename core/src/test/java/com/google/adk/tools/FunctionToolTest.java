@@ -25,6 +25,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
+import com.google.protobuf.Timestamp;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.lang.reflect.Method;
@@ -38,6 +39,13 @@ import org.junit.runners.JUnit4;
 /** Unit tests for {@link FunctionTool}. */
 @RunWith(JUnit4.class)
 public final class FunctionToolTest {
+
+  @Test
+  public void create_withNonSerializableParameter_raisesIllegalArgumentException() {
+    assertThrows(
+        IllegalArgumentException.class, () -> FunctionTool.create(Functions.class, "doThing"));
+  }
+
   @Test
   public void create_withStaticMethod_success() throws NoSuchMethodException {
     Method method = Functions.class.getMethod("voidReturnWithoutSchema");
@@ -320,6 +328,94 @@ public final class FunctionToolTest {
   }
 
   @Test
+  public void create_withDiamondDependency_buildsCorrectSchema() {
+    FunctionTool tool = FunctionTool.create(Functions.class, "processDiamond");
+
+    // This is the expected schema for the object at the bottom of the diamond.
+    Schema bottomSchema =
+        Schema.builder()
+            .type("OBJECT")
+            .properties(ImmutableMap.of("name", Schema.builder().type("STRING").build()))
+            .build();
+
+    // The full schema should correctly represent the structure, with the full
+    // `bottomSchema` appearing in both the 'left' and 'right' branches. If the
+    Schema expectedParams =
+        Schema.builder()
+            .type("OBJECT")
+            .properties(
+                ImmutableMap.of(
+                    "top",
+                    Schema.builder()
+                        .type("OBJECT")
+                        .properties(
+                            ImmutableMap.of(
+                                "left",
+                                Schema.builder()
+                                    .type("OBJECT")
+                                    .properties(ImmutableMap.of("bottom", bottomSchema))
+                                    .build(),
+                                "right",
+                                Schema.builder()
+                                    .type("OBJECT")
+                                    .properties(ImmutableMap.of("bottom", bottomSchema))
+                                    .build()))
+                        .build()))
+            .required(ImmutableList.of("top"))
+            .build();
+
+    assertThat(tool.declaration().get().parameters()).hasValue(expectedParams);
+  }
+
+  @Test
+  public void create_withCustomGenericType_buildsCorrectSchema() {
+    FunctionTool tool = FunctionTool.create(Functions.class, "staticCustomGenericParam");
+
+    assertThat(tool.declaration().get().parameters())
+        .hasValue(
+            Schema.builder()
+                .type("OBJECT")
+                .properties(
+                    ImmutableMap.of(
+                        "customType",
+                        Schema.builder()
+                            .type("OBJECT")
+                            .properties(
+                                ImmutableMap.of("value", Schema.builder().type("STRING").build()))
+                            .build()))
+                .required(ImmutableList.of("customType"))
+                .build());
+  }
+
+  @Test
+  public void create_withRecursiveParam_avoidsInfiniteRecursion() {
+    Schema nodeSchema =
+        Schema.builder()
+            .type("OBJECT")
+            .properties(
+                ImmutableMap.of(
+                    "value",
+                    Schema.builder().type("STRING").build(),
+                    "next", // The recursive field
+                    Schema.builder()
+                        .type("OBJECT")
+                        .description(
+                            "Recursive reference to com.google.adk.tools.FunctionToolTest.Node"
+                                + " omitted.")
+                        .build()))
+            .build();
+    Schema expectedParameters =
+        Schema.builder()
+            .type("OBJECT")
+            .properties(ImmutableMap.of("param", nodeSchema))
+            .required(ImmutableList.of("param"))
+            .build();
+
+    FunctionTool tool = FunctionTool.create(Functions.class, "recursiveParam");
+    assertThat(tool.declaration().get().parameters()).hasValue(expectedParameters);
+  }
+
+  @Test
   public void create_withMaybeMapReturnType() {
     FunctionTool tool = FunctionTool.create(Functions.class, "returnsMaybeMap");
 
@@ -377,6 +473,7 @@ public final class FunctionToolTest {
   }
 
   @Test
+  @SuppressWarnings("BooleanLiteral")
   public void call_nonStaticWithAllSupportedParameterTypes() throws Exception {
     Functions functions = new Functions();
     FunctionTool tool =
@@ -429,6 +526,18 @@ public final class FunctionToolTest {
   }
 
   static class Functions {
+
+    @Annotations.Schema(
+        name = "doThing",
+        description = "This function fetches stats that the agent needs.")
+    public static Maybe<Map<String, Object>> doThing(
+        @Annotations.Schema(
+                name = "recursiveParam",
+                description = "Protobuf fields have a recursive property in them.")
+            Timestamp recursiveParam) {
+      return Maybe.just(ImmutableMap.of("key", "value"));
+    }
+
     @Annotations.Schema(name = "my_function", description = "A test function")
     public static void voidReturnWithSchemaAndToolContext(
         @Annotations.Schema(name = "first_param", description = "An integer parameter") int param1,
@@ -488,6 +597,8 @@ public final class FunctionToolTest {
       return ImmutableMap.of("field1", pojo.getField1(), "field2", pojo.getField2());
     }
 
+    public static void processDiamond(DiamondTop top) {}
+
     public static Maybe<Map<String, Object>> returnsMaybeMap() {
       return Maybe.just(ImmutableMap.of("key", "value"));
     }
@@ -523,6 +634,15 @@ public final class FunctionToolTest {
 
     public void nonStaticVoidReturnWithoutSchema() {}
 
+    public static ImmutableMap<String, Object> staticCustomGenericParam(
+        ParametrizedCustomType<String> customType) {
+      return ImmutableMap.of("customType", customType);
+    }
+
+    public static ImmutableMap<String, Object> recursiveParam(Node param) {
+      return ImmutableMap.of("param", param);
+    }
+
     public ImmutableMap<String, Object> nonStaticReturnAllSupportedParametersAsMap(
         String stringParam,
         boolean primitiveBoolParam,
@@ -557,12 +677,12 @@ public final class FunctionToolTest {
     }
   }
 
-  private static class PojoWithFields {
+  public static class PojoWithFields {
     public String field1;
     public int field2;
   }
 
-  private static class PojoWithGettersAndSetters {
+  public static class PojoWithGettersAndSetters {
     private String privateField1;
     private int privateField2;
 
@@ -582,4 +702,16 @@ public final class FunctionToolTest {
       privateField2 = value;
     }
   }
+
+  private record DiamondBottom(String name) {}
+
+  private record DiamondLeft(DiamondBottom bottom) {}
+
+  private record DiamondRight(DiamondBottom bottom) {}
+
+  private record DiamondTop(DiamondLeft left, DiamondRight right) {}
+
+  private record ParametrizedCustomType<T extends String>(T value) {}
+
+  private record Node(String value, Node next) {}
 }
