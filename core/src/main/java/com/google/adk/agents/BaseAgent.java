@@ -23,6 +23,7 @@ import com.google.adk.agents.Callbacks.AfterAgentCallback;
 import com.google.adk.agents.Callbacks.BeforeAgentCallback;
 import com.google.adk.events.Event;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.DoNotCall;
 import com.google.genai.types.Content;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
@@ -359,4 +360,19 @@ public abstract class BaseAgent {
    * @return stream of agent-generated events.
    */
   protected abstract Flowable<Event> runLiveImpl(InvocationContext invocationContext);
+
+  /**
+   * Creates a new agent instance from a configuration object.
+   *
+   * @param config Agent configuration.
+   * @param configAbsPath Absolute path to the configuration file.
+   * @return new agent instance.
+   */
+  // TODO: Makes `BaseAgent.fromConfig` a final method and let sub-class to optionally override
+  // `_parse_config` to update kwargs if needed.
+  @DoNotCall("Always throws java.lang.UnsupportedOperationException")
+  public static BaseAgent fromConfig(BaseAgentConfig config, String configAbsPath) {
+    throw new UnsupportedOperationException(
+        "BaseAgent is abstract. Override fromConfig in concrete subclasses.");
+  }
 }

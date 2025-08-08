@@ -21,7 +21,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * Configuration for LlmAgent.
  *
- * <p>workInProgress: Config agent features are not yet ready for public use.
+ * <p>TODO: Config agent features are not yet ready for public use.
  */
 public class LlmAgentConfig extends BaseAgentConfig {
   private String model;
@@ -29,6 +29,11 @@ public class LlmAgentConfig extends BaseAgentConfig {
   private Boolean disallowTransferToParent;
   private Boolean disallowTransferToPeers;
   private String outputKey;
+
+  public LlmAgentConfig() {
+    super();
+    setAgentClass("LlmAgent");
+  }
 
   // Non-standard accessors with JsonProperty annotations
   @JsonProperty("model")

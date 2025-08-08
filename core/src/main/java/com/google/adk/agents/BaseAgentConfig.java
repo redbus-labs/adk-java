@@ -21,11 +21,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * Base configuration for all agents.
  *
- * <p>workInProgress: Config agent features are not yet ready for public use.
+ * <p>TODO: Config agent features are not yet ready for public use.
  */
 public class BaseAgentConfig {
   private String name;
   private String description = "";
+  private String agentClass;
 
   @JsonProperty(value = "name", required = true)
   public String name() {
@@ -43,5 +44,14 @@ public class BaseAgentConfig {
 
   public void setDescription(String description) {
     this.description = description;
+  }
+
+  @JsonProperty("agent_class")
+  public String agentClass() {
+    return agentClass;
+  }
+
+  public void setAgentClass(String agentClass) {
+    this.agentClass = agentClass;
   }
 }
