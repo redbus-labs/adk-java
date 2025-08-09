@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
+import com.google.genai.types.LiveConnectConfig;
 import com.google.genai.types.Tool;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
@@ -110,19 +111,23 @@ public abstract class BaseTool {
                       .build())
               .build();
     }
+    ImmutableList<Tool> newTools =
+        new ImmutableList.Builder<Tool>()
+            .addAll(toolsWithoutFunctionDeclarations)
+            .add(toolWithFunctionDeclarations)
+            .build();
     // Patch the GenerateContentConfig with the new tool definition.
     GenerateContentConfig generateContentConfig =
         llmRequest
             .config()
             .map(GenerateContentConfig::toBuilder)
             .orElse(GenerateContentConfig.builder())
-            .tools(
-                new ImmutableList.Builder<Tool>()
-                    .addAll(toolsWithoutFunctionDeclarations)
-                    .add(toolWithFunctionDeclarations)
-                    .build())
+            .tools(newTools)
             .build();
+    LiveConnectConfig liveConnectConfig =
+        llmRequest.liveConnectConfig().toBuilder().tools(newTools).build();
     llmRequestBuilder.config(generateContentConfig);
+    llmRequestBuilder.liveConnectConfig(liveConnectConfig);
     return Completable.complete();
   }
 
