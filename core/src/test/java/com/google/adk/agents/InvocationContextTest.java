@@ -23,6 +23,8 @@ import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -39,6 +41,7 @@ public final class InvocationContextTest {
   private Session session;
   private Content userContent;
   private RunConfig runConfig;
+  private Map<String, ActiveStreamingTool> activeStreamingTools;
   private LiveRequestQueue liveRequestQueue;
   private String testInvocationId;
 
@@ -50,6 +53,8 @@ public final class InvocationContextTest {
     userContent = Content.builder().build();
     runConfig = RunConfig.builder().build();
     testInvocationId = "test-invocation-id";
+    activeStreamingTools = new HashMap<>();
+    activeStreamingTools.put("test-tool", new ActiveStreamingTool(new LiveRequestQueue()));
   }
 
   @Test
@@ -126,6 +131,7 @@ public final class InvocationContextTest {
             session,
             userContent,
             runConfig);
+    originalContext.activeStreamingTools().putAll(activeStreamingTools);
 
     InvocationContext copiedContext = InvocationContext.copyOf(originalContext);
 
@@ -141,6 +147,8 @@ public final class InvocationContextTest {
     assertThat(copiedContext.userContent()).isEqualTo(originalContext.userContent());
     assertThat(copiedContext.runConfig()).isEqualTo(originalContext.runConfig());
     assertThat(copiedContext.endInvocation()).isEqualTo(originalContext.endInvocation());
+    assertThat(copiedContext.activeStreamingTools())
+        .isEqualTo(originalContext.activeStreamingTools());
   }
 
   @Test

@@ -17,6 +17,7 @@
 package com.google.adk.flows.llmflows;
 
 import com.google.adk.Telemetry;
+import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.CallbackContext;
 import com.google.adk.agents.Callbacks.AfterModelCallback;
@@ -168,11 +169,16 @@ public abstract class BaseLlmFlow implements BaseFlow {
               buildModelResponseEvent(baseEventForLlmResponse, llmRequest, updatedResponse);
           eventIterables.add(Collections.singleton(modelResponseEvent));
 
-          Maybe<Event> maybeFunctionCallEvent =
-              modelResponseEvent.functionCalls().isEmpty()
-                  ? Maybe.empty()
-                  : Functions.handleFunctionCalls(context, modelResponseEvent, llmRequest.tools());
-
+          Maybe<Event> maybeFunctionCallEvent;
+          if (modelResponseEvent.functionCalls().isEmpty()) {
+            maybeFunctionCallEvent = Maybe.empty();
+          } else if (context.runConfig().streamingMode() == StreamingMode.BIDI) {
+            maybeFunctionCallEvent =
+                Functions.handleFunctionCallsLive(context, modelResponseEvent, llmRequest.tools());
+          } else {
+            maybeFunctionCallEvent =
+                Functions.handleFunctionCalls(context, modelResponseEvent, llmRequest.tools());
+          }
           return maybeFunctionCallEvent
               .map(Optional::of)
               .defaultIfEmpty(Optional.empty())
@@ -497,7 +503,22 @@ public abstract class BaseLlmFlow implements BaseFlow {
                             }
                           });
 
-              Flowable<LiveRequest> liveRequests = invocationContext.liveRequestQueue().get().get();
+              Flowable<LiveRequest> liveRequests =
+                  invocationContext
+                      .liveRequestQueue()
+                      .get()
+                      .get()
+                      .doOnNext(
+                          request -> {
+                            if (!invocationContext.activeStreamingTools().isEmpty()) {
+                              for (ActiveStreamingTool activeStreamingTool :
+                                  invocationContext.activeStreamingTools().values()) {
+                                if (activeStreamingTool.stream() != null) {
+                                  activeStreamingTool.stream().send(request);
+                                }
+                              }
+                            }
+                          });
               Disposable sendTask =
                   historySent
                       .observeOn(agent.executor().map(Schedulers::from).orElse(Schedulers.io()))
