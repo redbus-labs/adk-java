@@ -18,7 +18,7 @@ package com.example;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
-import com.google.adk.maven.AgentProvider;
+import com.google.adk.maven.AgentLoader;
 import com.google.adk.tools.GoogleSearchTool;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
@@ -28,15 +28,15 @@ import java.util.function.Supplier;
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 
-/** Example AgentProvider that creates simple agents for demonstration. */
+/** Example AgentLoader that creates simple agents for demonstration. */
 @ThreadSafe
-public class SimpleAgentProvider implements AgentProvider {
+public class SimpleAgentLoader implements AgentLoader {
 
-  public static final SimpleAgentProvider INSTANCE = new SimpleAgentProvider();
+  public static final SimpleAgentLoader INSTANCE = new SimpleAgentLoader();
 
   private final ImmutableMap<String, Supplier<BaseAgent>> agentSuppliers;
 
-  public SimpleAgentProvider() {
+  public SimpleAgentLoader() {
     this.agentSuppliers =
         ImmutableMap.of(
             "chat_assistant", Suppliers.memoize(this::createChatAssistant),
@@ -51,7 +51,7 @@ public class SimpleAgentProvider implements AgentProvider {
   }
 
   @Override
-  public BaseAgent getAgent(String name) {
+  public BaseAgent loadAgent(String name) {
     Supplier<BaseAgent> supplier = agentSuppliers.get(name);
     if (supplier == null) {
       throw new NoSuchElementException("Agent not found: " + name);

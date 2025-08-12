@@ -32,7 +32,7 @@ import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.artifacts.ListArtifactsResponse;
 import com.google.adk.events.Event;
-import com.google.adk.maven.AgentProvider;
+import com.google.adk.maven.AgentLoader;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
@@ -158,14 +158,14 @@ public class AdkWebServer implements WebMvcConfigurer {
   public static class RunnerService {
     private static final Logger log = LoggerFactory.getLogger(RunnerService.class);
 
-    private final AgentProvider agentProvider;
+    private final AgentLoader agentProvider;
     private final BaseArtifactService artifactService;
     private final BaseSessionService sessionService;
     private final Map<String, Runner> runnerCache = new ConcurrentHashMap<>();
 
     @Autowired
     public RunnerService(
-        @Qualifier("agentProvider") AgentProvider agentProvider,
+        @Qualifier("agentLoader") AgentLoader agentProvider,
         BaseArtifactService artifactService,
         BaseSessionService sessionService) {
       this.agentProvider = agentProvider;
@@ -185,7 +185,7 @@ public class AdkWebServer implements WebMvcConfigurer {
           appName,
           key -> {
             try {
-              BaseAgent agent = agentProvider.getAgent(key);
+              BaseAgent agent = agentProvider.loadAgent(key);
               log.info(
                   "RunnerService: Creating Runner for appName: {}, using agent" + " definition: {}",
                   appName,
@@ -574,7 +574,7 @@ public class AdkWebServer implements WebMvcConfigurer {
 
     private final BaseSessionService sessionService;
     private final BaseArtifactService artifactService;
-    private final AgentProvider agentProvider;
+    private final AgentLoader agentProvider;
     private final ApiServerSpanExporter apiServerSpanExporter;
     private final RunnerService runnerService;
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
@@ -592,7 +592,7 @@ public class AdkWebServer implements WebMvcConfigurer {
     public AgentController(
         BaseSessionService sessionService,
         BaseArtifactService artifactService,
-        @Qualifier("agentProvider") AgentProvider agentProvider,
+        @Qualifier("agentLoader") AgentLoader agentProvider,
         ApiServerSpanExporter apiServerSpanExporter,
         RunnerService runnerService) {
       this.sessionService = sessionService;
@@ -1341,7 +1341,7 @@ public class AdkWebServer implements WebMvcConfigurer {
 
       BaseAgent currentAppAgent;
       try {
-        currentAppAgent = agentProvider.getAgent(appName);
+        currentAppAgent = agentProvider.loadAgent(appName);
       } catch (java.util.NoSuchElementException e) {
         log.warn("Agent app '{}' not found for graph generation.", appName);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)

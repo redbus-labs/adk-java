@@ -4,7 +4,7 @@ This example demonstrates how to create and run custom ADK agents using the Mave
 
 ## What's Included
 
-- **SimpleAgentProvider**: An implementation of `AgentProvider` that creates three example agents:
+- **SimpleAgentLoader**: An implementation of `AgentLoader` that creates three example agents:
   - `chat_assistant`: A friendly general-purpose assistant
   - `search_agent`: An agent with Google Search capabilities
   - `code_helper`: A coding assistant
@@ -12,13 +12,15 @@ This example demonstrates how to create and run custom ADK agents using the Mave
 ## How to Run
 
 1. **Compile the project:**
+
    ```bash
    mvn compile
    ```
 
 2. **Start the ADK Web Server:**
+
    ```bash
-   mvn google-adk:web -Dagents=com.example.SimpleAgentProvider.INSTANCE
+   mvn google-adk:web -Dagents=com.example.SimpleAgentLoader.INSTANCE
    ```
 
 3. **Open your browser:**
@@ -31,7 +33,7 @@ This example demonstrates how to create and run custom ADK agents using the Mave
 
 ## Customizing
 
-You can modify `SimpleAgentProvider.java` to:
+You can modify `SimpleAgentLoader.java` to:
 - Add more agents
 - Change agent instructions
 - Add different tools
@@ -41,6 +43,7 @@ You can modify `SimpleAgentProvider.java` to:
 Example modifications:
 
 ### Add a New Agent
+
 ```java
 private BaseAgent createMathTutor() {
   return LlmAgent.builder()
@@ -54,7 +57,8 @@ private BaseAgent createMathTutor() {
 }
 ```
 
-Then add it to the `listAgents()` method and `getAgent()` switch statement:
+Then add it to the `listAgents()` method and `loadAgent()` switch statement:
+
 ```java
 @Override
 @Nonnull
@@ -63,7 +67,7 @@ public ImmutableList<String> listAgents() {
 }
 
 @Override
-public BaseAgent getAgent(String name) {
+public BaseAgent loadAgent(String name) {
   switch (name) {
     case "chat_assistant":
       return createChatAssistant();
@@ -80,8 +84,9 @@ public BaseAgent getAgent(String name) {
 ```
 
 ### Configure Different Ports
+
 ```bash
-mvn google-adk:web -Dagents=com.example.SimpleAgentProvider.INSTANCE -Dport=9090
+mvn google-adk:web -Dagents=com.example.SimpleAgentLoader.INSTANCE -Dport=9090
 ```
 
 ## Next Steps

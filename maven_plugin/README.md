@@ -7,12 +7,12 @@ This Maven plugin provides a convenient way to start the ADK Web Server with you
 ### Basic Usage
 
 ```bash
-mvn google-adk:web -Dagents=com.example.MyAgentProvider.INSTANCE
+mvn google-adk:web -Dagents=com.example.MyAgentLoader.INSTANCE
 ```
 
 ### Parameters
 
-- **`agents`** (required): Full class path to your AgentProvider implementation
+- **`agents`** (required): Full class path to your AgentLoader implementation
 - **`port`** (optional, default: 8000): Port for the web server
 - **`host`** (optional, default: localhost): Host address to bind to
 - **`hotReloading`** (optional, default: true): Whether to enable hot reloading
@@ -21,36 +21,43 @@ mvn google-adk:web -Dagents=com.example.MyAgentProvider.INSTANCE
 
 ```bash
 mvn google-adk:web \
-  -Dagents=com.example.MyAgentProvider.INSTANCE \
+  -Dagents=com.example.MyAgentLoader.INSTANCE \
   -Dhost=0.0.0.0 \
   -Dport=9090 \
   -DhotReloading=false
 ```
 
-## Creating an AgentProvider
+## Creating an AgentLoader
 
-### 1. Implement the AgentProvider Interface
+### 1. Implement the AgentLoader Interface
 
-Create a class that implements `com.google.adk.maven.AgentProvider`:
+Create a class that implements `com.google.adk.maven.AgentLoader`:
 
 ```java
 package com.example;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
-import com.google.adk.maven.AgentProvider;
-import java.util.Map;
+import com.google.adk.maven.AgentLoader;
+import com.google.common.collect.ImmutableList;
+import java.util.NoSuchElementException;
 
-public class MyAgentProvider implements AgentProvider {
+public class MyAgentLoader implements AgentLoader {
 
-    public static final MyAgentProvider INSTANCE = new MyAgentProvider();
+    public static final MyAgentLoader INSTANCE = new MyAgentLoader();
 
     @Override
-    public Map<String, BaseAgent> getAgents() {
-        return Map.of(
-            "chat_bot", createChatBot(),
-            "code_assistant", createCodeAssistant()
-        );
+    public ImmutableList<String> listAgents() {
+        return ImmutableList.of("chat_bot", "code_assistant");
+    }
+
+    @Override
+    public BaseAgent loadAgent(String name) {
+        switch (name) {
+            case "chat_bot": return createChatBot();
+            case "code_assistant": return createCodeAssistant();
+            default: throw new NoSuchElementException("Agent not found: " + name);
+        }
     }
 
     private BaseAgent createChatBot() {
@@ -92,19 +99,27 @@ Add the plugin to your `pom.xml`:
 ### 3. Run the Web Server
 
 ```bash
-mvn google-adk:web -Dagents=com.example.MyAgentProvider.INSTANCE
+mvn google-adk:web -Dagents=com.example.MyAgentLoader.INSTANCE
 ```
 
-## Alternative AgentProvider Patterns
+## Alternative AgentLoader Patterns
 
 ### Using Default Constructor
 
 ```java
-public class SimpleAgentProvider implements AgentProvider {
+public class SimpleAgentLoader implements AgentLoader {
     // No static field needed, uses default constructor
     @Override
-    public Map<String, BaseAgent> getAgents() {
-        return Map.of("simple_agent", createSimpleAgent());
+    public ImmutableList<String> listAgents() {
+        return ImmutableList.of("simple_agent");
+    }
+
+    @Override
+    public BaseAgent loadAgent(String name) {
+        if ("simple_agent".equals(name)) {
+            return createSimpleAgent();
+        }
+        throw new NoSuchElementException("Agent not found: " + name);
     }
 
     private BaseAgent createSimpleAgent() {
@@ -119,28 +134,39 @@ public class SimpleAgentProvider implements AgentProvider {
 ```
 
 Usage:
+
 ```bash
-mvn google-adk:web -Dagents=com.example.SimpleAgentProvider
+mvn google-adk:web -Dagents=com.example.SimpleAgentLoader
 ```
 
 ### Using Other Static Fields
 
 ```java
-public class MultipleProviders implements AgentProvider {
-    public static final MultipleProviders DEFAULT = new MultipleProviders();
-    public static final MultipleProviders ADVANCED = new MultipleProviders(true);
+public class MultipleLoaders implements AgentLoader {
+    public static final MultipleLoaders DEFAULT = new MultipleLoaders();
+    public static final MultipleLoaders ADVANCED = new MultipleLoaders(true);
 
     private final boolean advanced;
 
-    public MultipleProviders() { this(false); }
-    public MultipleProviders(boolean advanced) { this.advanced = advanced; }
+    public MultipleLoaders() { this(false); }
+    public MultipleLoaders(boolean advanced) { this.advanced = advanced; }
 
     @Override
-    public Map<String, BaseAgent> getAgents() {
+    public ImmutableList<String> listAgents() {
         if (advanced) {
-            return Map.of("advanced_agent", createAdvancedAgent());
+            return ImmutableList.of("advanced_agent");
         }
-        return Map.of("basic_agent", createBasicAgent());
+        return ImmutableList.of("basic_agent");
+    }
+
+    @Override
+    public BaseAgent loadAgent(String name) {
+        if (advanced && "advanced_agent".equals(name)) {
+            return createAdvancedAgent();
+        } else if (!advanced && "basic_agent".equals(name)) {
+            return createBasicAgent();
+        }
+        throw new NoSuchElementException("Agent not found: " + name);
     }
 
     private BaseAgent createBasicAgent() {
@@ -164,8 +190,9 @@ public class MultipleProviders implements AgentProvider {
 ```
 
 Usage:
+
 ```bash
-mvn google-adk:web -Dagents=com.example.MultipleProviders.ADVANCED
+mvn google-adk:web -Dagents=com.example.MultipleLoaders.ADVANCED
 ```
 
 ## Web UI
@@ -194,7 +221,7 @@ Make sure your project has the necessary ADK dependencies:
         <version>0.2.1-SNAPSHOT</version>
     </dependency>
 
-    <!-- Maven plugin dependency for AgentProvider interface -->
+    <!-- Maven plugin dependency for AgentLoader interface -->
     <dependency>
         <groupId>com.google.adk</groupId>
         <artifactId>google-adk-maven-plugin</artifactId>
@@ -223,15 +250,17 @@ Add the plugin to your `pom.xml` for convenience:
 ```
 
 Then use the short command:
+
 ```bash
-mvn google-adk:web -Dagents=com.example.MyAgentProvider.INSTANCE
+mvn google-adk:web -Dagents=com.example.MyAgentLoader.INSTANCE
 ```
 
 **Option 2: Without plugin declaration (no pom.xml changes)**
 
 Use the full coordinates directly:
+
 ```bash
-mvn com.google.adk:google-adk-maven-plugin:web -Dagents=com.example.MyAgentProvider.INSTANCE
+mvn com.google.adk:google-adk-maven-plugin:web -Dagents=com.example.MyAgentLoader.INSTANCE
 ```
 
 ## Stopping the Server

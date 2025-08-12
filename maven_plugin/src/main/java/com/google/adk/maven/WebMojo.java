@@ -47,22 +47,22 @@ import org.springframework.context.ConfigurableApplicationContext;
  * <h3>Basic Usage</h3>
  *
  * <pre>{@code
- * mvn google-adk:web -Dagents=com.example.MyAgentProvider
+ * mvn google-adk:web -Dagents=com.example.MyAgentLoader
  * }</pre>
  *
  * <h3>Configuration Parameters</h3>
  *
  * <ul>
- *   <li><strong>agents</strong> (required) - Full class path to AgentProvider implementation
+ *   <li><strong>agents</strong> (required) - Full class path to AgentLoader implementation
  *   <li><strong>port</strong> (optional, default: 8000) - Server port
  *   <li><strong>host</strong> (optional, default: localhost) - Server host address
  *   <li><strong>hotReloading</strong> (optional, default: true) - Enable hot reloading for
  *       config-based agents
  * </ul>
  *
- * <h3>AgentProvider Implementation</h3>
+ * <h3>AgentLoader Implementation</h3>
  *
- * <p>The agents parameter should point to a class that implements {@link AgentProvider}. It can
+ * <p>The agents parameter should point to a class that implements {@link AgentLoader}. It can
  * reference either:
  *
  * <ul>
@@ -87,10 +87,10 @@ public class WebMojo extends AbstractMojo {
   private MavenProject project;
 
   /**
-   * Full class path to the AgentProvider instance.
+   * Full class path to the AgentLoader instance.
    *
-   * <p>This parameter specifies the AgentProvider implementation that will supply the agents for
-   * the web server. It can be specified in two formats:
+   * <p>This parameter specifies the AgentLoader implementation that will supply the agents for the
+   * web server. It can be specified in two formats:
    *
    * <ul>
    *   <li><strong>Static field reference:</strong> {@code com.example.MyProvider.INSTANCE}
@@ -101,7 +101,7 @@ public class WebMojo extends AbstractMojo {
    * <p>Example:
    *
    * <pre>{@code
-   * mvn google-adk:web -Dagents=com.example.MyAgentProvider
+   * mvn google-adk:web -Dagents=com.example.MyAgentLoader
    * }</pre>
    */
   @Parameter(property = "agents")
@@ -162,9 +162,9 @@ public class WebMojo extends AbstractMojo {
       projectClassLoader = createProjectClassLoader();
       Thread.currentThread().setContextClassLoader(projectClassLoader);
 
-      // Load and instantiate the AgentProvider
-      getLog().info("Loading agent provider: " + agents);
-      AgentProvider provider = loadAgentProvider();
+      // Load and instantiate the AgentLoader
+      getLog().info("Loading agent loader: " + agents);
+      AgentLoader provider = loadAgentProvider();
 
       // Set up system properties for Spring Boot
       setupSystemProperties();
@@ -175,7 +175,7 @@ public class WebMojo extends AbstractMojo {
       // Add the agent provider as a bean
       app.addInitializers(
           ctx -> {
-            ctx.getBeanFactory().registerSingleton("agentProvider", provider);
+            ctx.getBeanFactory().registerSingleton("agentLoader", provider);
           });
 
       getLog().info("Starting Spring Boot application...");
@@ -239,7 +239,7 @@ public class WebMojo extends AbstractMojo {
    * Creates a classloader that can access the user's project classes and dependencies.
    *
    * <p>This is necessary because the Maven plugin runs in its own classloader context, but needs to
-   * load the user's AgentProvider class and its dependencies at runtime.
+   * load the user's AgentLoader class and its dependencies at runtime.
    *
    * @return URLClassLoader containing the user's compiled classes and runtime dependencies
    * @throws MojoExecutionException if project dependencies cannot be resolved
@@ -266,10 +266,10 @@ public class WebMojo extends AbstractMojo {
     }
   }
 
-  private AgentProvider loadAgentProvider() throws MojoExecutionException {
+  private AgentLoader loadAgentProvider() throws MojoExecutionException {
     // First, try to interpret as class.field syntax
     if (agents.contains(".")) {
-      AgentProvider provider = tryLoadFromStaticField();
+      AgentLoader provider = tryLoadFromStaticField();
       if (provider != null) {
         return provider;
       }
@@ -280,12 +280,12 @@ public class WebMojo extends AbstractMojo {
   }
 
   /**
-   * Attempts to load an AgentProvider from a static field reference.
+   * Attempts to load an AgentLoader from a static field reference.
    *
-   * @return AgentProvider instance if successful, null if the field approach should be abandoned
+   * @return AgentLoader instance if successful, null if the field approach should be abandoned
    * @throws MojoExecutionException if field is found but has issues (wrong type, access problems)
    */
-  private AgentProvider tryLoadFromStaticField() throws MojoExecutionException {
+  private AgentLoader tryLoadFromStaticField() throws MojoExecutionException {
     int lastDotIndex = agents.lastIndexOf('.');
     String className = agents.substring(0, lastDotIndex);
     String fieldName = agents.substring(lastDotIndex + 1);
@@ -295,15 +295,11 @@ public class WebMojo extends AbstractMojo {
       Field field = providerClass.getField(fieldName);
 
       Object instance = field.get(null);
-      if (!(instance instanceof AgentProvider)) {
+      if (!(instance instanceof AgentLoader)) {
         throw new MojoExecutionException(
-            "Field "
-                + fieldName
-                + " in class "
-                + className
-                + " is not an instance of AgentProvider");
+            "Field " + fieldName + " in class " + className + " is not an instance of AgentLoader");
       }
-      return (AgentProvider) instance;
+      return (AgentLoader) instance;
 
     } catch (ClassNotFoundException | NoSuchFieldException e) {
       // Field approach failed, return null to try constructor approach
@@ -315,23 +311,23 @@ public class WebMojo extends AbstractMojo {
   }
 
   /**
-   * Attempts to load an AgentProvider by instantiating the class using its default constructor.
+   * Attempts to load an AgentLoader by instantiating the class using its default constructor.
    *
-   * @return AgentProvider instance
+   * @return AgentLoader instance
    * @throws MojoExecutionException if class cannot be found or instantiated
    */
-  private AgentProvider tryLoadFromConstructor() throws MojoExecutionException {
+  private AgentLoader tryLoadFromConstructor() throws MojoExecutionException {
     try {
       Class<?> providerClass = projectClassLoader.loadClass(agents);
       Object instance = providerClass.getDeclaredConstructor().newInstance();
-      if (!(instance instanceof AgentProvider)) {
-        throw new MojoExecutionException("Class " + agents + " does not implement AgentProvider");
+      if (!(instance instanceof AgentLoader)) {
+        throw new MojoExecutionException("Class " + agents + " does not implement AgentLoader");
       }
-      return (AgentProvider) instance;
+      return (AgentLoader) instance;
 
     } catch (ClassNotFoundException e) {
       throw new MojoExecutionException(
-          "AgentProvider class not found: "
+          "AgentLoader class not found: "
               + agents
               + ". Make sure the class is in your project's classpath.",
           e);

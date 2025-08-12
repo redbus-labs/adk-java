@@ -20,7 +20,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
- * Interface for providing agents to the ADK Web Server.
+ * Interface for loading agents to the ADK Web Server.
  *
  * <p>Users implement this interface to register their agents with ADK Web Server.
  *
@@ -30,14 +30,14 @@ import javax.annotation.concurrent.ThreadSafe;
  * <p>Example usage:
  *
  * <pre>{@code
- * public class MyAgentProvider implements AgentProvider {
+ * public class MyAgentLoader implements AgentLoader {
  *   @Override
  *   public ImmutableList<String> listAgents() {
  *     return ImmutableList.of("chat_bot", "code_assistant");
  *   }
  *
  *   @Override
- *   public BaseAgent getAgent(String name) {
+ *   public BaseAgent loadAgent(String name) {
  *     switch (name) {
  *       case "chat_bot": return createChatBot();
  *       case "code_assistant": return createCodeAssistant();
@@ -50,13 +50,13 @@ import javax.annotation.concurrent.ThreadSafe;
  * <p>Then use with Maven plugin:
  *
  * <pre>{@code
- * mvn google-adk:web -Dagents=com.acme.MyAgentProvider
+ * mvn google-adk:web -Dagents=com.acme.MyAgentLoader
  * }</pre>
  *
  * TODO: Add config-based agent registration in the future.
  */
 @ThreadSafe
-public interface AgentProvider {
+public interface AgentLoader {
 
   /**
    * Returns a list of available agent names.
@@ -68,12 +68,12 @@ public interface AgentProvider {
   ImmutableList<String> listAgents();
 
   /**
-   * Returns the BaseAgent instance for the specified agent name.
+   * Loads the BaseAgent instance for the specified agent name.
    *
-   * @param name the name of the agent to retrieve
+   * @param name the name of the agent to load
    * @return BaseAgent instance for the given name
    * @throws java.util.NoSuchElementException if the agent doesn't exist
    * @throws IllegalStateException if the agent exists but fails to load
    */
-  BaseAgent getAgent(String name);
+  BaseAgent loadAgent(String name);
 }
