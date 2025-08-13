@@ -12,7 +12,7 @@ mvn google-adk:web -Dagents=com.example.MyAgentLoader.INSTANCE
 
 ### Parameters
 
-- **`agents`** (required): Full class path to your AgentLoader implementation
+- **`agents`** (required): Full class path to your AgentLoader implementation OR path to agent configuration directory
 - **`port`** (optional, default: 8000): Port for the web server
 - **`host`** (optional, default: localhost): Host address to bind to
 - **`hotReloading`** (optional, default: true): Whether to enable hot reloading
@@ -193,6 +193,59 @@ Usage:
 
 ```bash
 mvn google-adk:web -Dagents=com.example.MultipleLoaders.ADVANCED
+```
+
+## Config-Based Agents (Directory Path)
+
+For configuration-based agents using YAML files, you can provide a directory path instead of a class name. The plugin will automatically use `ConfigAgentLoader` to scan for agent directories.
+
+### Directory Structure
+
+Create a parent directory containing subdirectories, each representing an agent with a `root_agent.yaml` file:
+
+```
+my-agents/
+├── chat-assistant/
+│   └── root_agent.yaml
+├── search-agent/
+│   └── root_agent.yaml
+└── code-helper/
+    ├── root_agent.yaml
+    └── another_agent.yaml
+```
+
+### Usage with Directory Path
+
+```bash
+mvn google-adk:web -Dagents=my-agents
+```
+
+Or with absolute path:
+
+```bash
+mvn google-adk:web -Dagents=/home/user/my-agents
+```
+
+### Hot Reloading for Config Agents
+
+When using config-based agents, hot reloading is enabled by default. The plugin will automatically detect changes to any YAML files within the agent directories and reload agents without restarting the server.
+
+To disable hot reloading:
+
+```bash
+mvn google-adk:web -Dagents=my-agents -DhotReloading=false
+```
+
+### Example root_agent.yaml
+
+```yaml
+name: "chat_assistant"
+description: "A friendly chat assistant"
+model: "gemini-2.0-flash"
+instruction: |
+  You are a helpful and friendly assistant.
+  Answer questions clearly and concisely.
+  Be encouraging and positive in your responses.
 ```
 
 ## Web UI

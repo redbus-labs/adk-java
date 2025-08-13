@@ -56,7 +56,12 @@ public final class Contents implements RequestProcessor {
     if (llmAgent.includeContents() == LlmAgent.IncludeContents.NONE) {
       return Single.just(
           RequestProcessor.RequestProcessingResult.create(
-              request.toBuilder().contents(ImmutableList.of()).build(), ImmutableList.of()));
+              request.toBuilder()
+                  .contents(
+                      getCurrentTurnContents(
+                          context.branch(), context.session().events(), context.agent().name()))
+                  .build(),
+              ImmutableList.of()));
     }
 
     ImmutableList<Content> contents =
@@ -65,6 +70,19 @@ public final class Contents implements RequestProcessor {
     return Single.just(
         RequestProcessor.RequestProcessingResult.create(
             request.toBuilder().contents(contents).build(), ImmutableList.of()));
+  }
+
+  /** Gets contents for the current turn only (no conversation history). */
+  private ImmutableList<Content> getCurrentTurnContents(
+      Optional<String> currentBranch, List<Event> events, String agentName) {
+    // Find the latest event that starts the current turn and process from there.
+    for (int i = events.size() - 1; i >= 0; i--) {
+      Event event = events.get(i);
+      if (event.author().equals("user") || isOtherAgentReply(agentName, event)) {
+        return getContents(currentBranch, events.subList(i, events.size()), agentName);
+      }
+    }
+    return ImmutableList.of();
   }
 
   private ImmutableList<Content> getContents(

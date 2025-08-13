@@ -22,6 +22,9 @@ import java.lang.reflect.Field;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
@@ -87,21 +90,26 @@ public class WebMojo extends AbstractMojo {
   private MavenProject project;
 
   /**
-   * Full class path to the AgentLoader instance.
+   * Full class path to the AgentLoader instance or path to agent configuration directory.
    *
-   * <p>This parameter specifies the AgentLoader implementation that will supply the agents for the
-   * web server. It can be specified in two formats:
+   * <p>This parameter specifies either:
    *
    * <ul>
    *   <li><strong>Static field reference:</strong> {@code com.example.MyProvider.INSTANCE}
    *   <li><strong>Class name:</strong> {@code com.example.MyProvider} (requires default
    *       constructor)
+   *   <li><strong>Directory path:</strong> {@code /path/to/agents} (parent directory containing
+   *       agent subdirectories, each with root_agent.yaml)
    * </ul>
    *
-   * <p>Example:
+   * <p>When a directory path is provided, the plugin will use ConfigAgentLoader to scan for
+   * subdirectories containing {@code root_agent.yaml} files.
+   *
+   * <p>Examples:
    *
    * <pre>{@code
    * mvn google-adk:web -Dagents=com.example.MyAgentLoader
+   * mvn google-adk:web -Dagents=/path/to/agents
    * }</pre>
    */
   @Parameter(property = "agents")
@@ -211,8 +219,8 @@ public class WebMojo extends AbstractMojo {
   private void validateParameters() throws MojoFailureException {
     if (agents == null || agents.trim().isEmpty()) {
       throw new MojoFailureException(
-          "agents parameter is required. "
-              + "Usage: mvn google-adk:web -Dagents=com.example.MyProvider.INSTANCE");
+          "agents parameter is required. Usage: mvn google-adk:web"
+              + " -Dagents=com.example.MyProvider.INSTANCE or -Dagents=/path/to/agents");
     }
 
     if (port < 1 || port > 65535) {
@@ -267,7 +275,14 @@ public class WebMojo extends AbstractMojo {
   }
 
   private AgentLoader loadAgentProvider() throws MojoExecutionException {
-    // First, try to interpret as class.field syntax
+    // First, check if agents parameter is a directory path
+    Path agentsPath = Paths.get(agents);
+    if (Files.isDirectory(agentsPath)) {
+      getLog().info("Detected directory path, using ConfigAgentLoader: " + agents);
+      return new ConfigAgentLoader(agents, hotReloading);
+    }
+
+    // Next, try to interpret as class.field syntax
     if (agents.contains(".")) {
       AgentLoader provider = tryLoadFromStaticField();
       if (provider != null) {
