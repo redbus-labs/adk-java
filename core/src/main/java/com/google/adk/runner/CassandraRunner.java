@@ -6,6 +6,7 @@ package com.google.adk.runner;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.artifacts.CassandraArtifactService;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.sessions.CassandraSessionService;
 import java.io.IOException;
 
@@ -20,6 +21,7 @@ public class CassandraRunner extends Runner {
         agent,
         appName,
         new CassandraArtifactService(appName + "_ART", "" + appName + "_ART"),
-        new CassandraSessionService());
+        new CassandraSessionService(),
+        new InMemoryMemoryService());
   }
 }

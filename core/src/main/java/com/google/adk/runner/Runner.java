@@ -24,6 +24,7 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
+import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.utils.CollectionUtils;
@@ -49,8 +50,22 @@ public class Runner {
   private final String appName;
   private final BaseArtifactService artifactService;
   private final BaseSessionService sessionService;
+  private final BaseMemoryService memoryService;
 
   /** Creates a new {@code Runner}. */
+  public Runner(
+      BaseAgent agent,
+      String appName,
+      BaseArtifactService artifactService,
+      BaseSessionService sessionService,
+      BaseMemoryService memoryService) {
+    this.agent = agent;
+    this.appName = appName;
+    this.artifactService = artifactService;
+    this.sessionService = sessionService;
+    this.memoryService = memoryService;
+  }
+  
   public Runner(
       BaseAgent agent,
       String appName,
@@ -60,6 +75,7 @@ public class Runner {
     this.appName = appName;
     this.artifactService = artifactService;
     this.sessionService = sessionService;
+      this.memoryService = null;
   }
 
   public BaseAgent agent() {

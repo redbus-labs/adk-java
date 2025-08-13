@@ -18,6 +18,7 @@ package com.google.adk.runner;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.artifacts.InMemoryArtifactService;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.sessions.InMemorySessionService;
 
 /** The class for the in-memory GenAi runner, using in-memory artifact and session services. */
@@ -30,6 +31,11 @@ public class InMemoryRunner extends Runner {
   }
 
   public InMemoryRunner(BaseAgent agent, String appName) {
-    super(agent, appName, new InMemoryArtifactService(), new InMemorySessionService());
+    super(
+        agent,
+        appName,
+        new InMemoryArtifactService(),
+        new InMemorySessionService(),
+        new InMemoryMemoryService());
   }
 }
