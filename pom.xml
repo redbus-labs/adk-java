@@ -29,6 +29,7 @@
   <modules>
     <module>core</module>
     <module>dev</module>
+    <module>maven_plugin</module>
     <module>contrib/langchain4j</module>
   </modules>
 

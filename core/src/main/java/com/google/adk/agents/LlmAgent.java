@@ -39,6 +39,8 @@ import com.google.adk.agents.Callbacks.BeforeModelCallbackSync;
 import com.google.adk.agents.Callbacks.BeforeToolCallback;
 import com.google.adk.agents.Callbacks.BeforeToolCallbackBase;
 import com.google.adk.agents.Callbacks.BeforeToolCallbackSync;
+import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
+import com.google.adk.codeexecutors.BaseCodeExecutor;
 import com.google.adk.events.Event;
 import com.google.adk.examples.BaseExampleProvider;
 import com.google.adk.examples.Example;
@@ -49,7 +51,9 @@ import com.google.adk.models.BaseLlm;
 import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.Model;
 import com.google.adk.tools.BaseTool;
+import com.google.adk.tools.BaseTool.ToolConfig;
 import com.google.adk.tools.BaseToolset;
+import com.google.common.base.CaseFormat;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -59,6 +63,7 @@ import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -102,6 +107,7 @@ public class LlmAgent extends BaseAgent {
   private final Optional<Schema> outputSchema;
   private final Optional<Executor> executor;
   private final Optional<String> outputKey;
+  private final Optional<BaseCodeExecutor> codeExecutor;
 
   private volatile Model resolvedModel;
   private final BaseLlmFlow llmFlow;
@@ -135,6 +141,7 @@ public class LlmAgent extends BaseAgent {
     this.executor = Optional.ofNullable(builder.executor);
     this.outputKey = Optional.ofNullable(builder.outputKey);
     this.toolsUnion = builder.toolsUnion != null ? builder.toolsUnion : ImmutableList.of();
+    this.codeExecutor = Optional.ofNullable(builder.codeExecutor);
 
     this.llmFlow = determineLlmFlow();
 
@@ -175,6 +182,7 @@ public class LlmAgent extends BaseAgent {
     private Schema outputSchema;
     private Executor executor;
     private String outputKey;
+    private BaseCodeExecutor codeExecutor;
 
     @CanIgnoreReturnValue
     public Builder name(String name) {
@@ -559,6 +567,12 @@ public class LlmAgent extends BaseAgent {
       return this;
     }
 
+    @CanIgnoreReturnValue
+    public Builder codeExecutor(BaseCodeExecutor codeExecutor) {
+      this.codeExecutor = codeExecutor;
+      return this;
+    }
+
     protected void validate() {
       this.disallowTransferToParent =
           this.disallowTransferToParent != null && this.disallowTransferToParent;
@@ -812,6 +826,11 @@ public class LlmAgent extends BaseAgent {
     return outputKey;
   }
 
+  @Nullable
+  public BaseCodeExecutor codeExecutor() {
+    return codeExecutor.orElse(null);
+  }
+
   public Model resolvedModel() {
     if (resolvedModel == null) {
       synchronized (this) {
@@ -864,20 +883,20 @@ public class LlmAgent extends BaseAgent {
    * @param configAbsPath The absolute path to the agent config file. This is needed for resolving
    *     relative paths for e.g. tools.
    * @return the configured LlmAgent
-   * @throws ConfigAgentUtils.ConfigurationException if the configuration is invalid
+   * @throws ConfigurationException if the configuration is invalid
    *     <p>TODO: Config agent features are not yet ready for public use.
    */
   public static LlmAgent fromConfig(LlmAgentConfig config, String configAbsPath)
-      throws ConfigAgentUtils.ConfigurationException {
+      throws ConfigurationException {
     logger.debug("Creating LlmAgent from config: {}", config.name());
 
     // Validate required fields
     if (config.name() == null || config.name().trim().isEmpty()) {
-      throw new ConfigAgentUtils.ConfigurationException("Agent name is required");
+      throw new ConfigurationException("Agent name is required");
     }
 
     if (config.instruction() == null || config.instruction().trim().isEmpty()) {
-      throw new ConfigAgentUtils.ConfigurationException("Agent instruction is required");
+      throw new ConfigurationException("Agent instruction is required");
     }
 
     // Create builder with required fields
@@ -889,6 +908,14 @@ public class LlmAgent extends BaseAgent {
 
     if (config.model() != null && !config.model().trim().isEmpty()) {
       builder.model(config.model());
+    }
+
+    try {
+      if (config.tools() != null) {
+        builder.tools(resolveTools(config.tools(), configAbsPath));
+      }
+    } catch (ConfigurationException e) {
+      throw new ConfigurationException("Error resolving tools for agent " + config.name(), e);
     }
 
     // Set optional transfer configuration
@@ -910,5 +937,117 @@ public class LlmAgent extends BaseAgent {
     logger.info("Successfully created LlmAgent: {}", agent.name());
 
     return agent;
+  }
+
+  private static ImmutableList<BaseTool> resolveTools(
+      List<ToolConfig> toolConfigs, String configAbsPath) throws ConfigurationException {
+
+    if (toolConfigs == null || toolConfigs.isEmpty()) {
+      return ImmutableList.of();
+    }
+
+    List<BaseTool> resolvedTools = new ArrayList<>();
+
+    for (ToolConfig toolConfig : toolConfigs) {
+      try {
+        String toolName = toolConfig.name();
+        if (toolName == null || toolName.trim().isEmpty()) {
+          throw new ConfigurationException("Tool name cannot be empty");
+        }
+
+        toolName = toolName.trim();
+        BaseTool tool;
+
+        if (!toolName.contains(".")) {
+          tool = resolveBuiltInTool(toolName, toolConfig);
+        } else {
+          // TODO: Support user-defined tools
+          logger.debug("configAbsPath is: {}", configAbsPath);
+          throw new ConfigurationException("User-defined tools are not yet supported");
+        }
+
+        resolvedTools.add(tool);
+        logger.debug("Successfully resolved tool: {}", toolConfig.name());
+      } catch (Exception e) {
+        String errorMsg = "Failed to resolve tool: " + toolConfig.name();
+        logger.error(errorMsg, e);
+        throw new ConfigurationException(errorMsg, e);
+      }
+    }
+
+    return ImmutableList.copyOf(resolvedTools);
+  }
+
+  private static BaseTool resolveBuiltInTool(String toolName, ToolConfig toolConfig)
+      throws ConfigurationException {
+    try {
+      logger.debug("Resolving built-in tool: {}", toolName);
+      // TODO: Handle built-in tool name end with Tool while config yaml file does not.
+      // e.g.google_search in config yaml file and GoogleSearchTool in tool class name.
+      String pascalCaseToolName = CaseFormat.LOWER_UNDERSCORE.to(CaseFormat.UPPER_CAMEL, toolName);
+      String className = "com.google.adk.tools." + pascalCaseToolName;
+      Class<?> toolClass;
+      try {
+        toolClass = Class.forName(className);
+        logger.debug("Successfully loaded tool class: {}", className);
+      } catch (ClassNotFoundException e) {
+        String fallbackClassName = "com.google.adk.tools." + toolName;
+        try {
+          toolClass = Class.forName(fallbackClassName);
+        } catch (ClassNotFoundException e2) {
+          throw new ConfigurationException(
+              "Built-in tool not found: "
+                  + toolName
+                  + ". Expected class: "
+                  + className
+                  + " or "
+                  + fallbackClassName,
+              e2);
+        }
+      }
+
+      if (!BaseTool.class.isAssignableFrom(toolClass)) {
+        throw new ConfigurationException(
+            "Built-in tool class " + toolClass.getName() + " does not extend BaseTool");
+      }
+
+      @SuppressWarnings("unchecked")
+      Class<? extends BaseTool> baseToolClass = (Class<? extends BaseTool>) toolClass;
+
+      BaseTool tool = createToolInstance(baseToolClass, toolConfig);
+      logger.info(
+          "Successfully created built-in tool: {} (class: {})", toolName, toolClass.getName());
+
+      return tool;
+
+    } catch (Exception e) {
+      logger.error("Failed to create built-in tool: {}", toolName, e);
+      throw new ConfigurationException("Failed to create built-in tool: " + toolName, e);
+    }
+  }
+
+  private static BaseTool createToolInstance(
+      Class<? extends BaseTool> toolClass, ToolConfig toolConfig)
+      throws ConfigAgentUtils.ConfigurationException {
+
+    try {
+      // TODO:implement constructor with ToolArgsConfig
+      logger.debug("ToolConfig is: {}", toolConfig);
+
+      // Try default constructor
+      try {
+        Constructor<? extends BaseTool> constructor = toolClass.getConstructor();
+        return constructor.newInstance();
+      } catch (NoSuchMethodException e) {
+        // Continue
+      }
+
+      throw new ConfigAgentUtils.ConfigurationException(
+          "No suitable constructor found for tool class: " + toolClass.getName());
+
+    } catch (Exception e) {
+      throw new ConfigAgentUtils.ConfigurationException(
+          "Failed to instantiate tool class: " + toolClass.getName(), e);
+    }
   }
 }

@@ -367,6 +367,84 @@ public final class ContentsTest {
         .inOrder();
   }
 
+  @Test
+  public void processRequest_includeContentsNone_lastEventIsUser() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Turn 1"),
+            createAgentEvent("a1", "Reply 1"),
+            createUserEvent("u2", "Turn 2"));
+    List<Content> result =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+    assertThat(result).containsExactly(events.get(2).content().get());
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_lastEventIsOtherAgent() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Turn 1"),
+            createAgentEvent("a1", "Reply 1"),
+            createAgentEvent(OTHER_AGENT, "oa1", "Other Agent Turn"));
+    List<Content> result =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+    assertThat(result)
+        .containsExactly(
+            Content.fromParts(
+                Part.fromText("For context:"),
+                Part.fromText("[other_agent] said: Other Agent Turn")));
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_noUserMessage() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createAgentEvent("a1", "Reply 1"),
+            createFunctionCallEvent("fc1", "tool1", "call1"),
+            createFunctionResponseEvent("fr1", "tool1", "call1"));
+    List<Content> result =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_asyncFRAcrossTurns_throwsException() {
+    Event u1 = createUserEvent("u1", "Query 1");
+    Event fc1 = createFunctionCallEvent("fc1", "tool1", "call1");
+    Event u2 = createUserEvent("u2", "Query 2");
+    Event fr1 = createFunctionResponseEvent("fr1", "tool1", "call1"); // FR for fc1
+
+    ImmutableList<Event> events = ImmutableList.of(u1, fc1, u2, fr1);
+
+    // The current turn starts from u2. fc1 is not in the sublist [u2, fr1], so rearrangement fails.
+    IllegalStateException e =
+        assertThrows(
+            IllegalStateException.class,
+            () -> runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE));
+    assertThat(e)
+        .hasMessageThat()
+        .contains("No function call event found for function response IDs: [call1]");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_asyncFRWithinTurn() {
+    Event u1 = createUserEvent("u1", "Query 1");
+    Event fc1 = createFunctionCallEvent("fc1", "tool1", "call1");
+    Event a1 = createAgentEvent("a1", "Agent thinking");
+    Event fr1 = createFunctionResponseEvent("fr1", "tool1", "call1");
+
+    ImmutableList<Event> events = ImmutableList.of(u1, fc1, a1, fr1);
+    // Current turn starts with u1. The list passed to getContents is [u1, fc1, a1, fr1].
+    List<Content> result =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+    assertThat(result)
+        .containsExactly(
+            events.get(0).content().get(), // u1
+            events.get(1).content().get(), // fc1
+            events.get(3).content().get()) // fr1 (merged)
+        .inOrder();
+  }
+
   private static Event createUserEvent(String id, String text) {
     return Event.builder()
         .id(id)
@@ -503,7 +581,12 @@ public final class ContentsTest {
   }
 
   private List<Content> runContentsProcessor(List<Event> events) {
-    LlmAgent agent = LlmAgent.builder().name(AGENT).build();
+    return runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.DEFAULT);
+  }
+
+  private List<Content> runContentsProcessorWithIncludeContents(
+      List<Event> events, LlmAgent.IncludeContents includeContents) {
+    LlmAgent agent = LlmAgent.builder().name(AGENT).includeContents(includeContents).build();
     Session session =
         Session.builder("test-session")
             .appName("test-app")

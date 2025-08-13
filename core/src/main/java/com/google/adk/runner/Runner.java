@@ -17,6 +17,7 @@
 package com.google.adk.runner;
 
 import com.google.adk.Telemetry;
+import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
@@ -27,6 +28,8 @@ import com.google.adk.events.Event;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
+import com.google.adk.tools.BaseTool;
+import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.AudioTranscriptionConfig;
@@ -39,6 +42,7 @@ import io.opentelemetry.context.Scope;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -286,6 +290,20 @@ public class Runner {
     try (Scope scope = span.makeCurrent()) {
       InvocationContext invocationContext =
           newInvocationContextForLive(session, Optional.of(liveRequestQueue), runConfig);
+      if (invocationContext.agent() instanceof LlmAgent) {
+        LlmAgent agent = (LlmAgent) invocationContext.agent();
+        for (BaseTool tool : agent.tools()) {
+          if (tool instanceof FunctionTool functionTool) {
+            for (Parameter parameter : functionTool.func().getParameters()) {
+              if (parameter.getType().equals(LiveRequestQueue.class)) {
+                invocationContext
+                    .activeStreamingTools()
+                    .put(functionTool.name(), new ActiveStreamingTool(new LiveRequestQueue()));
+              }
+            }
+          }
+        }
+      }
       return invocationContext
           .agent()
           .runLive(invocationContext)

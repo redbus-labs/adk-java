@@ -206,7 +206,10 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
               .build());
     } else {
       return sendClientContentInternal(
-          LiveSendClientContentParameters.builder().turns(ImmutableList.of(content)).build());
+          LiveSendClientContentParameters.builder()
+              .turns(ImmutableList.of(content))
+              .turnComplete(true)
+              .build());
     }
   }
 

@@ -16,10 +16,13 @@
 
 package com.google.adk.agents;
 
+import com.google.adk.artifacts.ListArtifactsResponse;
 import com.google.adk.events.EventActions;
 import com.google.adk.sessions.State;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.core.Single;
+import java.util.List;
 import java.util.Optional;
 
 /** The context of various callbacks for an agent invocation. */
@@ -49,6 +52,24 @@ public class CallbackContext extends ReadonlyContext {
   /** Returns the EventActions associated with this context. */
   public EventActions eventActions() {
     return eventActions;
+  }
+
+  /**
+   * Lists the filenames of the artifacts attached to the current session.
+   *
+   * @return the list of artifact filenames
+   */
+  public Single<List<String>> listArtifacts() {
+    if (invocationContext.artifactService() == null) {
+      throw new IllegalStateException("Artifact service is not initialized.");
+    }
+    return invocationContext
+        .artifactService()
+        .listArtifactKeys(
+            invocationContext.session().appName(),
+            invocationContext.session().userId(),
+            invocationContext.session().id())
+        .map(ListArtifactsResponse::filenames);
   }
 
   /**

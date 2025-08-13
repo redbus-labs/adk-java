@@ -18,11 +18,8 @@ package com.google.adk.tools;
 
 import com.google.adk.agents.CallbackContext;
 import com.google.adk.agents.InvocationContext;
-import com.google.adk.artifacts.ListArtifactsResponse;
 import com.google.adk.events.EventActions;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import io.reactivex.rxjava3.core.Single;
-import java.util.List;
 import java.util.Optional;
 
 /** ToolContext object provides a structured context for executing tools or functions. */
@@ -69,20 +66,6 @@ public class ToolContext extends CallbackContext {
   private void searchMemory() {
     // TODO: b/414680316 - Implement search memory logic. Make this public.
     throw new UnsupportedOperationException("Search memory not implemented yet.");
-  }
-
-  /** Lists the filenames of the artifacts attached to the current session. */
-  public Single<List<String>> listArtifacts() {
-    if (invocationContext.artifactService() == null) {
-      throw new IllegalStateException("Artifact service is not initialized.");
-    }
-    return invocationContext
-        .artifactService()
-        .listArtifactKeys(
-            invocationContext.session().appName(),
-            invocationContext.session().userId(),
-            invocationContext.session().id())
-        .map(ListArtifactsResponse::filenames);
   }
 
   public static Builder builder(InvocationContext invocationContext) {
