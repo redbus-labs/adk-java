@@ -16,6 +16,7 @@
 
 package com.google.adk.tools.mcp;
 
+import static com.google.adk.tools.mcp.GeminiSchemaUtil.toGeminiSchema;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -31,10 +32,10 @@ import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.Content;
-import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.reactivex.rxjava3.core.Single;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -103,22 +104,31 @@ public final class McpTool extends BaseTool {
     return this.mcpSession;
   }
 
-  public Schema toGeminiSchema(JsonSchema openApiSchema) {
-    return Schema.fromJson(objectMapper.valueToTree(openApiSchema).toString());
-  }
-
-  private void reintializeSession() {
-    this.mcpSession = this.mcpSessionManager.createSession();
-  }
-
   @Override
   public Optional<FunctionDeclaration> declaration() {
-    return Optional.of(
-        FunctionDeclaration.builder()
-            .name(this.name())
-            .description(this.description())
-            .parameters(toGeminiSchema(this.mcpTool.inputSchema()))
-            .build());
+    try {
+      Schema schema = toGeminiSchema(this.mcpTool.inputSchema(), this.objectMapper);
+
+      return Optional.ofNullable(schema)
+          .map(
+              value ->
+                  FunctionDeclaration.builder()
+                      .name(this.name())
+                      .description(this.description())
+                      .parameters(value)
+                      .build());
+    } catch (IOException | IllegalArgumentException e) {
+      System.err.println(
+          "Error generating function declaration for tool '"
+              + this.name()
+              + "': "
+              + e.getMessage());
+      return Optional.empty();
+    }
+  }
+
+  private void reinitializeSession() {
+    this.mcpSession = this.mcpSessionManager.createSession();
   }
 
   @Override
@@ -137,7 +147,7 @@ public final class McpTool extends BaseTool {
                     .doOnNext(
                         error -> {
                           System.err.println("Retrying callTool due to: " + error);
-                          reintializeSession();
+                          reinitializeSession();
                         }));
   }
 
