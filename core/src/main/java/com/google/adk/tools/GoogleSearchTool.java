@@ -31,8 +31,17 @@ import java.util.List;
  *
  * <p>This tool operates internally within the model and does not require or perform local code
  * execution.
+ *
+ * <p>Usage example in an LlmAgent:
+ *
+ * <pre>{@code
+ * LlmAgent agent = LlmAgent.builder()
+ *     .addTool(GoogleSearchTool.INSTANCE)
+ *     .build();
+ * }</pre>
  */
 public final class GoogleSearchTool extends BaseTool {
+  public static final GoogleSearchTool INSTANCE = new GoogleSearchTool();
 
   public GoogleSearchTool() {
     super("google_search", "google_search");

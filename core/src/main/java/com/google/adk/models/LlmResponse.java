@@ -109,6 +109,8 @@ public abstract class LlmResponse extends JsonBaseModel {
     @JsonProperty("content")
     public abstract Builder content(Content content);
 
+    public abstract Builder content(Optional<Content> content);
+
     @JsonProperty("interrupted")
     public abstract Builder interrupted(@Nullable Boolean interrupted);
 

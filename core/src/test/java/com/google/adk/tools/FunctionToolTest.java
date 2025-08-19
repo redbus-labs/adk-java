@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.InvocationContext;
+import com.google.adk.agents.RunConfig;
 import com.google.adk.sessions.Session;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -32,6 +33,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -208,8 +210,18 @@ public final class FunctionToolTest {
     FunctionTool tool = FunctionTool.create(Functions.class, "returnAllSupportedParametersAsMap");
     ToolContext toolContext =
         ToolContext.builder(
-                InvocationContext.create(
-                    null, null, null, Session.builder("123").build(), null, null))
+                new InvocationContext(
+                    /* sessionService= */ null,
+                    /* artifactService= */ null,
+                    /* memoryService= */ null,
+                    /* liveRequestQueue= */ Optional.empty(),
+                    /* branch= */ Optional.empty(),
+                    /* invocationId= */ null,
+                    /* agent= */ null,
+                    /* session= */ Session.builder("123").build(),
+                    /* userContent= */ Optional.empty(),
+                    /* runConfig= */ RunConfig.builder().build(),
+                    /* endInvocation= */ false))
             .functionCallId("functionCallId")
             .build();
 
@@ -400,7 +412,7 @@ public final class FunctionToolTest {
                     Schema.builder()
                         .type("OBJECT")
                         .description(
-                            "Recursive reference to com.google.adk.tools.FunctionToolTest.Node"
+                            "Recursive reference to com.google.adk.tools.FunctionToolTest$Node"
                                 + " omitted.")
                         .build()))
             .build();
@@ -480,8 +492,18 @@ public final class FunctionToolTest {
         FunctionTool.create(functions, "nonStaticReturnAllSupportedParametersAsMap");
     ToolContext toolContext =
         ToolContext.builder(
-                InvocationContext.create(
-                    null, null, null, Session.builder("123").build(), null, null))
+                new InvocationContext(
+                    /* sessionService= */ null,
+                    /* artifactService= */ null,
+                    /* memoryService= */ null,
+                    /* liveRequestQueue= */ Optional.empty(),
+                    /* branch= */ Optional.empty(),
+                    /* invocationId= */ null,
+                    /* agent= */ null,
+                    /* session= */ Session.builder("123").build(),
+                    /* userContent= */ Optional.empty(),
+                    /* runConfig= */ null,
+                    /* endInvocation= */ false))
             .functionCallId("functionCallId")
             .build();
 
@@ -711,7 +733,7 @@ public final class FunctionToolTest {
 
   private record DiamondTop(DiamondLeft left, DiamondRight right) {}
 
-  private record ParametrizedCustomType<T extends String>(T value) {}
+  private record ParametrizedCustomType<T>(T value) {}
 
   private record Node(String value, Node next) {}
 }

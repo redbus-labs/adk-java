@@ -17,9 +17,11 @@
 package com.google.adk.agents;
 
 import com.google.adk.artifacts.BaseArtifactService;
-import com.google.adk.exceptions.LlmCallsLimitExceededException;
+import com.google.adk.memory.BaseMemoryService;
+import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
+import com.google.errorprone.annotations.InlineMe;
 import com.google.genai.types.Content;
 import java.util.Map;
 import java.util.Objects;
@@ -33,6 +35,7 @@ public class InvocationContext {
 
   private final BaseSessionService sessionService;
   private final BaseArtifactService artifactService;
+  private final BaseMemoryService memoryService;
   private final Optional<LiveRequestQueue> liveRequestQueue;
   private final Map<String, ActiveStreamingTool> activeStreamingTools = new ConcurrentHashMap<>();
 
@@ -46,9 +49,10 @@ public class InvocationContext {
   private boolean endInvocation;
   private final InvocationCostManager invocationCostManager = new InvocationCostManager();
 
-  private InvocationContext(
+  public InvocationContext(
       BaseSessionService sessionService,
       BaseArtifactService artifactService,
+      BaseMemoryService memoryService,
       Optional<LiveRequestQueue> liveRequestQueue,
       Optional<String> branch,
       String invocationId,
@@ -59,6 +63,7 @@ public class InvocationContext {
       boolean endInvocation) {
     this.sessionService = sessionService;
     this.artifactService = artifactService;
+    this.memoryService = memoryService;
     this.liveRequestQueue = liveRequestQueue;
     this.branch = branch;
     this.invocationId = invocationId;
@@ -69,6 +74,16 @@ public class InvocationContext {
     this.endInvocation = endInvocation;
   }
 
+  /**
+   * @deprecated Use the {@link #InvocationContext} constructor directly instead
+   */
+  @InlineMe(
+      replacement =
+          "new InvocationContext(sessionService, artifactService, null, Optional.empty(),"
+              + " Optional.empty(), invocationId, agent, session, Optional.ofNullable(userContent),"
+              + " runConfig, false)",
+      imports = {"com.google.adk.agents.InvocationContext", "java.util.Optional"})
+  @Deprecated
   public static InvocationContext create(
       BaseSessionService sessionService,
       BaseArtifactService artifactService,
@@ -80,7 +95,8 @@ public class InvocationContext {
     return new InvocationContext(
         sessionService,
         artifactService,
-        Optional.empty(),
+        /* memoryService= */ null,
+        /* liveRequestQueue= */ Optional.empty(),
         /* branch= */ Optional.empty(),
         invocationId,
         agent,
@@ -90,6 +106,17 @@ public class InvocationContext {
         false);
   }
 
+  /**
+   * @deprecated Use the {@link #InvocationContext} constructor directly instead
+   */
+  @InlineMe(
+      replacement =
+          "new InvocationContext(sessionService, artifactService, null,"
+              + " Optional.ofNullable(liveRequestQueue), Optional.empty(),"
+              + " InvocationContext.newInvocationContextId(), agent, session, Optional.empty(),"
+              + " runConfig, false)",
+      imports = {"com.google.adk.agents.InvocationContext", "java.util.Optional"})
+  @Deprecated
   public static InvocationContext create(
       BaseSessionService sessionService,
       BaseArtifactService artifactService,
@@ -100,6 +127,7 @@ public class InvocationContext {
     return new InvocationContext(
         sessionService,
         artifactService,
+        /* memoryService= */ null,
         Optional.ofNullable(liveRequestQueue),
         /* branch= */ Optional.empty(),
         InvocationContext.newInvocationContextId(),
@@ -115,6 +143,7 @@ public class InvocationContext {
         new InvocationContext(
             other.sessionService,
             other.artifactService,
+            other.memoryService,
             other.liveRequestQueue,
             other.branch,
             other.invocationId,
@@ -133,6 +162,10 @@ public class InvocationContext {
 
   public BaseArtifactService artifactService() {
     return artifactService;
+  }
+
+  public BaseMemoryService memoryService() {
+    return memoryService;
   }
 
   public Map<String, ActiveStreamingTool> activeStreamingTools() {
@@ -226,6 +259,7 @@ public class InvocationContext {
     return endInvocation == that.endInvocation
         && Objects.equals(sessionService, that.sessionService)
         && Objects.equals(artifactService, that.artifactService)
+        && Objects.equals(memoryService, that.memoryService)
         && Objects.equals(liveRequestQueue, that.liveRequestQueue)
         && Objects.equals(activeStreamingTools, that.activeStreamingTools)
         && Objects.equals(branch, that.branch)
@@ -241,6 +275,7 @@ public class InvocationContext {
     return Objects.hash(
         sessionService,
         artifactService,
+        memoryService,
         liveRequestQueue,
         activeStreamingTools,
         branch,

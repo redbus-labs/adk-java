@@ -2,68 +2,58 @@
 
 This example demonstrates how to create and run custom ADK agents using the Maven plugin.
 
-## What's Included
+## Overview
 
-- **SimpleAgentLoader**: An implementation of `AgentLoader` that creates three example agents:
-  - `chat_assistant`: A friendly general-purpose assistant
-  - `search_agent`: An agent with Google Search capabilities
-  - `code_helper`: A coding assistant
+The example includes:
+- **SimpleAgentLoader**: An implementation of `AgentLoader` that creates three example agents
+- **chat_assistant**: A friendly general-purpose assistant
+- **search_agent**: An agent with Google Search capabilities
+- **code_helper**: A coding assistant
 
-## How to Run
+## Project Structure
 
-1. **Compile the project:**
-
-   ```bash
-   mvn compile
-   ```
-
-2. **Start the ADK Web Server:**
-
-   ```bash
-   mvn google-adk:web -Dagents=com.example.SimpleAgentLoader.INSTANCE
-   ```
-
-3. **Open your browser:**
-   Navigate to http://localhost:8000
-
-4. **Try the agents:**
-   - Select an agent from the dropdown
-   - Start a conversation
-   - Test different agents to see their capabilities
-
-## Customizing
-
-You can modify `SimpleAgentLoader.java` to:
-- Add more agents
-- Change agent instructions
-- Add different tools
-- Use different models
-- Configure agent-specific settings
-
-Example modifications:
-
-### Add a New Agent
-
-```java
-private BaseAgent createMathTutor() {
-  return LlmAgent.builder()
-      .name("math_tutor")
-      .description("A mathematics tutoring agent")
-      .model("gemini-2.0-flash")
-      .instruction(
-          "You are a patient math tutor. "
-              + "Help students understand mathematical concepts step by step.")
-      .build();
-}
+```
+├── src/main/java/com/example/
+│   └── SimpleAgentLoader.java         # Agent loader implementation
+├── pom.xml                           # Maven configuration
+└── README.md                         # This file
 ```
 
-Then add it to the `listAgents()` method and `loadAgent()` switch statement:
+## How to Use
+
+### 1. Build and Run
+
+Compile and start the ADK web server:
+
+```bash
+# Navigate to the example directory
+cd maven_plugin/examples/simple-agent
+
+# Clean, compile, and start the server
+mvn clean compile google-adk:web \
+  -Dagents=com.example.SimpleAgentLoader
+```
+
+### 2. Access the Web UI
+
+Open your browser and navigate to:
+```
+http://localhost:8000
+```
+
+You should see three agents available in the dropdown: chat_assistant, search_agent, and code_helper.
+
+## Key Components
+
+### SimpleAgentLoader
+
+The `SimpleAgentLoader` implements the `AgentLoader` interface and creates multiple agents:
 
 ```java
 @Override
 @Nonnull
 public ImmutableList<String> listAgents() {
-  return ImmutableList.of("chat_assistant", "search_agent", "code_helper", "math_tutor");
+  return ImmutableList.of("chat_assistant", "search_agent", "code_helper");
 }
 
 @Override
@@ -75,24 +65,51 @@ public BaseAgent loadAgent(String name) {
       return createSearchAgent();
     case "code_helper":
       return createCodeHelper();
-    case "math_tutor":
-      return createMathTutor();  // Add the new agent
     default:
       throw new NoSuchElementException("Agent not found: " + name);
   }
 }
 ```
 
-### Configure Different Ports
+### Agent Implementations
 
-```bash
-mvn google-adk:web -Dagents=com.example.SimpleAgentLoader.INSTANCE -Dport=9090
-```
+Each agent is created with specific instructions and capabilities:
 
-## Next Steps
+- **chat_assistant**: General-purpose conversational agent
+- **search_agent**: Includes Google Search tool for web information
+- **code_helper**: Specialized for coding assistance and questions
 
-- Explore the ADK documentation for more advanced features
-- Add custom tools to your agents
-- Implement agent hierarchies with sub-agents
-- Try different models (Claude, custom models, etc.)
-- Add memory and state management
+## Sample Queries
+
+Try these sample queries with different agents:
+
+### Chat Assistant
+- "Hello! How can you help me today?"
+- "Tell me about artificial intelligence"
+- "What's your favorite color?"
+
+### Search Agent
+- "What's the latest news about AI?"
+- "Search for information about quantum computing"
+- "Find recent developments in renewable energy"
+
+### Code Helper
+- "How do I create a REST API in Java?"
+- "Explain the difference between ArrayList and LinkedList"
+- "Show me how to implement a binary search algorithm"
+
+## Extending This Example
+
+You can extend this example by:
+
+1. **Adding more agents**: Create additional agent types with specialized instructions
+2. **Using different models**: Try different LLM models
+3. **Adding custom tools**: Integrate additional tools for specific functionalities
+4. **Agent hierarchies**: Implement parent-child agent relationships
+
+## Best Practices
+
+- Use descriptive names and instructions for agents
+- Test each agent's capabilities through the web UI
+- Consider the target use case when designing agent instructions
+- Use appropriate models based on the agent's complexity needs

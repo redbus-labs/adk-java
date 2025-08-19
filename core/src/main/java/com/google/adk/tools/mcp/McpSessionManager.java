@@ -71,6 +71,7 @@ public class McpSessionManager {
             .initializationTimeout(
                 Optional.ofNullable(initializationTimeout).orElse(Duration.ofSeconds(10)))
             .requestTimeout(Optional.ofNullable(requestTimeout).orElse(Duration.ofSeconds(10)))
+            .loggingConsumer(new McpServerLogConsumer())
             .capabilities(ClientCapabilities.builder().build())
             .build();
     InitializeResult initResult = client.initialize();

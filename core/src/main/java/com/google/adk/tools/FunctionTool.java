@@ -18,6 +18,7 @@ package com.google.adk.tools;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.google.adk.agents.InvocationContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -41,7 +42,8 @@ import org.slf4j.LoggerFactory;
 
 /** FunctionTool implements a customized function calling tool. */
 public class FunctionTool extends BaseTool {
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper OBJECT_MAPPER =
+      new ObjectMapper().registerModule(new Jdk8Module());
   private static final Logger logger = LoggerFactory.getLogger(FunctionTool.class);
 
   @Nullable private final Object instance;

@@ -19,7 +19,9 @@ package com.google.adk.tools;
 import com.google.adk.agents.CallbackContext;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.events.EventActions;
+import com.google.adk.memory.SearchMemoryResponse;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import io.reactivex.rxjava3.core.Single;
 import java.util.Optional;
 
 /** ToolContext object provides a structured context for executing tools or functions. */
@@ -62,10 +64,15 @@ public class ToolContext extends CallbackContext {
     throw new UnsupportedOperationException("Auth response retrieval not implemented yet.");
   }
 
-  @SuppressWarnings("unused")
-  private void searchMemory() {
-    // TODO: b/414680316 - Implement search memory logic. Make this public.
-    throw new UnsupportedOperationException("Search memory not implemented yet.");
+  /** Searches the memory of the current user. */
+  public Single<SearchMemoryResponse> searchMemory(String query) {
+    if (invocationContext.memoryService() == null) {
+      throw new IllegalStateException("Memory service is not initialized.");
+    }
+    return invocationContext
+        .memoryService()
+        .searchMemory(
+            invocationContext.session().appName(), invocationContext.session().userId(), query);
   }
 
   public static Builder builder(InvocationContext invocationContext) {

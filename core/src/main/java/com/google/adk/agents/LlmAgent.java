@@ -16,6 +16,7 @@
 
 package com.google.adk.agents;
 
+import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.base.Strings.nullToEmpty;
 import static java.util.stream.Collectors.joining;
 
@@ -53,7 +54,7 @@ import com.google.adk.models.Model;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.BaseTool.ToolConfig;
 import com.google.adk.tools.BaseToolset;
-import com.google.common.base.CaseFormat;
+import com.google.adk.utils.ComponentRegistry;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -63,7 +64,6 @@ import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -950,23 +950,21 @@ public class LlmAgent extends BaseAgent {
 
     for (ToolConfig toolConfig : toolConfigs) {
       try {
-        String toolName = toolConfig.name();
-        if (toolName == null || toolName.trim().isEmpty()) {
+        if (isNullOrEmpty(toolConfig.name())) {
           throw new ConfigurationException("Tool name cannot be empty");
         }
 
-        toolName = toolName.trim();
-        BaseTool tool;
-
-        if (!toolName.contains(".")) {
-          tool = resolveBuiltInTool(toolName, toolConfig);
+        String toolName = toolConfig.name().trim();
+        Optional<BaseTool> toolOpt = ComponentRegistry.resolveToolInstance(toolName);
+        if (toolOpt.isPresent()) {
+          resolvedTools.add(toolOpt.get());
         } else {
           // TODO: Support user-defined tools
+          // TODO: Support using tool class via ComponentRegistry.resolveToolClass
           logger.debug("configAbsPath is: {}", configAbsPath);
-          throw new ConfigurationException("User-defined tools are not yet supported");
+          throw new ConfigurationException("Tool not found: " + toolName);
         }
 
-        resolvedTools.add(tool);
         logger.debug("Successfully resolved tool: {}", toolConfig.name());
       } catch (Exception e) {
         String errorMsg = "Failed to resolve tool: " + toolConfig.name();
@@ -976,78 +974,5 @@ public class LlmAgent extends BaseAgent {
     }
 
     return ImmutableList.copyOf(resolvedTools);
-  }
-
-  private static BaseTool resolveBuiltInTool(String toolName, ToolConfig toolConfig)
-      throws ConfigurationException {
-    try {
-      logger.debug("Resolving built-in tool: {}", toolName);
-      // TODO: Handle built-in tool name end with Tool while config yaml file does not.
-      // e.g.google_search in config yaml file and GoogleSearchTool in tool class name.
-      String pascalCaseToolName = CaseFormat.LOWER_UNDERSCORE.to(CaseFormat.UPPER_CAMEL, toolName);
-      String className = "com.google.adk.tools." + pascalCaseToolName;
-      Class<?> toolClass;
-      try {
-        toolClass = Class.forName(className);
-        logger.debug("Successfully loaded tool class: {}", className);
-      } catch (ClassNotFoundException e) {
-        String fallbackClassName = "com.google.adk.tools." + toolName;
-        try {
-          toolClass = Class.forName(fallbackClassName);
-        } catch (ClassNotFoundException e2) {
-          throw new ConfigurationException(
-              "Built-in tool not found: "
-                  + toolName
-                  + ". Expected class: "
-                  + className
-                  + " or "
-                  + fallbackClassName,
-              e2);
-        }
-      }
-
-      if (!BaseTool.class.isAssignableFrom(toolClass)) {
-        throw new ConfigurationException(
-            "Built-in tool class " + toolClass.getName() + " does not extend BaseTool");
-      }
-
-      @SuppressWarnings("unchecked")
-      Class<? extends BaseTool> baseToolClass = (Class<? extends BaseTool>) toolClass;
-
-      BaseTool tool = createToolInstance(baseToolClass, toolConfig);
-      logger.info(
-          "Successfully created built-in tool: {} (class: {})", toolName, toolClass.getName());
-
-      return tool;
-
-    } catch (Exception e) {
-      logger.error("Failed to create built-in tool: {}", toolName, e);
-      throw new ConfigurationException("Failed to create built-in tool: " + toolName, e);
-    }
-  }
-
-  private static BaseTool createToolInstance(
-      Class<? extends BaseTool> toolClass, ToolConfig toolConfig)
-      throws ConfigAgentUtils.ConfigurationException {
-
-    try {
-      // TODO:implement constructor with ToolArgsConfig
-      logger.debug("ToolConfig is: {}", toolConfig);
-
-      // Try default constructor
-      try {
-        Constructor<? extends BaseTool> constructor = toolClass.getConstructor();
-        return constructor.newInstance();
-      } catch (NoSuchMethodException e) {
-        // Continue
-      }
-
-      throw new ConfigAgentUtils.ConfigurationException(
-          "No suitable constructor found for tool class: " + toolClass.getName());
-
-    } catch (Exception e) {
-      throw new ConfigAgentUtils.ConfigurationException(
-          "Failed to instantiate tool class: " + toolClass.getName(), e);
-    }
   }
 }

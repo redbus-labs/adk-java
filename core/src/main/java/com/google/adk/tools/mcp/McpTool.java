@@ -16,30 +16,20 @@
 
 package com.google.adk.tools.mcp;
 
-import static com.google.adk.tools.mcp.GeminiSchemaUtil.toGeminiSchema;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
-import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableMap;
-import com.google.genai.types.FunctionDeclaration;
-import com.google.genai.types.Schema;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
-import io.modelcontextprotocol.spec.McpSchema.Content;
-import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.reactivex.rxjava3.core.Single;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 // TODO(b/413489523): Add support for auth. This is a TODO for Python as well.
 /**
@@ -48,12 +38,9 @@ import java.util.Optional;
  * <p>This wraps a MCP Tool interface and an active MCP Session. It invokes the MCP Tool through
  * executing the tool from remote MCP Session.
  */
-public final class McpTool extends BaseTool {
+public final class McpTool extends AbstractMcpTool<McpSyncClient> {
 
-  Tool mcpTool;
-  McpSyncClient mcpSession;
-  McpSessionManager mcpSessionManager;
-  ObjectMapper objectMapper;
+  private static final Logger logger = LoggerFactory.getLogger(McpTool.class);
 
   /**
    * Creates a new McpTool with the default ObjectMapper.
@@ -64,7 +51,7 @@ public final class McpTool extends BaseTool {
    * @throws IllegalArgumentException If mcpTool or mcpSession are null.
    */
   public McpTool(Tool mcpTool, McpSyncClient mcpSession, McpSessionManager mcpSessionManager) {
-    this(mcpTool, mcpSession, mcpSessionManager, JsonBaseModel.getMapper());
+    super(mcpTool, mcpSession, mcpSessionManager, JsonBaseModel.getMapper());
   }
 
   /**
@@ -81,50 +68,7 @@ public final class McpTool extends BaseTool {
       McpSyncClient mcpSession,
       McpSessionManager mcpSessionManager,
       ObjectMapper objectMapper) {
-    super(
-        mcpTool == null ? "" : mcpTool.name(),
-        mcpTool == null ? "" : (mcpTool.description().isEmpty() ? "" : mcpTool.description()));
-
-    if (mcpTool == null) {
-      throw new IllegalArgumentException("mcpTool cannot be null");
-    }
-    if (mcpSession == null) {
-      throw new IllegalArgumentException("mcpSession cannot be null");
-    }
-    if (objectMapper == null) {
-      throw new IllegalArgumentException("objectMapper cannot be null");
-    }
-    this.mcpTool = mcpTool;
-    this.mcpSession = mcpSession;
-    this.mcpSessionManager = mcpSessionManager;
-    this.objectMapper = objectMapper;
-  }
-
-  public McpSyncClient getMcpSession() {
-    return this.mcpSession;
-  }
-
-  @Override
-  public Optional<FunctionDeclaration> declaration() {
-    try {
-      Schema schema = toGeminiSchema(this.mcpTool.inputSchema(), this.objectMapper);
-
-      return Optional.ofNullable(schema)
-          .map(
-              value ->
-                  FunctionDeclaration.builder()
-                      .name(this.name())
-                      .description(this.description())
-                      .parameters(value)
-                      .build());
-    } catch (IOException | IllegalArgumentException e) {
-      System.err.println(
-          "Error generating function declaration for tool '"
-              + this.name()
-              + "': "
-              + e.getMessage());
-      return Optional.empty();
-    }
+    super(mcpTool, mcpSession, mcpSessionManager, objectMapper);
   }
 
   private void reinitializeSession() {
@@ -146,62 +90,8 @@ public final class McpTool extends BaseTool {
                     .take(3)
                     .doOnNext(
                         error -> {
-                          System.err.println("Retrying callTool due to: " + error);
+                          logger.error("Retrying callTool due to: {}", error.getMessage(), error);
                           reinitializeSession();
                         }));
-  }
-
-  static Map<String, Object> wrapCallResult(
-      ObjectMapper objectMapper, String mcpToolName, CallToolResult callResult) {
-    if (callResult == null) {
-      return ImmutableMap.of("error", "MCP framework error: CallToolResult was null");
-    }
-
-    List<Content> contents = callResult.content();
-    Boolean isToolError = callResult.isError();
-
-    if (isToolError != null && isToolError) {
-      String errorMessage = "Tool execution failed.";
-      if (contents != null
-          && !contents.isEmpty()
-          && contents.get(0) instanceof TextContent textContent) {
-        if (textContent.text() != null && !textContent.text().isEmpty()) {
-          errorMessage += " Details: " + textContent.text();
-        }
-      }
-      return ImmutableMap.of("error", errorMessage);
-    }
-
-    if (contents == null || contents.isEmpty()) {
-      return ImmutableMap.of();
-    }
-
-    List<String> textOutputs = new ArrayList<>();
-    for (Content content : contents) {
-      if (content instanceof TextContent textContent) {
-        if (textContent.text() != null) {
-          textOutputs.add(textContent.text());
-        }
-      }
-    }
-
-    if (textOutputs.isEmpty()) {
-      return ImmutableMap.of(
-          "error",
-          "Tool '" + mcpToolName + "' returned content that is not TextContent.",
-          "content_details",
-          contents.toString());
-    }
-
-    List<Map<String, Object>> resultMaps = new ArrayList<>();
-    for (String textOutput : textOutputs) {
-      try {
-        resultMaps.add(
-            objectMapper.readValue(textOutput, new TypeReference<Map<String, Object>>() {}));
-      } catch (JsonProcessingException e) {
-        resultMaps.add(ImmutableMap.of("text", textOutput));
-      }
-    }
-    return ImmutableMap.of("text_output", resultMaps);
   }
 }

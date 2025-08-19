@@ -33,6 +33,8 @@ import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.artifacts.ListArtifactsResponse;
 import com.google.adk.events.Event;
 import com.google.adk.maven.AgentLoader;
+import com.google.adk.memory.BaseMemoryService;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
@@ -148,6 +150,18 @@ public class AdkWebServer implements WebMvcConfigurer {
     return new InMemoryArtifactService();
   }
 
+  /**
+   * Provides the singleton instance of the MemoryService (InMemory). Will be made configurable once
+   * we have the Vertex MemoryService.
+   *
+   * @return An instance of BaseMemoryService (currently InMemoryMemoryService).
+   */
+  @Bean
+  public BaseMemoryService memoryService() {
+    log.info("Using InMemoryMemoryService");
+    return new InMemoryMemoryService();
+  }
+
   @Bean
   public ObjectMapper objectMapper() {
     return JsonBaseModel.getMapper();
@@ -161,16 +175,19 @@ public class AdkWebServer implements WebMvcConfigurer {
     private final AgentLoader agentProvider;
     private final BaseArtifactService artifactService;
     private final BaseSessionService sessionService;
+    private final BaseMemoryService memoryService;
     private final Map<String, Runner> runnerCache = new ConcurrentHashMap<>();
 
     @Autowired
     public RunnerService(
         @Qualifier("agentLoader") AgentLoader agentProvider,
         BaseArtifactService artifactService,
-        BaseSessionService sessionService) {
+        BaseSessionService sessionService,
+        BaseMemoryService memoryService) {
       this.agentProvider = agentProvider;
       this.artifactService = artifactService;
       this.sessionService = sessionService;
+      this.memoryService = memoryService;
     }
 
     /**
@@ -190,7 +207,8 @@ public class AdkWebServer implements WebMvcConfigurer {
                   "RunnerService: Creating Runner for appName: {}, using agent" + " definition: {}",
                   appName,
                   agent.name());
-              return new Runner(agent, appName, this.artifactService, this.sessionService);
+              return new Runner(
+                  agent, appName, this.artifactService, this.sessionService, this.memoryService);
             } catch (java.util.NoSuchElementException e) {
               log.error(
                   "Agent/App named '{}' not found in registry. Available apps: {}",

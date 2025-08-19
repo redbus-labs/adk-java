@@ -19,8 +19,11 @@ package com.google.adk.tools;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.google.adk.JsonBaseModel;
 import com.google.common.base.Strings;
 import com.google.genai.types.FunctionDeclaration;
@@ -36,39 +39,39 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Utility class for function calling. */
 public final class FunctionCallingUtils {
 
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper OBJECT_MAPPER =
+      new ObjectMapper().registerModule(new Jdk8Module());
   private static final Logger logger = LoggerFactory.getLogger(FunctionCallingUtils.class);
 
   /** Holds the state during a single schema generation process to handle caching and recursion. */
   private static class SchemaGenerationContext {
-    private final Map<String, Schema> definitions = new LinkedHashMap<>();
-    private final Set<Type> processingStack = new HashSet<>();
+    private final Map<JavaType, Schema> definitions = new LinkedHashMap<>();
+    private final Set<JavaType> processingStack = new HashSet<>();
 
-    boolean isProcessing(Type type) {
+    boolean isProcessing(JavaType type) {
       return processingStack.contains(type);
     }
 
-    void startProcessing(Type type) {
+    void startProcessing(JavaType type) {
       processingStack.add(type);
     }
 
-    void finishProcessing(Type type) {
+    void finishProcessing(JavaType type) {
       processingStack.remove(type);
     }
 
-    Optional<Schema> getDefinition(String name) {
-      return Optional.ofNullable(definitions.get(name));
+    Optional<Schema> getDefinition(JavaType type) {
+      return Optional.ofNullable(definitions.get(type));
     }
 
-    void addDefinition(String name, Schema schema) {
-      definitions.put(name, schema);
+    void addDefinition(JavaType type, Schema schema) {
+      definitions.put(type, schema);
     }
   }
 
@@ -156,129 +159,94 @@ public final class FunctionCallingUtils {
    * @throws IllegalArgumentException if a type is encountered that cannot be serialized by Jackson.
    */
   public static Schema buildSchemaFromType(Type type) {
-    return buildSchemaRecursive(type, new SchemaGenerationContext());
+    return buildSchemaRecursive(OBJECT_MAPPER.constructType(type), new SchemaGenerationContext());
   }
 
   /**
    * Recursively builds a Schema from a Java Type using a context to manage recursion and caching.
    *
-   * @param type The Java {@link Type} to convert.
+   * @param javaType The Java {@link JavaType} to convert.
    * @param context The {@link SchemaGenerationContext} for this generation task.
    * @return The generated {@link Schema}.
    * @throws IllegalArgumentException if a type is encountered that cannot be serialized by Jackson.
    */
-  @SuppressWarnings("deprecation") // We don't have actual instances of the type
-  private static Schema buildSchemaRecursive(Type type, SchemaGenerationContext context) {
-    String definitionName = getTypeKey(type);
-
-    if (definitionName != null) {
-      if (context.isProcessing(type)) {
-        logger.warn("Type {} is recursive. Omitting from schema.", type);
-        return Schema.builder()
-            .type("OBJECT")
-            .description("Recursive reference to " + definitionName + " omitted.")
-            .build();
-      }
-      Optional<Schema> cachedSchema = context.getDefinition(definitionName);
-      if (cachedSchema.isPresent()) {
-        return cachedSchema.get();
-      }
+  private static Schema buildSchemaRecursive(JavaType javaType, SchemaGenerationContext context) {
+    if (context.isProcessing(javaType)) {
+      logger.warn("Type {} is recursive. Omitting from schema.", javaType.toCanonical());
+      return Schema.builder()
+          .type("OBJECT")
+          .description("Recursive reference to " + javaType.toCanonical() + " omitted.")
+          .build();
+    }
+    Optional<Schema> cachedSchema = context.getDefinition(javaType);
+    if (cachedSchema.isPresent()) {
+      return cachedSchema.get();
     }
 
-    context.startProcessing(type);
+    context.startProcessing(javaType);
 
     Schema resultSchema;
     try {
       Schema.Builder builder = Schema.builder();
-      if (type instanceof ParameterizedType parameterizedType) {
-        Class<?> rawClass = (Class<?>) parameterizedType.getRawType();
-        if (List.class.isAssignableFrom(rawClass)) {
-          Schema itemSchema =
-              buildSchemaRecursive(parameterizedType.getActualTypeArguments()[0], context);
-          builder.type("ARRAY").items(itemSchema);
-        } else if (Map.class.isAssignableFrom(rawClass)) {
-          builder.type("OBJECT");
-        } else {
-          // Fallback for other parameterized types (e.g., custom generics) is to inspect the
-          // raw type.
-          return buildSchemaRecursive(rawClass, context);
+      Class<?> rawClass = javaType.getRawClass();
+
+      if (javaType.isCollectionLikeType() && List.class.isAssignableFrom(rawClass)) {
+        builder.type("ARRAY").items(buildSchemaRecursive(javaType.getContentType(), context));
+      } else if (javaType.isMapLikeType()) {
+        builder.type("OBJECT");
+      } else if (String.class.equals(rawClass)) {
+        builder.type("STRING");
+      } else if (Boolean.class.equals(rawClass) || boolean.class.equals(rawClass)) {
+        builder.type("BOOLEAN");
+      } else if (Integer.class.equals(rawClass) || int.class.equals(rawClass)) {
+        builder.type("INTEGER");
+      } else if (Double.class.equals(rawClass)
+          || double.class.equals(rawClass)
+          || Float.class.equals(rawClass)
+          || float.class.equals(rawClass)
+          || Long.class.equals(rawClass)
+          || long.class.equals(rawClass)) {
+        builder.type("NUMBER");
+      } else if (rawClass.isEnum()) {
+        List<String> enumValues = new ArrayList<>();
+        for (Object enumConstant : rawClass.getEnumConstants()) {
+          enumValues.add(enumConstant.toString());
         }
-      } else if (type instanceof Class<?> clazz) {
-        if (clazz.isEnum()) {
-          builder.type("STRING");
-          List<String> enumValues = new ArrayList<>();
-          for (Object enumConstant : clazz.getEnumConstants()) {
-            enumValues.add(enumConstant.toString());
-          }
-          builder.enum_(enumValues);
-        } else if (String.class.equals(clazz)) {
-          builder.type("STRING");
-        } else if (Boolean.class.equals(clazz) || boolean.class.equals(clazz)) {
-          builder.type("BOOLEAN");
-        } else if (Integer.class.equals(clazz) || int.class.equals(clazz)) {
-          builder.type("INTEGER");
-        } else if (Double.class.equals(clazz)
-            || double.class.equals(clazz)
-            || Float.class.equals(clazz)
-            || float.class.equals(clazz)
-            || Long.class.equals(clazz)
-            || long.class.equals(clazz)) {
-          builder.type("NUMBER");
-        } else if (Map.class.isAssignableFrom(clazz)) {
-          builder.type("OBJECT");
-        } else {
-          // Default to treating as a POJO.
-          if (!OBJECT_MAPPER.canSerialize(clazz)) {
-            throw new IllegalArgumentException(
-                "Unsupported type: "
-                    + clazz.getName()
-                    + ". The type must be a Jackson-serializable POJO or a registered"
-                    + " primitive. Opaque types like Protobuf models are not supported"
-                    + " directly.");
-          }
-          BeanDescription beanDescription =
-              OBJECT_MAPPER.getSerializationConfig().introspect(OBJECT_MAPPER.constructType(type));
-          Map<String, Schema> properties = new LinkedHashMap<>();
-          for (BeanPropertyDefinition property : beanDescription.findProperties()) {
-            Type propertyType = property.getRawPrimaryType();
-            if (propertyType == null) {
-              continue;
+        builder.enum_(enumValues).type("STRING").format("enum");
+      } else { // POJO
+        if (!OBJECT_MAPPER.canSerialize(rawClass)) {
+          throw new IllegalArgumentException(
+              "Unsupported type: "
+                  + rawClass.getName()
+                  + ". The type must be a Jackson-serializable POJO or a registered"
+                  + " primitive. Opaque types like Protobuf models are not supported"
+                  + " directly.");
+        }
+        BeanDescription beanDescription =
+            OBJECT_MAPPER.getSerializationConfig().introspect(javaType);
+        Map<String, Schema> properties = new LinkedHashMap<>();
+        List<String> required = new ArrayList<>();
+        for (BeanPropertyDefinition property : beanDescription.findProperties()) {
+          AnnotatedMember member = property.getPrimaryMember();
+          if (member != null) {
+            properties.put(property.getName(), buildSchemaRecursive(member.getType(), context));
+            if (property.isRequired()) {
+              required.add(property.getName());
             }
-            properties.put(property.getName(), buildSchemaRecursive(propertyType, context));
           }
-          builder.type("OBJECT").properties(properties);
+        }
+        builder.type("OBJECT").properties(properties);
+        if (!required.isEmpty()) {
+          builder.required(required);
         }
       }
       resultSchema = builder.build();
     } finally {
-      context.finishProcessing(type);
+      context.finishProcessing(javaType);
     }
 
-    if (definitionName != null) {
-      context.addDefinition(definitionName, resultSchema);
-    }
+    context.addDefinition(javaType, resultSchema);
     return resultSchema;
-  }
-
-  /**
-   * Gets a stable, canonical name for a type to use as a key for caching and recursion tracking.
-   *
-   * @param type The type to name.
-   * @return The canonical name of the type, or null if the type should not be tracked (e.g.,
-   *     primitives).
-   */
-  @Nullable
-  private static String getTypeKey(Type type) {
-    if (type instanceof Class<?> clazz) {
-      if (clazz.isPrimitive() || clazz.isEnum() || clazz.getName().startsWith("java.")) {
-        return null;
-      }
-      return clazz.getCanonicalName();
-    }
-    if (type instanceof ParameterizedType pType) {
-      return getTypeKey(pType.getRawType());
-    }
-    return null;
   }
 
   private FunctionCallingUtils() {}

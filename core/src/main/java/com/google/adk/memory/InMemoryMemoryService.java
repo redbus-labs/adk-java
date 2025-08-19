@@ -118,9 +118,9 @@ public final class InMemoryMemoryService implements BaseMemoryService {
               if (!Collections.disjoint(wordsInQuery, wordsInEvent)) {
                 MemoryEntry memory =
                     MemoryEntry.builder()
-                        .setContent(event.content().get())
-                        .setAuthor(event.author())
-                        .setTimestamp(formatTimestamp(event.timestamp()))
+                        .content(event.content().get())
+                        .author(event.author())
+                        .timestamp(formatTimestamp(event.timestamp()))
                         .build();
                 matchingMemories.add(memory);
               }

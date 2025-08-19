@@ -17,6 +17,7 @@
 package com.google.adk.maven;
 
 import com.google.adk.maven.web.AdkWebServer;
+import com.google.adk.utils.ComponentRegistry;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.MalformedURLException;
@@ -61,6 +62,8 @@ import org.springframework.context.ConfigurableApplicationContext;
  *   <li><strong>host</strong> (optional, default: localhost) - Server host address
  *   <li><strong>hotReloading</strong> (optional, default: true) - Enable hot reloading for
  *       config-based agents
+ *   <li><strong>registry</strong> (optional) - Full class path to custom ComponentRegistry subclass
+ *       for injecting customized tools and agents
  * </ul>
  *
  * <h3>AgentLoader Implementation</h3>
@@ -154,6 +157,30 @@ public class WebMojo extends AbstractMojo {
   @Parameter(property = "hotReloading", defaultValue = "true")
   private boolean hotReloading;
 
+  /**
+   * Full class path to a custom ComponentRegistry subclass.
+   *
+   * <p>This parameter allows users to specify a custom ComponentRegistry implementation that will
+   * be used instead of the default ComponentRegistry. The custom registry can pre-register
+   * additional tools, agents, or other components.
+   *
+   * <p>The parameter can reference either:
+   *
+   * <ul>
+   *   <li><strong>Static field reference:</strong> {@code com.example.MyRegistry.INSTANCE}
+   *   <li><strong>Class name:</strong> {@code com.example.MyRegistry} (requires default
+   *       constructor)
+   * </ul>
+   *
+   * <p>Example:
+   *
+   * <pre>{@code
+   * mvn google-adk:web -Dagents=... -Dregistry=com.example.MyCustomRegistry
+   * }</pre>
+   */
+  @Parameter(property = "registry")
+  private String registry;
+
   private ConfigurableApplicationContext applicationContext;
   private URLClassLoader projectClassLoader;
 
@@ -169,6 +196,13 @@ public class WebMojo extends AbstractMojo {
       // Create custom classloader with project dependencies
       projectClassLoader = createProjectClassLoader();
       Thread.currentThread().setContextClassLoader(projectClassLoader);
+
+      // Set up custom ComponentRegistry if provided
+      if (registry != null) {
+        getLog().info("Loading custom ComponentRegistry: " + registry);
+        ComponentRegistry customRegistry = loadCustomRegistry();
+        ComponentRegistry.setInstance(customRegistry);
+      }
 
       // Load and instantiate the AgentLoader
       getLog().info("Loading agent loader: " + agents);
@@ -235,6 +269,7 @@ public class WebMojo extends AbstractMojo {
     getLog().info("  Server Host: " + host);
     getLog().info("  Server Port: " + port);
     getLog().info("  Hot Reloading: " + hotReloading);
+    getLog().info("  Registry: " + (registry != null ? registry : "default"));
   }
 
   private void setupSystemProperties() {
@@ -274,47 +309,50 @@ public class WebMojo extends AbstractMojo {
     }
   }
 
-  private AgentLoader loadAgentProvider() throws MojoExecutionException {
-    // First, check if agents parameter is a directory path
-    Path agentsPath = Paths.get(agents);
-    if (Files.isDirectory(agentsPath)) {
-      getLog().info("Detected directory path, using ConfigAgentLoader: " + agents);
-      return new ConfigAgentLoader(agents, hotReloading);
-    }
-
-    // Next, try to interpret as class.field syntax
-    if (agents.contains(".")) {
-      AgentLoader provider = tryLoadFromStaticField();
-      if (provider != null) {
-        return provider;
+  private ComponentRegistry loadCustomRegistry() throws MojoExecutionException {
+    // Try to interpret as class.field syntax
+    if (registry.contains(".")) {
+      ComponentRegistry customRegistry = tryLoadFromStaticField(registry, ComponentRegistry.class);
+      if (customRegistry != null) {
+        return customRegistry;
       }
     }
 
     // Fallback to trying the entire string as a class name
-    return tryLoadFromConstructor();
+    return tryLoadFromConstructor(registry, ComponentRegistry.class);
   }
 
   /**
-   * Attempts to load an AgentLoader from a static field reference.
+   * Attempts to load an instance from a static field reference.
    *
-   * @return AgentLoader instance if successful, null if the field approach should be abandoned
+   * @param classAndField the class.field string to parse
+   * @param expectedType the expected type/interface the instance should implement
+   * @param <T> the expected type
+   * @return instance of the specified type if successful, null if the field approach should be
+   *     abandoned
    * @throws MojoExecutionException if field is found but has issues (wrong type, access problems)
    */
-  private AgentLoader tryLoadFromStaticField() throws MojoExecutionException {
-    int lastDotIndex = agents.lastIndexOf('.');
-    String className = agents.substring(0, lastDotIndex);
-    String fieldName = agents.substring(lastDotIndex + 1);
+  private <T> T tryLoadFromStaticField(String classAndField, Class<T> expectedType)
+      throws MojoExecutionException {
+    int lastDotIndex = classAndField.lastIndexOf('.');
+    String className = classAndField.substring(0, lastDotIndex);
+    String fieldName = classAndField.substring(lastDotIndex + 1);
 
     try {
-      Class<?> providerClass = projectClassLoader.loadClass(className);
-      Field field = providerClass.getField(fieldName);
+      Class<?> clazz = projectClassLoader.loadClass(className);
+      Field field = clazz.getField(fieldName);
 
       Object instance = field.get(null);
-      if (!(instance instanceof AgentLoader)) {
+      if (!expectedType.isInstance(instance)) {
         throw new MojoExecutionException(
-            "Field " + fieldName + " in class " + className + " is not an instance of AgentLoader");
+            "Field "
+                + fieldName
+                + " in class "
+                + className
+                + " is not an instance of "
+                + expectedType.getSimpleName());
       }
-      return (AgentLoader) instance;
+      return expectedType.cast(instance);
 
     } catch (ClassNotFoundException | NoSuchFieldException e) {
       // Field approach failed, return null to try constructor approach
@@ -326,34 +364,60 @@ public class WebMojo extends AbstractMojo {
   }
 
   /**
-   * Attempts to load an AgentLoader by instantiating the class using its default constructor.
+   * Attempts to load an instance by instantiating the class using its default constructor.
    *
-   * @return AgentLoader instance
+   * @param className the name of the class to instantiate
+   * @param expectedType the expected type/interface the instance should implement
+   * @param <T> the expected type
+   * @return instance of the specified type
    * @throws MojoExecutionException if class cannot be found or instantiated
    */
-  private AgentLoader tryLoadFromConstructor() throws MojoExecutionException {
+  private <T> T tryLoadFromConstructor(String className, Class<T> expectedType)
+      throws MojoExecutionException {
     try {
-      Class<?> providerClass = projectClassLoader.loadClass(agents);
-      Object instance = providerClass.getDeclaredConstructor().newInstance();
-      if (!(instance instanceof AgentLoader)) {
-        throw new MojoExecutionException("Class " + agents + " does not implement AgentLoader");
+      Class<?> clazz = projectClassLoader.loadClass(className);
+      Object instance = clazz.getDeclaredConstructor().newInstance();
+      if (!expectedType.isInstance(instance)) {
+        throw new MojoExecutionException(
+            "Class " + className + " does not implement/extend " + expectedType.getSimpleName());
       }
-      return (AgentLoader) instance;
+      return expectedType.cast(instance);
 
     } catch (ClassNotFoundException e) {
       throw new MojoExecutionException(
-          "AgentLoader class not found: "
-              + agents
+          expectedType.getSimpleName()
+              + " class not found: "
+              + className
               + ". Make sure the class is in your project's classpath.",
           e);
     } catch (Exception e) {
       throw new MojoExecutionException(
           "Failed to instantiate "
-              + agents
+              + className
               + ". Make sure it has a public default constructor or use the field syntax: "
-              + "com.example.MyProvider.INSTANCE",
+              + "com.example.MyClass.INSTANCE",
           e);
     }
+  }
+
+  private AgentLoader loadAgentProvider() throws MojoExecutionException {
+    // First, check if agents parameter is a directory path
+    Path agentsPath = Paths.get(agents);
+    if (Files.isDirectory(agentsPath)) {
+      getLog().info("Detected directory path, using ConfigAgentLoader: " + agents);
+      return new ConfigAgentLoader(agents, hotReloading);
+    }
+
+    // Next, try to interpret as class.field syntax
+    if (agents.contains(".")) {
+      AgentLoader provider = tryLoadFromStaticField(agents, AgentLoader.class);
+      if (provider != null) {
+        return provider;
+      }
+    }
+
+    // Fallback to trying the entire string as a class name
+    return tryLoadFromConstructor(agents, AgentLoader.class);
   }
 
   /** Cleans up all resources including application context, classloader. */

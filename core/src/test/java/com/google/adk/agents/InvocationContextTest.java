@@ -20,11 +20,13 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.google.adk.artifacts.BaseArtifactService;
+import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
 import com.google.genai.types.Content;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -37,6 +39,7 @@ public final class InvocationContextTest {
 
   @Mock private BaseSessionService mockSessionService;
   @Mock private BaseArtifactService mockArtifactService;
+  @Mock private BaseMemoryService mockMemoryService;
   @Mock private BaseAgent mockAgent;
   private Session session;
   private Content userContent;
@@ -60,18 +63,23 @@ public final class InvocationContextTest {
   @Test
   public void testCreateWithUserContent() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context).isNotNull();
     assertThat(context.sessionService()).isEqualTo(mockSessionService);
     assertThat(context.artifactService()).isEqualTo(mockArtifactService);
+    assertThat(context.memoryService()).isEqualTo(mockMemoryService);
     assertThat(context.liveRequestQueue()).isEmpty();
     assertThat(context.invocationId()).isEqualTo(testInvocationId);
     assertThat(context.agent()).isEqualTo(mockAgent);
@@ -84,14 +92,18 @@ public final class InvocationContextTest {
   @Test
   public void testCreateWithNullUserContent() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            null, // Pass null for userContent
-            runConfig);
+            /* userContent= */ Optional.empty(),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context).isNotNull();
     assertThat(context.userContent()).isEmpty();
@@ -100,17 +112,23 @@ public final class InvocationContextTest {
   @Test
   public void testCreateWithLiveRequestQueue() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            Optional.of(liveRequestQueue),
+            /* branch= */ Optional.empty(),
+            InvocationContext.newInvocationContextId(),
             mockAgent,
             session,
-            liveRequestQueue,
-            runConfig);
+            /* userContent= */ Optional.empty(),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context).isNotNull();
     assertThat(context.sessionService()).isEqualTo(mockSessionService);
     assertThat(context.artifactService()).isEqualTo(mockArtifactService);
+    assertThat(context.memoryService()).isEqualTo(mockMemoryService);
     assertThat(context.liveRequestQueue()).hasValue(liveRequestQueue);
     assertThat(context.invocationId()).startsWith("e-"); // Check format of generated ID
     assertThat(context.agent()).isEqualTo(mockAgent);
@@ -123,14 +141,18 @@ public final class InvocationContextTest {
   @Test
   public void testCopyOf() {
     InvocationContext originalContext =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
     originalContext.activeStreamingTools().putAll(activeStreamingTools);
 
     InvocationContext copiedContext = InvocationContext.copyOf(originalContext);
@@ -140,6 +162,7 @@ public final class InvocationContextTest {
 
     assertThat(copiedContext.sessionService()).isEqualTo(originalContext.sessionService());
     assertThat(copiedContext.artifactService()).isEqualTo(originalContext.artifactService());
+    assertThat(copiedContext.memoryService()).isEqualTo(originalContext.memoryService());
     assertThat(copiedContext.liveRequestQueue()).isEqualTo(originalContext.liveRequestQueue());
     assertThat(copiedContext.invocationId()).isEqualTo(originalContext.invocationId());
     assertThat(copiedContext.agent()).isEqualTo(originalContext.agent());
@@ -154,17 +177,22 @@ public final class InvocationContextTest {
   @Test
   public void testGetters() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context.sessionService()).isEqualTo(mockSessionService);
     assertThat(context.artifactService()).isEqualTo(mockArtifactService);
+    assertThat(context.memoryService()).isEqualTo(mockMemoryService);
     assertThat(context.liveRequestQueue()).isEmpty();
     assertThat(context.invocationId()).isEqualTo(testInvocationId);
     assertThat(context.agent()).isEqualTo(mockAgent);
@@ -177,14 +205,18 @@ public final class InvocationContextTest {
   @Test
   public void testSetAgent() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     BaseAgent newMockAgent = mock(BaseAgent.class);
     context.agent(newMockAgent);
@@ -207,14 +239,18 @@ public final class InvocationContextTest {
   @Test
   public void testEquals_sameObject() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context.equals(context)).isTrue();
   }
@@ -222,14 +258,18 @@ public final class InvocationContextTest {
   @Test
   public void testEquals_null() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context.equals(null)).isFalse();
   }
@@ -237,25 +277,33 @@ public final class InvocationContextTest {
   @Test
   public void testEquals_sameValues() {
     InvocationContext context1 =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     // Create another context with the same parameters
     InvocationContext context2 =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context1.equals(context2)).isTrue();
     assertThat(context2.equals(context1)).isTrue(); // Check symmetry
@@ -264,64 +312,89 @@ public final class InvocationContextTest {
   @Test
   public void testEquals_differentValues() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     // Create contexts with one field different
     InvocationContext contextWithDiffSessionService =
-        InvocationContext.create(
+        new InvocationContext(
             mock(BaseSessionService.class), // Different mock
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     InvocationContext contextWithDiffInvocationId =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             "another-id", // Different ID
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     InvocationContext contextWithDiffAgent =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mock(BaseAgent.class), // Different mock
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     InvocationContext contextWithUserContentEmpty =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            null, // User content is null (Optional.empty)
-            runConfig);
+            /* userContent= */ Optional.empty(),
+            runConfig,
+            /* endInvocation= */ false);
 
     InvocationContext contextWithLiveQueuePresent =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            Optional.of(liveRequestQueue),
+            /* branch= */ Optional.empty(),
+            InvocationContext.newInvocationContextId(),
             mockAgent,
             session,
-            liveRequestQueue, // Live queue is present (Optional.of)
-            runConfig);
+            /* userContent= */ Optional.empty(),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context.equals(contextWithDiffSessionService)).isFalse();
     assertThat(context.equals(contextWithDiffInvocationId)).isFalse();
@@ -333,35 +406,47 @@ public final class InvocationContextTest {
   @Test
   public void testHashCode_differentValues() {
     InvocationContext context =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     // Create contexts with one field different
     InvocationContext contextWithDiffSessionService =
-        InvocationContext.create(
+        new InvocationContext(
             mock(BaseSessionService.class), // Different mock
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             testInvocationId,
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     InvocationContext contextWithDiffInvocationId =
-        InvocationContext.create(
+        new InvocationContext(
             mockSessionService,
             mockArtifactService,
+            mockMemoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             "another-id", // Different ID
             mockAgent,
             session,
-            userContent,
-            runConfig);
+            Optional.of(userContent),
+            runConfig,
+            /* endInvocation= */ false);
 
     assertThat(context).isNotEqualTo(contextWithDiffSessionService);
     assertThat(context).isNotEqualTo(contextWithDiffInvocationId);

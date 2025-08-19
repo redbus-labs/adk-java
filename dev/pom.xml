@@ -108,10 +108,18 @@
   <build>
     <resources>
       <resource>
-        <directory>browser</directory>
-        <!-- This will place the contents of the 'browser' folder into 'BOOT-INF/classes/browser/'
-        in the JAR -->
-        <targetPath>browser</targetPath>
+        <!-- This will correctly place the contents of the 'browser' folder into 'browser/' at the
+             root of the normal JAR, and in 'BOOT-INF/classes/browser/' in the Spring Boot repackaged
+             executable JAR.
+
+             We use <directory>. and <include>browser/** instead of <directory>browser with <targetPath>browser
+             because that does not work and used to cause https://github.com/google/adk-java/issues/302.
+
+             An alternative would be to simply use src/main/resources/browser instead of doing this. -->
+        <directory>.</directory>
+        <includes>
+          <include>browser/**</include>
+        </includes>
       </resource>
     </resources>
     <pluginManagement>

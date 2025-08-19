@@ -41,8 +41,21 @@ import java.util.Optional;
  *
  * <p>This tool informs the model about available artifacts and provides their content when
  * requested by the model through a function call.
+ *
+ * <p>The declaration of this tool is consistent with the Python version. Refer to:
+ * https://github.com/google/adk-python/blob/main/src/google/adk/tools/load_artifacts_tool.py
+ *
+ * <p>Usage example in an LlmAgent:
+ *
+ * <pre>{@code
+ * LlmAgent agent = LlmAgent.builder()
+ *     .addTool(LoadArtifactsTool.INSTANCE)
+ *     .build();
+ * }</pre>
  */
 public final class LoadArtifactsTool extends BaseTool {
+  public static final LoadArtifactsTool INSTANCE = new LoadArtifactsTool();
+
   public LoadArtifactsTool() {
     super("load_artifacts", "Loads the artifacts and adds them to the session.");
   }

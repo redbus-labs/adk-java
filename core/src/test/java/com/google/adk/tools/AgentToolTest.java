@@ -34,6 +34,7 @@ import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -321,13 +322,18 @@ public final class AgentToolTest {
 
   private static ToolContext createToolContext(LlmAgent agent) {
     return ToolContext.builder(
-            InvocationContext.create(
+            new InvocationContext(
                 /* sessionService= */ null,
                 /* artifactService= */ null,
+                /* memoryService= */ null,
+                /* liveRequestQueue= */ Optional.empty(),
+                /* branch= */ Optional.empty(),
+                /* invocationId= */ InvocationContext.newInvocationContextId(),
                 agent,
                 Session.builder("123").build(),
-                /* liveRequestQueue= */ null,
-                /* runConfig= */ null))
+                /* userContent= */ Optional.empty(),
+                /* runConfig= */ null,
+                /* endInvocation= */ false))
         .build();
   }
 }

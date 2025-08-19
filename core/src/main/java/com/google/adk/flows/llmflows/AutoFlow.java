@@ -29,8 +29,9 @@ public class AutoFlow extends SingleFlow {
           .add(new AgentTransfer())
           .build();
 
-  /** No additional response processors. */
-  private static final ImmutableList<ResponseProcessor> RESPONSE_PROCESSORS = ImmutableList.of();
+  /** Only base response processors. */
+  private static final ImmutableList<ResponseProcessor> RESPONSE_PROCESSORS =
+      ImmutableList.copyOf(SingleFlow.RESPONSE_PROCESSORS);
 
   public AutoFlow() {
     this(/* maxSteps= */ Optional.empty());

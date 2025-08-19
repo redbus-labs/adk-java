@@ -30,6 +30,8 @@ import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.artifacts.ListArtifactsResponse;
 import com.google.adk.artifacts.MapDbArtifactService;
 import com.google.adk.events.Event;
+import com.google.adk.memory.BaseMemoryService;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
@@ -166,6 +168,18 @@ public class AdkWebServer implements WebMvcConfigurer {
         : new InMemoryArtifactService();
   }
 
+  /**
+   * Provides the singleton instance of the MemoryService (InMemory). Will be configurable once the
+   * Vertex MemoryService is available.
+   *
+   * @return An instance of BaseMemoryService (currently InMemoryMemoryService).
+   */
+  @Bean
+  public BaseMemoryService memoryService() {
+    log.info("Using InMemoryMemoryService");
+    return new InMemoryMemoryService();
+  }
+
   @Bean("loadedAgentRegistry")
   public Map<String, BaseAgent> loadedAgentRegistry(
       AgentLoadingProperties props, RunnerService runnerService) {
@@ -217,16 +231,19 @@ public class AdkWebServer implements WebMvcConfigurer {
     private final Map<String, BaseAgent> agentRegistry;
     private final BaseArtifactService artifactService;
     private final BaseSessionService sessionService;
+    private final BaseMemoryService memoryService;
     private final Map<String, Runner> runnerCache = new ConcurrentHashMap<>();
 
     @Autowired
     public RunnerService(
         @Lazy @Qualifier("loadedAgentRegistry") Map<String, BaseAgent> agentRegistry,
         BaseArtifactService artifactService,
-        BaseSessionService sessionService) {
+        BaseSessionService sessionService,
+        BaseMemoryService memoryService) {
       this.agentRegistry = agentRegistry;
       this.artifactService = artifactService;
       this.sessionService = sessionService;
+      this.memoryService = memoryService;
     }
 
     /**
@@ -253,7 +270,8 @@ public class AdkWebServer implements WebMvcConfigurer {
                 "RunnerService: Creating Runner for appName: {}, using agent" + " definition: {}",
                 appName,
                 agent.name());
-            return new Runner(agent, appName, this.artifactService, this.sessionService);
+            return new Runner(
+                agent, appName, this.artifactService, this.sessionService, this.memoryService);
           });
     }
 

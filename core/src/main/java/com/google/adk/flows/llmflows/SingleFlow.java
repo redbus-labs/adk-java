@@ -20,7 +20,7 @@ import com.google.common.collect.ImmutableList;
 import java.util.List;
 import java.util.Optional;
 
-/** Basic LLM flow with fixed request processors and no response post-processing. */
+/** Basic LLM flow with fixed request and response processors. */
 public class SingleFlow extends BaseLlmFlow {
   // TODO: We should eventually remove this class since it complicates things.
 

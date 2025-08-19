@@ -294,7 +294,7 @@ public final class CodeExecution {
     }
     String codeStr = codeStrOptional.get();
     responseContent = responseContentBuilder.build();
-    llmResponseBuilder.content(Content.builder().build());
+    llmResponseBuilder.content(Optional.empty());
 
     Event codeEvent =
         Event.builder()

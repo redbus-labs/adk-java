@@ -27,6 +27,7 @@ import com.google.adk.agents.RunConfig;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.models.BaseLlm;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.sessions.InMemorySessionService;
@@ -52,14 +53,18 @@ public final class TestUtils {
 
   public static InvocationContext createInvocationContext(BaseAgent agent, RunConfig runConfig) {
     InMemorySessionService sessionService = new InMemorySessionService();
-    return InvocationContext.create(
+    return new InvocationContext(
         sessionService,
         new InMemoryArtifactService(),
+        new InMemoryMemoryService(),
+        /* liveRequestQueue= */ Optional.empty(),
+        /* branch= */ Optional.empty(),
         "invocationId",
         agent,
         sessionService.createSession("test-app", "test-user").blockingGet(),
-        Content.fromParts(Part.fromText("user content")),
-        runConfig);
+        Optional.of(Content.fromParts(Part.fromText("user content"))),
+        runConfig,
+        /* endInvocation= */ false);
   }
 
   public static InvocationContext createInvocationContext(BaseAgent agent) {

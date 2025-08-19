@@ -7,11 +7,13 @@ import static org.junit.Assert.assertThrows;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.artifacts.InMemoryArtifactService;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.sessions.State;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -23,20 +25,26 @@ public final class InstructionUtilsTest {
   private InvocationContext templateContext;
   private InMemorySessionService sessionService;
   private InMemoryArtifactService artifactService;
+  private InMemoryMemoryService memoryService;
 
   @Before
   public void setUp() {
     sessionService = new InMemorySessionService();
     artifactService = new InMemoryArtifactService();
+    memoryService = new InMemoryMemoryService();
     templateContext =
-        InvocationContext.create(
+        new InvocationContext(
             sessionService,
             artifactService,
+            memoryService,
+            /* liveRequestQueue= */ Optional.empty(),
+            /* branch= */ Optional.empty(),
             "invocationId",
             createRootAgent(),
             sessionService.createSession("test-app", "test-user").blockingGet(),
-            Content.fromParts(),
-            RunConfig.builder().build());
+            Optional.of(Content.fromParts()),
+            RunConfig.builder().build(),
+            /* endInvocation= */ false);
   }
 
   @Test

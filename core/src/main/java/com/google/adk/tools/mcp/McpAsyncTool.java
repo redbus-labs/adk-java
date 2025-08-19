@@ -20,20 +20,15 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
-import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableMap;
-import com.google.genai.types.FunctionDeclaration;
-import com.google.genai.types.Schema;
 import io.modelcontextprotocol.client.McpAsyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
-import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.Map;
-import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,15 +40,9 @@ import org.slf4j.LoggerFactory;
  * <p>This wraps a MCP Tool interface and an active MCP Session. It invokes the MCP Tool through
  * executing the tool from remote MCP Session.
  */
-public final class McpAsyncTool extends BaseTool {
+public final class McpAsyncTool extends AbstractMcpTool<McpAsyncClient> {
 
   private static final Logger logger = LoggerFactory.getLogger(McpAsyncTool.class);
-
-  Tool mcpTool;
-  // Volatile ensures write visibility in the asynchronous chain.
-  volatile McpAsyncClient mcpSession;
-  McpSessionManager mcpSessionManager;
-  ObjectMapper objectMapper;
 
   /**
    * Creates a new McpAsyncTool with the default ObjectMapper.
@@ -65,7 +54,7 @@ public final class McpAsyncTool extends BaseTool {
    */
   public McpAsyncTool(
       Tool mcpTool, McpAsyncClient mcpSession, McpSessionManager mcpSessionManager) {
-    this(mcpTool, mcpSession, mcpSessionManager, JsonBaseModel.getMapper());
+    super(mcpTool, mcpSession, mcpSessionManager, JsonBaseModel.getMapper());
   }
 
   /**
@@ -82,34 +71,10 @@ public final class McpAsyncTool extends BaseTool {
       McpAsyncClient mcpSession,
       McpSessionManager mcpSessionManager,
       ObjectMapper objectMapper) {
-    super(
-        mcpTool == null ? "" : mcpTool.name(),
-        mcpTool == null ? "" : (mcpTool.description().isEmpty() ? "" : mcpTool.description()));
-
-    if (mcpTool == null) {
-      throw new IllegalArgumentException("mcpTool cannot be null");
-    }
-    if (mcpSession == null) {
-      throw new IllegalArgumentException("mcpSession cannot be null");
-    }
-    if (objectMapper == null) {
-      throw new IllegalArgumentException("objectMapper cannot be null");
-    }
-    this.mcpTool = mcpTool;
-    this.mcpSession = mcpSession;
-    this.mcpSessionManager = mcpSessionManager;
-    this.objectMapper = objectMapper;
+    super(mcpTool, mcpSession, mcpSessionManager, objectMapper);
   }
 
-  public McpAsyncClient getMcpSession() {
-    return this.mcpSession;
-  }
-
-  public Schema toGeminiSchema(JsonSchema openApiSchema) {
-    return Schema.fromJson(objectMapper.valueToTree(openApiSchema).toString());
-  }
-
-  private Single<McpSchema.InitializeResult> reintializeSession() {
+  private Single<McpSchema.InitializeResult> reinitializeSession() {
     McpAsyncClient client = this.mcpSessionManager.createAsyncSession();
     return Single.fromCompletionStage(
         client
@@ -130,16 +95,6 @@ public final class McpAsyncTool extends BaseTool {
   }
 
   @Override
-  public Optional<FunctionDeclaration> declaration() {
-    return Optional.of(
-        FunctionDeclaration.builder()
-            .name(this.name())
-            .description(this.description())
-            .parameters(toGeminiSchema(this.mcpTool.inputSchema()))
-            .build());
-  }
-
-  @Override
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
     return Single.defer(
             () ->
@@ -147,12 +102,10 @@ public final class McpAsyncTool extends BaseTool {
                         this.mcpSession
                             .callTool(new CallToolRequest(this.name(), ImmutableMap.copyOf(args)))
                             .toFuture())
-                    .map(
-                        callResult ->
-                            McpTool.wrapCallResult(this.objectMapper, this.name(), callResult))
+                    .map(callResult -> wrapCallResult(this.objectMapper, this.name(), callResult))
                     .switchIfEmpty(
                         Single.fromCallable(
-                            () -> McpTool.wrapCallResult(this.objectMapper, this.name(), null))))
+                            () -> wrapCallResult(this.objectMapper, this.name(), null))))
         .retryWhen(
             errors ->
                 errors
@@ -161,6 +114,6 @@ public final class McpAsyncTool extends BaseTool {
                     .doOnNext(
                         error ->
                             logger.error("Retrying callTool due to: {}", error.getMessage(), error))
-                    .flatMapSingle(_ignore -> this.reintializeSession()));
+                    .flatMapSingle(_ignore -> this.reinitializeSession()));
   }
 }

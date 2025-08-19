@@ -42,6 +42,7 @@
     <jackson.version>2.19.0</jackson.version>
     <okhttp.version>4.12.0</okhttp.version>
     <anthropic-java-version>1.4.0</anthropic-java-version>
+    <docker-java.version>3.3.6</docker-java.version>
   </properties>
 
   <dependencies>
@@ -68,6 +69,16 @@
     <dependency>
       <groupId>com.google.cloud</groupId>
       <artifactId>google-cloud-aiplatform</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.github.docker-java</groupId>
+      <artifactId>docker-java</artifactId>
+      <version>${docker-java.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.github.docker-java</groupId>
+      <artifactId>docker-java-transport-httpclient5</artifactId>
+      <version>${docker-java.version}</version>
     </dependency>
     <dependency>
       <groupId> io.modelcontextprotocol.sdk</groupId>

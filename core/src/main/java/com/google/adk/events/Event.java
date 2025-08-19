@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.adk.JsonBaseModel;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Content;
 import com.google.genai.types.FinishReason;
@@ -237,6 +238,17 @@ public class Event extends JsonBaseModel {
         .collect(toImmutableList());
   }
 
+  /** Returns whether the event has a trailing code execution result. */
+  @JsonIgnore
+  public final boolean hasTrailingCodeExecutionResult() {
+    return content()
+        .flatMap(Content::parts)
+        .filter(parts -> !parts.isEmpty())
+        .map(parts -> Iterables.getLast(parts))
+        .flatMap(part -> part.codeExecutionResult())
+        .isPresent();
+  }
+
   /** Returns true if this is a final response. */
   @JsonIgnore
   public final boolean finalResponse() {
@@ -244,7 +256,10 @@ public class Event extends JsonBaseModel {
         || (longRunningToolIds().isPresent() && !longRunningToolIds().get().isEmpty())) {
       return true;
     }
-    return functionCalls().isEmpty() && functionResponses().isEmpty() && !partial().orElse(false);
+    return functionCalls().isEmpty()
+        && functionResponses().isEmpty()
+        && !partial().orElse(false)
+        && !hasTrailingCodeExecutionResult();
   }
 
   /**

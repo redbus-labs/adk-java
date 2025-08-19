@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.adk.exceptions;
+package com.google.adk.models;
 
 /** An error indicating that the limit for calls to the LLM has been exceeded. */
 public final class LlmCallsLimitExceededException extends Exception {

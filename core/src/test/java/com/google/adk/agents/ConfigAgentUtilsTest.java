@@ -83,12 +83,14 @@ public final class ConfigAgentUtilsTest {
     String configPath = configFile.getAbsolutePath();
     ConfigurationException exception =
         assertThrows(ConfigurationException.class, () -> ConfigAgentUtils.fromConfig(configPath));
+    assertThat(exception).hasMessageThat().contains("Failed to create agent from config:");
     assertThat(exception)
+        .hasCauseThat()
         .hasMessageThat()
         .contains(
             "agentClass '"
                 + customAgentClass
-                + "' is not supported. It must be a subclass of BaseAgent.");
+                + "' is not in registry or not a subclass of BaseAgent.");
   }
 
   @Test
@@ -101,12 +103,14 @@ public final class ConfigAgentUtilsTest {
     String configPath = configFile.getAbsolutePath();
     ConfigurationException exception =
         assertThrows(ConfigurationException.class, () -> ConfigAgentUtils.fromConfig(configPath));
+    assertThat(exception).hasMessageThat().contains("Failed to create agent from config:");
     assertThat(exception)
+        .hasCauseThat()
         .hasMessageThat()
         .contains(
             "agentClass '"
                 + customAgentClass
-                + "' is not supported. It must be a subclass of BaseAgent.");
+                + "' is not in registry or not a subclass of BaseAgent.");
   }
 
   @Test
@@ -231,32 +235,7 @@ public final class ConfigAgentUtilsTest {
         instruction: You are an agent whose job is to perform Google search queries and answer questions about the results.
         agent_class: LlmAgent
         tools:
-          - name: GoogleSearchTool
-        """);
-    String configPath = configFile.getAbsolutePath();
-
-    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
-
-    assertThat(agent).isInstanceOf(LlmAgent.class);
-    LlmAgent llmAgent = (LlmAgent) agent;
-    assertThat(llmAgent.tools()).hasSize(1);
-    assertThat(llmAgent.tools().get(0).name()).isEqualTo("google_search");
-  }
-
-  @Test
-  public void fromConfig_withBuiltInTool_loadsToolWithUnderscore()
-      throws IOException, ConfigurationException {
-    File configFile = tempFolder.newFile("with_tool_underscore.yaml");
-    Files.writeString(
-        configFile.toPath(),
-        """
-        name: search_agent
-        model: gemini-1.5-flash
-        description: 'an agent whose job it is to perform Google search queries and answer questions about the results.'
-        instruction: You are an agent whose job is to perform Google search queries and answer questions about the results.
-        agent_class: LlmAgent
-        tools:
-          - name: google_search_tool
+          - name: google_search
         """);
     String configPath = configFile.getAbsolutePath();
 
