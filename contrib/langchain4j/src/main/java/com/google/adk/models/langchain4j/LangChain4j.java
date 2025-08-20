@@ -490,7 +490,7 @@ public class LangChain4j extends BaseLlm {
                 .items(toJsonSchemaElement(schema.items().orElseThrow()))
                 .build();
         case OBJECT -> toParameters(schema);
-        case TYPE_UNSPECIFIED ->
+        default ->
             throw new UnsupportedFeatureException(
                 "LangChain4jLlm does not support schema of type: " + type);
       };

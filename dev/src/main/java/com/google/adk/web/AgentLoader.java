@@ -69,5 +69,7 @@ public interface AgentLoader {
    *
    * @return A string description of the loader type
    */
-  String getLoaderType();
+  default String getLoaderType() {
+    return getClass().getSimpleName();
+  }
 }
