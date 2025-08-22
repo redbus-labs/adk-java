@@ -66,6 +66,10 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+    </dependency>
+    <dependency>
       <groupId>guru.nidi</groupId>
       <artifactId>graphviz-java</artifactId>
       <version>${graphviz.version}</version>
@@ -109,7 +113,7 @@
     <resources>
       <resource>
         <!-- This will correctly place the contents of the 'browser' folder into 'browser/' at the
-             root of the normal JAR, and in 'BOOT-INF/classes/browser/' in the Spring Boot repackaged
+            root of the normal JAR, and in 'BOOT-INF/classes/browser/' in the Spring Boot repackaged
              executable JAR.
 
              We use <directory>. and <include>browser/** instead of <directory>browser with <targetPath>browser

@@ -38,6 +38,7 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
@@ -307,6 +308,10 @@ public final class StreamingToolTest {
                 RunConfig.builder().setStreamingMode(StreamingMode.BIDI).build())
             .toList()
             .blockingGet();
+
+    // Wait for the tool to send its 3 results back to the LLM
+    assertThat(testLlm.waitForStreamingToolResults("monitorVideoStream", 3, Duration.ofSeconds(20)))
+        .isTrue();
     // Assert that the function call was made.
     boolean functionCallFound =
         resEvents.stream()
