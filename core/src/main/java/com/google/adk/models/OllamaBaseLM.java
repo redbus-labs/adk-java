@@ -227,10 +227,14 @@ public class OllamaBaseLM extends BaseLlm {
               }
 
               // Convert the complete tool map into an org.json.JSONObject
+              JSONObject jsonToolW = new JSONObject();
+              jsonToolW.put("type", "function");
+
               JSONObject jsonTool = new JSONObject(toolMap);
+              jsonToolW.put("function", jsonTool);
 
               // Add the generated tool JSON object to your functions list/array
-              functions.put(jsonTool);
+              functions.put(jsonToolW);
             });
 
     // Check if the tool is executed, then parse and response.
@@ -507,6 +511,7 @@ public class OllamaBaseLM extends BaseLlm {
       JSONObject payload = new JSONObject();
       payload.put("model", model);
       payload.put("stream", true);
+      payload.put("think", false);
 
       JSONObject options = new JSONObject();
       options.put("num_ctx", 4096);
@@ -672,6 +677,7 @@ public class OllamaBaseLM extends BaseLlm {
       payload.put("model", model);
       payload.put(
           "stream", false); // Assuming non-streaming as per current generateContent implementation
+      payload.put("think", false);
 
       JSONObject options = new JSONObject();
       options.put("num_ctx", 4096);
@@ -797,6 +803,7 @@ public class OllamaBaseLM extends BaseLlm {
       payload.put("model", model);
       payload.put(
           "stream", false); // Assuming non-streaming as per current generateContent implementation
+      payload.put("think", false);
 
       JSONObject options = new JSONObject();
       options.put("num_ctx", 4096);
