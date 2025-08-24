@@ -51,28 +51,28 @@ import org.slf4j.LoggerFactory;
  * @author Manoj Kumar, Sandeep Belgavi
  * @date 2025-06-27
  */
-public class OllamaBaseLM extends BaseLlm {
+public class BedrockBaseLM extends BaseLlm {
 
   // The Ollama endpoint is already correctly set as requested.
-  public static String OLLAMA_EP = "OLLAMA_API_BASE";
+  public static String BEDROCK_EP = "BEDROCK_URL";
   public String D_URL = null;
 
   // Corrected the logger name to use OllamaBaseLM.class
-  private static final Logger logger = LoggerFactory.getLogger(OllamaBaseLM.class);
+  private static final Logger logger = LoggerFactory.getLogger(BedrockBaseLM.class);
 
   private static final String CONTINUE_OUTPUT_MESSAGE =
       "Continue output. DO NOT look at this line. ONLY look at the content before this line and"
           + " system instruction.";
 
-  public OllamaBaseLM(String model) {
+  public BedrockBaseLM(String model) {
 
     super(model);
   }
 
-  public OllamaBaseLM(String model, String OLLAMA_EP) {
+  public BedrockBaseLM(String model, String BEDROCK_EP) {
 
     super(model);
-    this.D_URL = OLLAMA_EP;
+    this.D_URL = BEDROCK_EP;
   }
 
   @Override
@@ -105,12 +105,16 @@ public class OllamaBaseLM extends BaseLlm {
       }
     }
 
-    // Messages
+    /** "messages": [ { "role": "user", "content": [{"text": "Hello"}] } ], */
     JSONArray messages = new JSONArray();
 
     JSONObject llmMessageJson1 = new JSONObject();
-    llmMessageJson1.put("role", "system");
-    llmMessageJson1.put("content", systemText);
+    llmMessageJson1.put("role", "assistant");
+    JSONObject txtMsg = new JSONObject();
+    txtMsg.put("text", systemText);
+    JSONArray contentArray = new JSONArray();
+    contentArray.put(txtMsg);
+    llmMessageJson1.put("content", contentArray);
     messages.put(llmMessageJson1); // Agent system prompt is always added
 
     llmRequest.contents().stream()
@@ -127,13 +131,24 @@ public class OllamaBaseLM extends BaseLlm {
 
               // Additinal override work to add function response
               if (item.parts().get().get(0).functionResponse().isPresent()) {
-                messageQuantum.put(
-                    "content",
+                JSONObject txtMsg3 = new JSONObject();
+                txtMsg3.put(
+                    "text",
                     new JSONObject(
                             item.parts().get().get(0).functionResponse().get().response().get())
                         .toString(1));
+
+                JSONArray contentArray2 = new JSONArray();
+                contentArray2.put(txtMsg3);
+
+                messageQuantum.put("content", contentArray2);
               } else {
-                messageQuantum.put("content", item.text());
+
+                JSONObject txtMsg3 = new JSONObject();
+                txtMsg3.put("text", item.text());
+                JSONArray contentArray2 = new JSONArray();
+                contentArray2.put(txtMsg3);
+                messageQuantum.put("content", contentArray2);
               }
               messages.put(messageQuantum);
             });
@@ -223,15 +238,17 @@ public class OllamaBaseLM extends BaseLlm {
                 // Optional<List<String>>
 
                 // Add the completed 'parameters' map to the main tool map
-                toolMap.put("parameters", parametersMap);
+                JSONObject inputSchema = new JSONObject();
+                inputSchema.put("json", parametersMap);
+                toolMap.put("inputSchema", inputSchema);
               }
 
               // Convert the complete tool map into an org.json.JSONObject
               JSONObject jsonToolW = new JSONObject();
-              jsonToolW.put("type", "function");
 
               JSONObject jsonTool = new JSONObject(toolMap);
-              jsonToolW.put("function", jsonTool);
+
+              jsonToolW.put("toolSpec", jsonTool);
 
               // Add the generated tool JSON object to your functions list/array
               functions.put(jsonToolW);
@@ -258,7 +275,8 @@ public class OllamaBaseLM extends BaseLlm {
                 : (functions.length() > 0
                     ? functions
                     : null)); // Tools/functions can not be of 0 length
-    JSONObject responseQuantum = agentresponse.getJSONObject("message");
+
+    JSONObject responseQuantum = agentresponse.getJSONObject("output").getJSONObject("message");
 
     // Check if tool call is required
     // Tools call
@@ -317,7 +335,7 @@ public class OllamaBaseLM extends BaseLlm {
     JSONArray messages = new JSONArray();
 
     JSONObject llmMessageJson1 = new JSONObject();
-    llmMessageJson1.put("role", "system");
+    llmMessageJson1.put("role", "assistant");
     llmMessageJson1.put("content", systemText);
     messages.put(llmMessageJson1); // Agent system prompt is always added
 
@@ -512,7 +530,8 @@ public class OllamaBaseLM extends BaseLlm {
 
   public BufferedReader callLLMChatStream(String model, JSONArray messages, JSONArray tools) {
     try {
-      String apiUrl = D_URL != null ? D_URL : System.getenv(OLLAMA_EP);
+      String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_EP);
+      String AWS_BEARER_TOKEN_BEDROCK = System.getenv(BEDROCK_EP);
       apiUrl = apiUrl + "/api/chat";
 
       JSONObject payload = new JSONObject();
@@ -536,6 +555,9 @@ public class OllamaBaseLM extends BaseLlm {
       HttpURLConnection connection = (HttpURLConnection) url.openConnection();
       connection.setRequestMethod("POST");
       connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+      connection.setRequestProperty(
+          "Authorization",
+          "Bearer " + AWS_BEARER_TOKEN_BEDROCK); // This header is less standard than
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
 
@@ -646,12 +668,14 @@ public class OllamaBaseLM extends BaseLlm {
 
     // If no valid tool_calls were processed, check for text content
     if (blockJson.has("content")) {
-      Object content = blockJson.opt("content"); // Use opt for null safety
-      if (content instanceof String) {
-        String text = (String) content;
-        // Return a text Part, even if the string is empty (matches empty content example)
-        return Part.builder().text(text).build();
+      JSONArray contentArray = blockJson.getJSONArray("content");
+      for (int i = 0; i < contentArray.length(); i++) {
+        JSONObject tempObj = contentArray.getJSONObject(i);
+        if (tempObj.has("text")) {
+          return Part.builder().text(tempObj.getString("text")).build();
+        }
       }
+
       // If 'content' key exists but value is not a String, might be unsupported.
     }
 
@@ -676,19 +700,20 @@ public class OllamaBaseLM extends BaseLlm {
     try {
       JSONObject responseJ = new JSONObject();
       // API endpoint URL //OLLAMA_API_BASE
-      String apiUrl = D_URL != null ? D_URL : System.getenv(OLLAMA_EP);
-      apiUrl = apiUrl + "/api/chat";
+      String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_EP);
+      String AWS_BEARER_TOKEN_BEDROCK = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
+      // apiUrl = apiUrl + "/api/chat";
 
       // Constructing the JSON payload
       JSONObject payload = new JSONObject();
-      payload.put("model", model);
-      payload.put(
-          "stream", false); // Assuming non-streaming as per current generateContent implementation
-      payload.put("think", false);
+      // payload.put("model", model);
+      // payload.put( "stream", false); // Assuming non-streaming as per current generateContent
+      // implementation
+      // payload.put("think", false);
 
-      JSONObject options = new JSONObject();
-      options.put("num_ctx", 4096);
-      payload.put("options", options);
+      // JSONObject options = new JSONObject();
+      // options.put("num_ctx", 4096);
+      // payload.put("options", options);
 
       // Add messages to the payload
       payload.put("messages", messages);
@@ -714,7 +739,9 @@ public class OllamaBaseLM extends BaseLlm {
       connection.setRequestProperty(
           "Content-Type",
           "application/json; charset=UTF-8"); // <-- Also good practice to specify charset here
-      // connection.setRequestProperty("charset", "UTF-8"); // This header is less standard than
+      connection.setRequestProperty(
+          "Authorization",
+          "Bearer " + AWS_BEARER_TOKEN_BEDROCK); // This header is less standard than
       // adding to Content-Type
 
       // Enable output
@@ -802,7 +829,8 @@ public class OllamaBaseLM extends BaseLlm {
     JSONObject responseJ = new JSONObject();
     try {
       // API endpoint URL //OLLAMA_API_BASE
-      String apiUrl = System.getenv(OLLAMA_EP);
+      String apiUrl = System.getenv(BEDROCK_EP);
+      String AWS_BEARER_TOKEN_BEDROCK = System.getenv(BEDROCK_EP);
       apiUrl = apiUrl + "/api/chat";
 
       // Constructing the JSON payload
@@ -838,6 +866,9 @@ public class OllamaBaseLM extends BaseLlm {
 
       // Set headers
       connection.setRequestProperty("Content-Type", "application/json");
+      connection.setRequestProperty(
+          "Authorization",
+          "Bearer " + AWS_BEARER_TOKEN_BEDROCK); // This header is less standard than
 
       // Enable output and set content length
       connection.setDoOutput(true);
@@ -911,13 +942,13 @@ public class OllamaBaseLM extends BaseLlm {
 
     } catch (MalformedURLException ex) {
       logger.error("Malformed URL for Ollama API.", ex);
-      java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
+      java.util.logging.Logger.getLogger(BedrockBaseLM.class.getName()).log(Level.SEVERE, null, ex);
     } catch (IOException ex) {
       logger.error("IO Exception when calling Ollama API.", ex);
-      java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
+      java.util.logging.Logger.getLogger(BedrockBaseLM.class.getName()).log(Level.SEVERE, null, ex);
     } catch (Exception ex) { // Catch any other unexpected exceptions
       logger.error("An unexpected error occurred when calling Ollama API.", ex);
-      java.util.logging.Logger.getLogger(OllamaBaseLM.class.getName()).log(Level.SEVERE, null, ex);
+      java.util.logging.Logger.getLogger(BedrockBaseLM.class.getName()).log(Level.SEVERE, null, ex);
     }
     return responseJ;
   }
@@ -928,7 +959,7 @@ public class OllamaBaseLM extends BaseLlm {
         """
     [
         {
-            "role": "system",
+            "role": "assistant",
             "content": "You are a helpful assistant."
         },
         {
@@ -947,14 +978,14 @@ public class OllamaBaseLM extends BaseLlm {
     }
 
     String modelId = "llama3.1:8b"; // Example model ID
-    OllamaBaseLM ollamaLlm = new OllamaBaseLM(modelId);
+    BedrockBaseLM ollamaLlm = new BedrockBaseLM(modelId);
 
     // --- Test Streaming Call ---
     System.out.println("--- Testing Streaming API Call ---");
     try {
       System.out.println("Attempting to call Ollama API (Streaming)...");
       System.out.println("Using model ID: " + modelId);
-      System.out.println("Fetching Ollama endpoint from environment variable: " + OLLAMA_EP);
+      System.out.println("Fetching Ollama endpoint from environment variable: " + BEDROCK_EP);
 
       BufferedReader responseReader = ollamaLlm.callLLMChatStream(modelId, messagesArray, null);
 
@@ -973,7 +1004,7 @@ public class OllamaBaseLM extends BaseLlm {
     } catch (RuntimeException e) {
       System.err.println("Error during Streaming API call (Runtime): " + e.getMessage());
       System.err.println(
-          "Please ensure the environment variable '" + OLLAMA_EP + "' is set correctly.");
+          "Please ensure the environment variable '" + BEDROCK_EP + "' is set correctly.");
       e.printStackTrace();
     } catch (Exception e) {
       System.err.println(
