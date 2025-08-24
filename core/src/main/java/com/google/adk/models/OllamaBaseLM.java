@@ -391,8 +391,15 @@ public class OllamaBaseLM extends BaseLlm {
                     .ifPresent(requiredList -> parametersMap.put("required", requiredList));
                 toolMap.put("parameters", parametersMap);
               }
+               // Convert the complete tool map into an org.json.JSONObject
+              JSONObject jsonToolW = new JSONObject();
+              jsonToolW.put("type", "function");
+
               JSONObject jsonTool = new JSONObject(toolMap);
-              functions.put(jsonTool);
+              jsonToolW.put("function", jsonTool);
+
+              // Add the generated tool JSON object to your functions list/array
+              functions.put(jsonToolW);
             });
 
     String modelId = this.model();
