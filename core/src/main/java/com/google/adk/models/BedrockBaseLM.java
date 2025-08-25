@@ -286,8 +286,7 @@ public class BedrockBaseLM extends BaseLlm {
     parts.add(part);
 
     // Call tool
-    if (responseQuantum.has("tool_calls")
-        && "stop".contentEquals(agentresponse.getString("done_reason"))) {
+    if (!part.functionCall().isEmpty()) {
 
       responseBuilder.content(
           Content.builder()
@@ -630,50 +629,49 @@ public class BedrockBaseLM extends BaseLlm {
     }
   }
 
-    public static Part ollamaContentBlockToPart(JSONObject blockJson) {
-        // Check for tool_calls first, as the example with tool_calls had empty content
+  public static Part ollamaContentBlockToPart(JSONObject blockJson) {
+    // Check for tool_calls first, as the example with tool_calls had empty content
 
-        // If no valid tool_calls were processed, check for text content
-        if (blockJson.has("content")) {
-            JSONArray contentArray = blockJson.getJSONArray("content");
-            for (int i = 0; i < contentArray.length(); i++) {
-                JSONObject tempObj = contentArray.getJSONObject(i);
-                if (tempObj.has("text")) {
-                    return Part.builder().text(tempObj.getString("text")).build();
-                }
-
-                if (tempObj.has("toolUse")) {
-                    JSONObject toolCalls
-                            = blockJson.optJSONObject("toolUse"); // Use optJSONArray for null safety
-                    if (toolCalls != null && toolCalls.length() > 0) {
-                        // Based on the provided structure and LangChain4j Part,
-                        // we typically handle one function call per Part.
-                        // We will process the first tool call in the array.
-                        JSONObject toolCall
-                                = toolCalls.optJSONObject("toolUse"); // Use optJSONObject for null safety
-
-                        if (toolCall != null && toolCall.has("name")) {
-                            JSONObject input
-                                    = toolCall.optJSONObject("input"); // Use optJSONObject for null safety
-                            Map<String, Object> args = input.toMap();
-                            FunctionCall functionCall
-                                    = FunctionCall.builder().name(toolCall.getString("name")).args(args).build();
-
-                            return Part.builder().functionCall(functionCall).build();
-                        }
-                    }
-                }
-            }
-
-            // If 'content' key exists but value is not a String, might be unsupported.
+    // If no valid tool_calls were processed, check for text content
+    if (blockJson.has("content")) {
+      JSONArray contentArray = blockJson.getJSONArray("content");
+      for (int i = 0; i < contentArray.length(); i++) {
+        JSONObject tempObj = contentArray.getJSONObject(i);
+        if (tempObj.has("text")) {
+          return Part.builder().text(tempObj.getString("text")).build();
         }
 
-        // If neither usable tool_calls nor String content was found
-        // This covers cases like malformed JSON matching the structure,
-        // or structures not covered (e.g., image parts, other types).
-        throw new UnsupportedOperationException(
-                "Unsupported content block format or missing required fields: " + blockJson.toString());
+        if (tempObj.has("toolUse")) {
+          JSONObject toolUse = tempObj.getJSONObject("toolUse"); // Use optJSONArray for null safety
+          if (toolUse != null) {
+            // Based on the provided structure and LangChain4j Part,
+            // we typically handle one function call per Part.
+            // We will process the first tool call in the array.
+            // JSONObject toolCall = toolUse.optJSONObject("toolUse"); // Use optJSONObject for null
+            // safety
+
+            if (toolUse.has("name")) {
+              JSONObject input =
+                  toolUse.optJSONObject("input"); // Use optJSONObject for null safety
+              Map<String, Object> args = input.toMap();
+              FunctionCall functionCall =
+                  FunctionCall.builder().name(toolUse.getString("name")).args(args).build();
+
+              return Part.builder().functionCall(functionCall).build();
+            }
+          }
+        }
+      }
+
+      // If 'content' key exists but value is not a String, might be unsupported.
     }
+
+    // If neither usable tool_calls nor String content was found
+    // This covers cases like malformed JSON matching the structure,
+    // or structures not covered (e.g., image parts, other types).
+    throw new UnsupportedOperationException(
+        "Unsupported content block format or missing required fields: " + blockJson.toString());
+  }
 
   /**
    * Makes a POST request to a specified URL with a dynamic JSON body. Fetches username and password
