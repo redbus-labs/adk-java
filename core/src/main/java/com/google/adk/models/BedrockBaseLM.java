@@ -134,9 +134,18 @@ public class BedrockBaseLM extends BaseLlm {
                 JSONObject txtMsg3 = new JSONObject();
                 txtMsg3.put(
                     "text",
-                    new JSONObject(
-                            item.parts().get().get(0).functionResponse().get().response().get())
-                        .toString(1));
+                    new JSONObject(item.parts().get().get(0).functionResponse()).toString());
+
+                JSONArray contentArray2 = new JSONArray();
+                contentArray2.put(txtMsg3);
+
+                messageQuantum.put("content", contentArray2);
+              } else if (item.parts().get().get(0).functionCall().isPresent()) {
+                JSONObject txtMsg3 = new JSONObject();
+                txtMsg3.put(
+                    "text",
+                    new JSONObject(item.parts().get().get(0).functionCall().get().args().get())
+                        .toString());
 
                 JSONArray contentArray2 = new JSONArray();
                 contentArray2.put(txtMsg3);
@@ -286,11 +295,11 @@ public class BedrockBaseLM extends BaseLlm {
     parts.add(part);
 
     // Call tool
-    if (!part.functionCall().isEmpty()) {
+    if (!part.functionCall().isEmpty() && part.functionResponse().isEmpty()) {
 
       responseBuilder.content(
           Content.builder()
-              .role("model")
+              .role("assistant")
               .parts(
                   ImmutableList.of(Part.builder().functionCall(part.functionCall().get()).build()))
               .build());
@@ -299,7 +308,7 @@ public class BedrockBaseLM extends BaseLlm {
 
     } else {
       responseBuilder.content(
-          Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
+          Content.builder().role("assistant").parts(ImmutableList.copyOf(parts)).build());
     }
 
     return Flowable.just(responseBuilder.build());
