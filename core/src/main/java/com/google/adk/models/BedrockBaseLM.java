@@ -134,7 +134,11 @@ public class BedrockBaseLM extends BaseLlm {
                 JSONObject txtMsg3 = new JSONObject();
                 txtMsg3.put(
                     "text",
-                    new JSONObject(item.parts().get().get(0).functionResponse()).toString());
+                    item.parts().get().get(0).functionResponse().get().name().get()
+                        + " responded with these values, "
+                        + new JSONObject(
+                                item.parts().get().get(0).functionResponse().get().response().get())
+                            .toString());
 
                 JSONArray contentArray2 = new JSONArray();
                 contentArray2.put(txtMsg3);
@@ -144,8 +148,11 @@ public class BedrockBaseLM extends BaseLlm {
                 JSONObject txtMsg3 = new JSONObject();
                 txtMsg3.put(
                     "text",
-                    new JSONObject(item.parts().get().get(0).functionCall().get().args().get())
-                        .toString());
+                    item.parts().get().get(0).functionCall().get().name().get()
+                        + " is to be called with these arguments, "
+                        + new JSONObject(
+                                item.parts().get().get(0).functionCall().get().args().get())
+                            .toString());
 
                 JSONArray contentArray2 = new JSONArray();
                 contentArray2.put(txtMsg3);
@@ -295,7 +302,9 @@ public class BedrockBaseLM extends BaseLlm {
     parts.add(part);
 
     // Call tool
-    if (!part.functionCall().isEmpty() && part.functionResponse().isEmpty()) {
+    if (!part.functionCall().isEmpty()
+        && part.functionResponse().isEmpty()
+        && !LAST_RESP_TOOl_EXECUTED) {
 
       responseBuilder.content(
           Content.builder()
