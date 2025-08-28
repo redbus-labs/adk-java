@@ -25,8 +25,8 @@
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>google-adk-contrib-langchain4j</artifactId>
-    <name>Agent Development Kit - Contributions - LangChain4j</name>
+    <artifactId>google-adk-langchain4j</artifactId>
+    <name>Agent Development Kit - LangChain4j</name>
     <description>LangChain4j integration for the Agent Development Kit.</description>
 
     <properties>

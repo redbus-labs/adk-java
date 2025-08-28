@@ -193,6 +193,16 @@ public abstract class BaseTool {
     public int size() {
       return additionalProperties.size();
     }
+
+    @CanIgnoreReturnValue
+    public ToolArgsConfig put(String key, Object value) {
+      additionalProperties.put(key, value);
+      return this;
+    }
+
+    public Object get(String key) {
+      return additionalProperties.get(key);
+    }
   }
 
   /** Configuration class for a tool definition in YAML/JSON. */

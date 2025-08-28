@@ -17,8 +17,12 @@ package com.google.adk.sessions;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
 import io.reactivex.rxjava3.core.Single;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -100,5 +104,35 @@ public final class InMemorySessionServiceTest {
                 .getSession(session.appName(), session.userId(), session.id(), Optional.empty())
                 .blockingGet())
         .isNull();
+  }
+
+  @Test
+  public void appendEvent_withStateDelta_mutatesStateCorrectly() {
+    ConcurrentMap<String, Object> startingState1 = new ConcurrentHashMap<>();
+    startingState1.put("key_to_be_removed", "value_to_be_removed");
+    ConcurrentMap<String, Object> startingState2 = new ConcurrentHashMap<>();
+    startingState2.put("key_to_be_removed", "value_to_be_removed");
+
+    ConcurrentMap<String, Object> stateDelta = new ConcurrentHashMap<>();
+    State expectedFinalState = new State(startingState1, stateDelta);
+    expectedFinalState.remove("key_to_be_removed");
+    expectedFinalState.put("new_key", "new_value");
+
+    InMemorySessionService sessionService = new InMemorySessionService();
+    Session session =
+        sessionService
+            .createSession("app-name", "user-id", startingState2, /* sessionId= */ null)
+            .blockingGet();
+
+    var unused =
+        sessionService
+            .appendEvent(
+                session,
+                Event.builder()
+                    .actions(EventActions.builder().stateDelta(stateDelta).build())
+                    .build())
+            .blockingGet();
+
+    assertThat(session.state().entrySet()).containsExactlyElementsIn(expectedFinalState.entrySet());
   }
 }
