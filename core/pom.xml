@@ -242,10 +242,11 @@
       <artifactId>mapdb</artifactId>
       <version>3.0.8</version>
     </dependency>
+    <!-- Upgraded MongoDB driver for Spring Boot 3.x compatibility -->
     <dependency>
       <groupId>org.mongodb</groupId>
-      <artifactId>mongo-java-driver</artifactId>
-      <version>3.11.2</version>
+      <artifactId>mongodb-driver-sync</artifactId>
+      <version>4.10.2</version>
     </dependency>
     <dependency>
         <groupId>org.postgresql</groupId>

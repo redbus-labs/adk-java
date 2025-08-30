@@ -17,6 +17,7 @@
 package com.google.adk.utils;
 
 import static com.google.common.base.Strings.isNullOrEmpty;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
@@ -30,6 +31,7 @@ import com.google.adk.tools.GoogleSearchTool;
 import com.google.adk.tools.LoadArtifactsTool;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -324,5 +326,11 @@ public class ComponentRegistry {
     }
 
     return Optional.empty();
+  }
+
+  public Set<String> getToolNamesWithPrefix(String prefix) {
+    return registry.keySet().stream()
+        .filter(name -> name.startsWith(prefix))
+        .collect(toImmutableSet());
   }
 }

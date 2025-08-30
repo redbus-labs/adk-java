@@ -32,8 +32,8 @@ public final class State implements ConcurrentMap<String, Object> {
   public static final String USER_PREFIX = "user:";
   public static final String TEMP_PREFIX = "temp:";
 
-  // Sentinel object to mark removed entries in the delta map
-  private static final Object REMOVED = new Object();
+  /** Sentinel object to mark removed entries in the delta map. */
+  public static final Object REMOVED = new Object();
 
   private final ConcurrentMap<String, Object> state;
   private final ConcurrentMap<String, Object> delta;
