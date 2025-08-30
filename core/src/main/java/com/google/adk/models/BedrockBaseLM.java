@@ -360,6 +360,8 @@ public class BedrockBaseLM extends BaseLlm {
     finalContents.stream()
         .forEach(
             item -> {
+              //   return new MessageParam(content.role().get().equals("model") ||
+              // content.role().get().equals("assistant") ? "" : "",content.text());
               JSONObject messageQuantum = new JSONObject();
               messageQuantum.put(
                   "role",
@@ -367,14 +369,42 @@ public class BedrockBaseLM extends BaseLlm {
                       ? "assistant"
                       : "user");
 
+              // Additinal override work to add function response
               if (item.parts().get().get(0).functionResponse().isPresent()) {
-                messageQuantum.put(
-                    "content",
-                    new JSONObject(
-                            item.parts().get().get(0).functionResponse().get().response().get())
-                        .toString(1));
+                JSONObject txtMsg3 = new JSONObject();
+                txtMsg3.put(
+                    "text",
+                    item.parts().get().get(0).functionResponse().get().name().get()
+                        + " responded with these values, "
+                        + new JSONObject(
+                                item.parts().get().get(0).functionResponse().get().response().get())
+                            .toString());
+
+                JSONArray contentArray2 = new JSONArray();
+                contentArray2.put(txtMsg3);
+
+                messageQuantum.put("content", contentArray2);
+              } else if (item.parts().get().get(0).functionCall().isPresent()) {
+                JSONObject txtMsg3 = new JSONObject();
+                txtMsg3.put(
+                    "text",
+                    item.parts().get().get(0).functionCall().get().name().get()
+                        + " is to be called with these arguments, "
+                        + new JSONObject(
+                                item.parts().get().get(0).functionCall().get().args().get())
+                            .toString());
+
+                JSONArray contentArray2 = new JSONArray();
+                contentArray2.put(txtMsg3);
+
+                messageQuantum.put("content", contentArray2);
               } else {
-                messageQuantum.put("content", item.text());
+
+                JSONObject txtMsg3 = new JSONObject();
+                txtMsg3.put("text", item.text());
+                JSONArray contentArray2 = new JSONArray();
+                contentArray2.put(txtMsg3);
+                messageQuantum.put("content", contentArray2);
               }
               messages.put(messageQuantum);
             });
