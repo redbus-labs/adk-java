@@ -1890,19 +1890,15 @@ public class AdkWebServer implements WebMvcConfigurer {
    */
   public static void main(String[] args) {
     System.setProperty(
-        "org.apache.tomcat.websocket.DEFAULT_BUFFER_SIZE", String.valueOf(10 * 1024 * 1024));
-    // SpringApplication.run(AdkWebServer.class, args);
-    org.springframework.boot.SpringApplication.run(AdkWebServer.class, args);
-    log.info("AdkWebServer application started successfully.");
-
-    // Define the port you want
+            "org.apache.tomcat.websocket.DEFAULT_BUFFER_SIZE", String.valueOf(10 * 1024 * 1024));
     int customPort = 8081; // Or any port you prefer
 
-    // Build the SpringApplication programmatically
+    // Start Spring Boot only once, with custom properties
     new SpringApplicationBuilder(AdkWebServer.class)
-        // .properties("server.port=" + customPort) // Set the server.port property
-        .properties("server.address=0.0.0.0") // Set the server.port property
-        .run(args);
+            .properties("server.port=" + customPort, "server.address=0.0.0.0")
+            .run(args);
+
+    log.info("AdkWebServer application started successfully.");
   }
 
   // TODO(vorburger): #later return Closeable, which can stop the server (and resets static)
