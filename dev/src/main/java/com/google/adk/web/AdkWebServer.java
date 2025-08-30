@@ -82,11 +82,14 @@ import java.util.logging.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.context.ApplicationContextInitializer;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
@@ -213,7 +216,7 @@ public class AdkWebServer implements WebMvcConfigurer {
 
     @Autowired
     public RunnerService(
-        @Qualifier("agentLoader") AgentLoader agentProvider,
+        AgentLoader agentProvider,
         BaseArtifactService artifactService,
         BaseSessionService sessionService,
         BaseMemoryService memoryService) {
@@ -296,11 +299,24 @@ public class AdkWebServer implements WebMvcConfigurer {
     @Bean
     public OpenTelemetry openTelemetrySdk(SdkTracerProvider sdkTracerProvider) {
       otelLog.debug("Configuring OpenTelemetrySdk and registering globally.");
-      OpenTelemetrySdk otelSdk =
-          OpenTelemetrySdk.builder().setTracerProvider(sdkTracerProvider).buildAndRegisterGlobal();
 
-      Runtime.getRuntime().addShutdownHook(new Thread(otelSdk::close));
-      return otelSdk;
+      // Check if OpenTelemetry has already been set globally (common in tests)
+      try {
+        io.opentelemetry.api.GlobalOpenTelemetry.get();
+        // If we get here, it's already set, so just return a new instance without global
+        // registration
+        otelLog.debug("OpenTelemetry already registered globally, creating non-global instance.");
+        return OpenTelemetrySdk.builder().setTracerProvider(sdkTracerProvider).build();
+      } catch (IllegalStateException e) {
+        // GlobalOpenTelemetry hasn't been set yet, safe to register globally
+        otelLog.debug("Registering OpenTelemetry globally.");
+        OpenTelemetrySdk otelSdk =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(sdkTracerProvider)
+                .buildAndRegisterGlobal();
+        Runtime.getRuntime().addShutdownHook(new Thread(otelSdk::close));
+        return otelSdk;
+      }
     }
   }
 
@@ -641,7 +657,7 @@ public class AdkWebServer implements WebMvcConfigurer {
     public AgentController(
         BaseSessionService sessionService,
         BaseArtifactService artifactService,
-        @Qualifier("agentLoader") AgentLoader agentProvider,
+        AgentLoader agentProvider,
         ApiServerSpanExporter apiServerSpanExporter,
         RunnerService runnerService) {
       this.sessionService = sessionService;
@@ -649,7 +665,7 @@ public class AdkWebServer implements WebMvcConfigurer {
       this.agentProvider = agentProvider;
       this.apiServerSpanExporter = apiServerSpanExporter;
       this.runnerService = runnerService;
-      ImmutableList<String> agentNames = agentProvider.listAgents();
+      ImmutableList<String> agentNames = this.agentProvider.listAgents();
       log.info(
           "AgentController initialized with {} dynamic agents: {}", agentNames.size(), agentNames);
       if (agentNames.isEmpty()) {
@@ -1890,11 +1906,23 @@ public class AdkWebServer implements WebMvcConfigurer {
   }
 
   // TODO(vorburger): #later return Closeable, which can stop the server (and resets static)
-  public static synchronized void start(BaseAgent... agents) {
-    if (AGENT_LOADER != null) {
-      throw new IllegalStateException("AdkWebServer can only be started once.");
-    }
-    AGENT_LOADER = new AgentStaticLoader(agents);
-    main(new String[0]);
+  public static void start(BaseAgent... agents) {
+    // Disable CompiledAgentLoader by setting property to prevent its creation
+    System.setProperty("adk.agents.loader", "static");
+
+    // Create Spring Application with custom initializer
+    SpringApplication app = new SpringApplication(AdkWebServer.class);
+    app.addInitializers(
+        new ApplicationContextInitializer<ConfigurableApplicationContext>() {
+          @Override
+          public void initialize(ConfigurableApplicationContext context) {
+            // Register the AgentStaticLoader bean before context refresh
+            DefaultListableBeanFactory beanFactory =
+                (DefaultListableBeanFactory) context.getBeanFactory();
+            beanFactory.registerSingleton("agentLoader", new AgentStaticLoader(agents));
+          }
+        });
+
+    app.run(new String[0]);
   }
 }
