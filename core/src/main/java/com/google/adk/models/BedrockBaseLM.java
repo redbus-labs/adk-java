@@ -53,8 +53,8 @@ import org.slf4j.LoggerFactory;
  */
 public class BedrockBaseLM extends BaseLlm {
 
-  // The Ollama endpoint is already correctly set as requested.
-  public static String BEDROCK_EP = "BEDROCK_URL";
+  // Use a constant for the environment variable name
+  public static final String BEDROCK_ENV_VAR = "BEDROCK_URL";
   public String D_URL = null;
 
   // Corrected the logger name to use OllamaBaseLM.class
@@ -69,8 +69,12 @@ public class BedrockBaseLM extends BaseLlm {
     super(model);
   }
 
+  /**
+   * @param model The model ID (e.g., "openai.gpt-oss-20b-1:0")
+   * @param BEDROCK_EP The base Bedrock endpoint (e.g.,
+   *     "https://bedrock-runtime.us-west-2.amazonaws.com/model")
+   */
   public BedrockBaseLM(String model, String BEDROCK_EP) {
-
     super(model);
     this.D_URL = BEDROCK_EP;
   }
@@ -577,21 +581,14 @@ public class BedrockBaseLM extends BaseLlm {
 
   public BufferedReader callLLMChatStream(String model, JSONArray messages, JSONArray tools) {
     try {
-      String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_EP);
-      String AWS_BEARER_TOKEN_BEDROCK = System.getenv(BEDROCK_EP);
-      apiUrl = apiUrl + "/api/chat";
-
+      String apiUrl =
+          (D_URL != null ? D_URL : System.getenv(BEDROCK_ENV_VAR)) + "/" + model + "/converse";
+      String AWS_BEARER_TOKEN_BEDROCK = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
+      System.out.println("Using Bedrock URL: " + apiUrl);
       JSONObject payload = new JSONObject();
       payload.put("model", model);
       payload.put("stream", true);
-      payload.put("think", false);
-
-      JSONObject options = new JSONObject();
-      options.put("num_ctx", 4096);
-      payload.put("options", options);
-
       payload.put("messages", messages);
-
       if (tools != null) {
         payload.put("tools", tools);
       }
@@ -602,9 +599,7 @@ public class BedrockBaseLM extends BaseLlm {
       HttpURLConnection connection = (HttpURLConnection) url.openConnection();
       connection.setRequestMethod("POST");
       connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-      connection.setRequestProperty(
-          "Authorization",
-          "Bearer " + AWS_BEARER_TOKEN_BEDROCK); // This header is less standard than
+      connection.setRequestProperty("Authorization", "Bearer " + AWS_BEARER_TOKEN_BEDROCK);
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
 
@@ -735,107 +730,53 @@ public class BedrockBaseLM extends BaseLlm {
     try {
       JSONObject responseJ = new JSONObject();
       // API endpoint URL //OLLAMA_API_BASE
-      String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_EP);
+      String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_ENV_VAR);
       String AWS_BEARER_TOKEN_BEDROCK = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
       // apiUrl = apiUrl + "/api/chat";
 
       // Constructing the JSON payload
       JSONObject payload = new JSONObject();
-      // payload.put("model", model);
-      // payload.put( "stream", false); // Assuming non-streaming as per current generateContent
-      // implementation
-      // payload.put("think", false);
-
-      // JSONObject options = new JSONObject();
-      // options.put("num_ctx", 4096);
-      // payload.put("options", options);
-
-      // Add messages to the payload
-      payload.put("messages", messages);
-
-      // Add tools if provided
+      payload.put("model", model);
+      payload.put("stream", false); // Non-streaming
+      payload.put("messages", messages); // Use same structure as streaming
       if (tools != null) {
         payload.put("tools", tools);
       }
 
-      // Convert payload to string
       String jsonString = payload.toString();
-
-      // Create URL object
       URL url = new URL(apiUrl);
-
-      // Open connection
       HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-
-      // Set request method
       connection.setRequestMethod("POST");
-
-      // Set headers
-      connection.setRequestProperty(
-          "Content-Type",
-          "application/json; charset=UTF-8"); // <-- Also good practice to specify charset here
-      connection.setRequestProperty(
-          "Authorization",
-          "Bearer " + AWS_BEARER_TOKEN_BEDROCK); // This header is less standard than
-      // adding to Content-Type
-
-      // Enable output
+      connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+      connection.setRequestProperty("Authorization", "Bearer " + AWS_BEARER_TOKEN_BEDROCK);
       connection.setDoOutput(true);
-      // Optional: Set content length based on UTF-8 bytes
       connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
 
-      // Write JSON data to output stream using UTF-8
       try (OutputStream outputStream = connection.getOutputStream();
-          OutputStreamWriter writer =
-              new OutputStreamWriter(outputStream, "UTF-8")) { // <-- MODIFIED
-        writer.write(jsonString); // <-- MODIFIED
+          OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
+        writer.write(jsonString);
         writer.flush();
       } catch (IOException ex) {
         java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
       }
 
-      // Read response
       int responseCode = connection.getResponseCode();
       System.out.println("Response Code: " + responseCode);
 
-      // Read response body using UTF-8
-      try (InputStream inputStream = connection.getInputStream();
-          BufferedReader reader =
-              new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) { // <-- MODIFIED
+      InputStream inputStream =
+          (responseCode < 400) ? connection.getInputStream() : connection.getErrorStream();
+      try (BufferedReader reader =
+          new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) {
         StringBuilder response = new StringBuilder();
         String line;
         while ((line = reader.readLine()) != null) {
           response.append(line);
         }
-        System.out.println("Response Body: " + response.toString());
-
         responseJ = new JSONObject(response.toString());
-
       } catch (IOException ex) {
         java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
-        // Handle error stream if responseCode is not 2xx
-        if (responseCode >= 400) {
-          try (InputStream errorStream = connection.getErrorStream();
-              BufferedReader errorReader =
-                  new BufferedReader(new InputStreamReader(errorStream, "UTF-8"))) {
-            StringBuilder errorResponse = new StringBuilder();
-            String errorLine;
-            while ((errorLine = errorReader.readLine()) != null) {
-              errorResponse.append(errorLine);
-            }
-            System.err.println("Error Response Body: " + errorResponse.toString());
-            // You might want to parse the errorResponse as a JSON object too if the API returns
-            // JSON errors
-          } catch (IOException errorEx) {
-            java.util.logging.Logger.getLogger(RedbusADG.class.getName())
-                .log(Level.SEVERE, null, errorEx);
-          }
-        }
       }
-
-      // Close connection
       connection.disconnect();
-
       return responseJ;
 
     } catch (MalformedURLException ex) {
@@ -864,8 +805,8 @@ public class BedrockBaseLM extends BaseLlm {
     JSONObject responseJ = new JSONObject();
     try {
       // API endpoint URL //OLLAMA_API_BASE
-      String apiUrl = System.getenv(BEDROCK_EP);
-      String AWS_BEARER_TOKEN_BEDROCK = System.getenv(BEDROCK_EP);
+      String apiUrl = System.getenv(BEDROCK_ENV_VAR);
+      String AWS_BEARER_TOKEN_BEDROCK = System.getenv(BEDROCK_ENV_VAR);
       apiUrl = apiUrl + "/api/chat";
 
       // Constructing the JSON payload
@@ -988,6 +929,79 @@ public class BedrockBaseLM extends BaseLlm {
     return responseJ;
   }
 
+  /**
+   * Streams the response from the Bedrock LLM API as JSON objects, emitting each line as it
+   * arrives.
+   *
+   * @param model The model name.
+   * @param messages The messages to send.
+   * @param tools The tools to use.
+   * @param stream If true, enables streaming mode.
+   * @return Flowable emitting each response chunk as a JSONObject.
+   */
+  public Flowable<JSONObject> generateContent(
+      String model, JSONArray messages, JSONArray tools, boolean stream) {
+    return Flowable.create(
+        emitter -> {
+          try {
+            String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_ENV_VAR);
+            String AWS_BEARER_TOKEN_BEDROCK = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
+            JSONObject payload = new JSONObject();
+            payload.put("messages", messages);
+            if (tools != null) {
+              payload.put("tools", tools);
+            }
+            String jsonString = payload.toString();
+            URL url = new URL(apiUrl);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            connection.setRequestProperty("Authorization", "Bearer " + AWS_BEARER_TOKEN_BEDROCK);
+            connection.setDoOutput(true);
+            connection.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
+            try (OutputStream outputStream = connection.getOutputStream();
+                OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
+              writer.write(jsonString);
+              writer.flush();
+            }
+            int responseCode = connection.getResponseCode();
+            InputStream inputStream =
+                (responseCode < 400) ? connection.getInputStream() : connection.getErrorStream();
+            try (BufferedReader reader =
+                new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) {
+              String line;
+              StringBuilder responseBuilder = new StringBuilder();
+              while ((line = reader.readLine()) != null) {
+                if (stream) {
+                  // Try to parse each line as JSON and emit
+                  try {
+                    JSONObject chunk = new JSONObject(line);
+                    emitter.onNext(chunk);
+                  } catch (Exception e) {
+                    // If not valid JSON, accumulate for later
+                    responseBuilder.append(line);
+                  }
+                } else {
+                  responseBuilder.append(line);
+                }
+              }
+              if (!stream) {
+                try {
+                  JSONObject responseJ = new JSONObject(responseBuilder.toString());
+                  emitter.onNext(responseJ);
+                } catch (Exception e) {
+                  emitter.onError(e);
+                }
+              }
+              emitter.onComplete();
+            }
+          } catch (Exception ex) {
+            emitter.onError(ex);
+          }
+        },
+        io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+  }
+
   public static void main(String[] args) {
     // --- Create the 'messages' part of the JSON using org.json ---
     String messagesJsonString =
@@ -995,11 +1009,11 @@ public class BedrockBaseLM extends BaseLlm {
     [
         {
             "role": "assistant",
-            "content": "You are a helpful assistant."
+            "content": [ { "text": "You are a helpful assistant." } ]
         },
         {
             "role": "user",
-            "content": "Why is the sky blue?"
+            "content": [ { "text": "Write a story about a curious cat named Tommy who explores a mysterious garden. Make the story at least 10 lines long, with each line describing a new discovery or adventure Tommy has in the garden. End with Tommy finding a new friend." } ]
         }
     ]
     """;
@@ -1012,26 +1026,63 @@ public class BedrockBaseLM extends BaseLlm {
       return;
     }
 
-    String modelId = "llama3.1:8b"; // Example model ID
-    BedrockBaseLM ollamaLlm = new BedrockBaseLM(modelId);
+    String modelId = "openai.gpt-oss-120b-1:0"; // Example model ID for Bedrock
+    String bedrockBaseUrl =
+        "https://bedrock-runtime.us-west-2.amazonaws.com/model"; // Base URL only
+    BedrockBaseLM ollamaLlm = new BedrockBaseLM(modelId, bedrockBaseUrl);
 
     // --- Test Streaming Call ---
     System.out.println("--- Testing Streaming API Call ---");
     try {
       System.out.println("Attempting to call Ollama API (Streaming)...");
       System.out.println("Using model ID: " + modelId);
-      System.out.println("Fetching Ollama endpoint from environment variable: " + BEDROCK_EP);
+      System.out.println("Fetching Ollama endpoint from environment variable: " + BEDROCK_ENV_VAR);
 
       BufferedReader responseReader = ollamaLlm.callLLMChatStream(modelId, messagesArray, null);
 
       if (responseReader != null) {
         System.out.println("\nAPI Call Successful! Streaming response:");
-        responseReader
-            .lines()
-            .forEach(
-                line -> {
-                  System.out.println(line);
-                });
+        String line;
+        int rawLineCount = 0;
+        int partCount = 0;
+        boolean foundDone = false;
+        while ((line = responseReader.readLine()) != null) {
+          rawLineCount++;
+          boolean isJson = false;
+          try {
+            JSONObject chunk = new JSONObject(line);
+            isJson = true;
+            if (chunk.optBoolean("done", false)) {
+              foundDone = true;
+              break;
+            }
+            if (chunk.has("output")) {
+              JSONObject output = chunk.getJSONObject("output");
+              if (output.has("message")) {
+                JSONObject message = output.getJSONObject("message");
+                if (message.has("content")) {
+                  JSONArray contentArr = message.getJSONArray("content");
+                  for (int i = 0; i < contentArr.length(); i++) {
+                    partCount++;
+                    JSONObject contentObj = contentArr.getJSONObject(i);
+                    // Print the full JSON structure of each part
+                    if (contentObj.has("text")) {
+                      System.out.print(contentObj.getString("text"));
+                    }
+                    if (contentObj.has("part")) {
+                      System.out.print(" [part: " + contentObj.getString("part") + "]");
+                    }
+                  }
+                }
+              }
+            }
+          } catch (Exception e) {
+            System.out.println("[Line " + rawLineCount + "] Raw: " + line);
+          }
+        }
+        System.out.println(); // Print newline at end
+        System.out.println("Total raw lines received: " + rawLineCount);
+        System.out.println("Total parts processed: " + partCount);
       } else {
         System.err.println("Streaming API Call failed. Check logs for details.");
       }
@@ -1039,7 +1090,7 @@ public class BedrockBaseLM extends BaseLlm {
     } catch (RuntimeException e) {
       System.err.println("Error during Streaming API call (Runtime): " + e.getMessage());
       System.err.println(
-          "Please ensure the environment variable '" + BEDROCK_EP + "' is set correctly.");
+          "Please ensure the environment variable '" + BEDROCK_ENV_VAR + "' is set correctly.");
       e.printStackTrace();
     } catch (Exception e) {
       System.err.println(
