@@ -1,25 +1,27 @@
 
 # Capability Supported
 
-| Feature | Gemini | Anthropic | Ollama | RedbusADG + Azure | Bedrock+Anthropic |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Chat** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Tools/Function** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Chat Stream** | ✅ | ❌ | ✅ | ✅ | ❌ |
-| **Image (Input)** | ✅ (Multimodal models) | ❌ | ❌ | ❓ | ❌ (Claude 3 models) |
-| **Image Gen (Output)** | ✅ | ❌ | ❌ | ❓ | ❌ (Via other models like Titan Image Generator) |
-| **Audio Streaming (Input)** | ✅ (Some APIs/integrations) | ❌ | ❌ | ❓ |❌ (Via services like Amazon Transcribe) |
-| **Transcription** | ✅ (Some APIs/integrations) | ❌ | ❌ | ❓ | ❌ (Via Amazon Transcribe) |
-| **Persistent session (MapDB)** | ✅ | ✅ | ✅ | ✅ | ✅  |
-| **Agents as Tool/Function** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Interoperability (A2A)** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Interoperability (Tools/Functions)** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Interoperability (Agents as Tool/Function)** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Agent Workflow** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Parallel Agents** | ✅ | ✅ | ✅ | ✅ | ✅   |
-| **Sequential Agents** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Agent Orchestration** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Hierarchical Task Decomposition** | ✅ | ✅ | ✅ | ✅ | ✅   |
+Of course. Here is the table with the 4th column for "Bedrock API" added.
+
+| Feature | Gemini | Anthropic | AWS Bedrock API | Ollama | Azure OAI (redBus) | Bedrock+Anthropic |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Chat** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Tools/Function** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Chat Stream** | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| **Image (Input)** | ✅ (Multimodal models) | ❌ | ✅ (Via models like Claude 3) | ❌ | ❓ | ❌ (Claude 3 models) |
+| **Image Gen (Output)** | ✅ | ❌ | ✅ (Via Titan, Stable Diffusion) | ❌ | ❓ | ❌ (Via other models like Titan Image Generator) |
+| **Audio Streaming (Input)** | ✅ (Some APIs/integrations) | ❌ | ❌ (Via Amazon Transcribe) | ❌ | ❓ |❌ (Via services like Amazon Transcribe) |
+| **Transcription** | ✅ (Some APIs/integrations) | ❌ | ❌ (Via Amazon Transcribe) | ❌ | ❓ | ❌ (Via Amazon Transcribe) |
+| **Persistent session (MapDB)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅  |
+| **Agents as Tool/Function** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Interoperability (A2A)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Interoperability (Tools/Functions)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Interoperability (Agents as Tool/Function)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Agent Workflow** | ✅ | ✅ | ✅   | ✅ | ✅ | ✅ |
+| **Parallel Agents** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅   |
+| **Sequential Agents** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Agent Orchestration** | ✅ | ✅ | ✅   | ✅ | ✅ | ✅ |
+| **Hierarchical Task Decomposition** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅   |
 
 
 # Core Differences
