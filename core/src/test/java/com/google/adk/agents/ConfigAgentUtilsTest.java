@@ -20,6 +20,8 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
+import com.google.adk.tools.mcp.McpToolset;
+import com.google.genai.types.GenerateContentConfig;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -180,7 +182,7 @@ public final class ConfigAgentUtilsTest {
         assertThrows(ConfigurationException.class, () -> ConfigAgentUtils.fromConfig(configPath));
 
     assertThat(exception).hasMessageThat().contains("Failed to create agent from config");
-    assertThat(exception.getCause()).isNotNull();
+    assertThat(exception).hasCauseThat().isNotNull();
   }
 
   @Test
@@ -275,7 +277,6 @@ public final class ConfigAgentUtilsTest {
   @Test
   public void fromConfig_withSubAgents_createsHierarchy()
       throws IOException, ConfigurationException {
-    // Create subagent config file
     File subAgentFile = tempFolder.newFile("sub_agent.yaml");
     Files.writeString(
         subAgentFile.toPath(),
@@ -286,7 +287,6 @@ public final class ConfigAgentUtilsTest {
         instruction: You are a helpful subagent
         """);
 
-    // Create main agent config file with subagent reference
     File mainAgentFile = tempFolder.newFile("main_agent.yaml");
     Files.writeString(
         mainAgentFile.toPath(),
@@ -384,5 +384,434 @@ public final class ConfigAgentUtilsTest {
             () -> ConfigAgentUtils.fromConfig(mainAgentFile.getAbsolutePath()));
 
     assertThat(exception).hasMessageThat().contains("Failed to create agent from config");
+  }
+
+  @Test
+  public void fromConfig_withMcpToolset_loadsToolset() throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("with_mcp_toolset.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: mcp_agent
+        model: gemini-1.5-flash
+        instruction: You are an agent that uses an MCP toolset.
+        agent_class: LlmAgent
+        tools:
+          - name: McpToolset
+            args:
+              stdio_server_params:
+                command: "npx"
+                args:
+                  - "-y"
+                  - "@notionhq/notion-mcp-server"
+                env:
+                  OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer fake-key"}'
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.toolsets()).hasSize(1);
+    assertThat(llmAgent.toolsets().get(0)).isInstanceOf(McpToolset.class);
+  }
+
+  @Test
+  public void fromConfig_withMcpToolsetSseParams_loadsToolset()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("with_mcp_sse_toolset.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: mcp_sse_agent
+        model: gemini-1.5-flash
+        instruction: You are an agent that uses an MCP toolset with SSE connection.
+        description: Agent with SSE-based MCP toolset for event streaming
+        agent_class: LlmAgent
+        tools:
+          - name: McpToolset
+            args:
+              sse_server_params:
+                url: "http://localhost:8080"
+                sse_endpoint: "/events"
+                headers:
+                  Authorization: "Bearer test-token"
+                  Content-Type: "text/event-stream"
+                  X-Custom-Header: "custom-value"
+                timeout: 10000
+                sse_read_timeout: 300000
+              tool_filter:
+                - "allowed_tool_1"
+                - "allowed_tool_2"
+                - "allowed_tool_3"
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.name()).isEqualTo("mcp_sse_agent");
+    assertThat(llmAgent.description())
+        .isEqualTo("Agent with SSE-based MCP toolset for event streaming");
+    assertThat(llmAgent.instruction()).isNotNull();
+    assertThat(llmAgent.instruction().toString())
+        .contains("You are an agent that uses an MCP toolset with SSE connection.");
+    assertThat(llmAgent.model()).isPresent();
+
+    assertThat(llmAgent.toolsets()).hasSize(1);
+    assertThat(llmAgent.toolsets().get(0)).isInstanceOf(McpToolset.class);
+
+    String originalYaml = Files.readString(configFile.toPath());
+    assertThat(originalYaml).contains("sse_server_params");
+    assertThat(originalYaml).contains("sse_endpoint");
+    assertThat(originalYaml).contains("sse_read_timeout");
+    assertThat(originalYaml).contains("tool_filter");
+    assertThat(originalYaml).contains("agent_class");
+  }
+
+  @Test
+  public void fromConfig_withGenerateContentConfig() throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("snake_case_conversion_test.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: snake_case_test_agent
+        model: gemini-1.5-flash
+        agent_class: LlmAgent
+        instruction: Test snake_case to camelCase conversion
+        disallow_transfer_to_parent: true
+        disallow_transfer_to_peers: false
+        output_key: test_output_key
+        include_contents: none
+        generate_content_config:
+          temperature: 0.7
+          top_p: 0.9
+          max_output_tokens: 2048
+          response_mime_type: "text/plain"
+        tools:
+          - name: McpToolset
+            args:
+              stdio_server_params:
+                command: "test-cmd"
+                args: ["--verbose"]
+                env:
+                  TEST_ENV: "value"
+              tool_filter: ["tool1", "tool2"]
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+
+    assertThat(llmAgent.name()).isEqualTo("snake_case_test_agent");
+    assertThat(llmAgent.disallowTransferToParent()).isTrue();
+    assertThat(llmAgent.disallowTransferToPeers()).isFalse();
+    assertThat(llmAgent.outputKey()).hasValue("test_output_key");
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.NONE);
+
+    assertThat(llmAgent.generateContentConfig()).isPresent();
+    GenerateContentConfig config = llmAgent.generateContentConfig().get();
+    assertThat(config).isNotNull();
+    assertThat(config.temperature()).hasValue(0.7f);
+    assertThat(config.topP()).hasValue(0.9f);
+    assertThat(config.maxOutputTokens()).hasValue(2048);
+    assertThat(config.responseMimeType()).hasValue("text/plain");
+
+    assertThat(llmAgent.toolsets()).hasSize(1);
+    assertThat(llmAgent.toolsets().get(0)).isInstanceOf(McpToolset.class);
+
+    String originalYaml = Files.readString(configFile.toPath());
+    assertThat(originalYaml).contains("agent_class");
+    assertThat(originalYaml).contains("disallow_transfer_to_parent");
+    assertThat(originalYaml).contains("disallow_transfer_to_peers");
+    assertThat(originalYaml).contains("output_key");
+    assertThat(originalYaml).contains("include_contents");
+    assertThat(originalYaml).contains("generate_content_config");
+    assertThat(originalYaml).contains("max_output_tokens");
+    assertThat(originalYaml).contains("response_mime_type");
+    assertThat(originalYaml).contains("stdio_server_params");
+    assertThat(originalYaml).contains("tool_filter");
+  }
+
+  @Test
+  public void fromConfig_withFullyQualifiedMcpToolset_loadsToolsetViaReflection()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("with_fq_mcp_toolset.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: fq_mcp_agent
+        model: gemini-1.5-flash
+        instruction: You are an agent that uses a fully qualified MCP toolset.
+        agent_class: LlmAgent
+        tools:
+          - name: com.google.adk.tools.mcp.McpToolset
+            args:
+              stdio_server_params:
+                command: "npx"
+                args:
+                  - "-y"
+                  - "@notionhq/notion-mcp-server"
+                env:
+                  OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer fake-key"}'
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.toolsets()).hasSize(1);
+    assertThat(llmAgent.toolsets().get(0)).isInstanceOf(McpToolset.class);
+  }
+
+  @Test
+  public void fromConfig_withIncludeContentsNone_setsIncludeContentsToNone()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("include_contents_none.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: includeContentsNoneAgent
+        description: Agent with include_contents set to NONE
+        instruction: test instruction
+        agent_class: LlmAgent
+        include_contents: none
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.NONE);
+  }
+
+  @Test
+  public void fromConfig_withIncludeContentsDefault_setsIncludeContentsToDefault()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("include_contents_default.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: includeContentsDefaultAgent
+        description: Agent with include_contents set to DEFAULT
+        instruction: test instruction
+        agent_class: LlmAgent
+        include_contents: default
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.DEFAULT);
+  }
+
+  @Test
+  public void fromConfig_withIncludeContentsLowercase_handlesCorrectly()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("include_contents_lowercase.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: includeContentsLowercaseAgent
+        description: Agent with include_contents in lowercase
+        instruction: test instruction
+        agent_class: LlmAgent
+        include_contents: none
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.NONE);
+  }
+
+  @Test
+  public void fromConfig_withIncludeContentsMixedCase_handlesCorrectly()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("include_contents_mixedcase.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: includeContentsMixedCaseAgent
+        description: Agent with include_contents in mixed case
+        instruction: test instruction
+        agent_class: LlmAgent
+        include_contents: default
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.DEFAULT);
+  }
+
+  @Test
+  public void fromConfig_withoutIncludeContents_defaultsToDefault()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("no_include_contents.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: noIncludeContentsAgent
+        description: Agent without include_contents field
+        instruction: test instruction
+        agent_class: LlmAgent
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.DEFAULT);
+  }
+
+  @Test
+  public void fromConfig_withInvalidIncludeContents_throwsException() throws IOException {
+    File configFile = tempFolder.newFile("invalid_include_contents.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: invalidIncludeContentsAgent
+        description: Agent with invalid include_contents value
+        instruction: test instruction
+        agent_class: LlmAgent
+        include_contents: INVALID_VALUE
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    ConfigurationException exception =
+        assertThrows(ConfigurationException.class, () -> ConfigAgentUtils.fromConfig(configPath));
+
+    assertThat(exception).hasMessageThat().contains("Failed to load or parse config file");
+
+    Throwable cause = exception.getCause();
+    assertThat(cause).isNotNull();
+  }
+
+  @Test
+  public void fromConfig_withIncludeContentsAndOtherFields_parsesAllFieldsCorrectly()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("complete_config.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        name: completeAgent
+        description: Agent with all fields including include_contents
+        instruction: You are a complete test agent
+        agent_class: LlmAgent
+        model: gemini-1.5-flash
+        include_contents: none
+        output_key: testOutput
+        disallow_transfer_to_parent: true
+        disallow_transfer_to_peers: false
+        tools:
+          - name: google_search
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.name()).isEqualTo("completeAgent");
+    assertThat(llmAgent.description())
+        .isEqualTo("Agent with all fields including include_contents");
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.NONE);
+    assertThat(llmAgent.outputKey()).hasValue("testOutput");
+    assertThat(llmAgent.disallowTransferToParent()).isTrue();
+    assertThat(llmAgent.disallowTransferToPeers()).isFalse();
+    assertThat(llmAgent.tools()).hasSize(1);
+    assertThat(llmAgent.model()).isPresent();
+  }
+
+  @Test
+  public void fromConfig_withOutputKey_setsOutputKeyOnAgent()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("output_key.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        agent_class: LlmAgent
+        name: InitialWriterAgent
+        model: gemini-2.0-flash
+        description: Writes the initial document draft based on the topic
+        instruction: |
+          You are a Creative Writing Assistant tasked with starting a story.
+          Write the first draft of a short story.
+        output_key: current_document
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.name()).isEqualTo("InitialWriterAgent");
+    assertThat(llmAgent.outputKey()).hasValue("current_document");
+  }
+
+  @Test
+  public void fromConfig_withEmptyOutputKey_doesNotSetOutputKey()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("empty_output_key.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        agent_class: LlmAgent
+        name: AgentWithoutOutputKey
+        instruction: Test instruction
+        output_key:
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.outputKey()).isEmpty();
+  }
+
+  @Test
+  public void fromConfig_withOutputKeyAndOtherFields_parsesAllFields()
+      throws IOException, ConfigurationException {
+    File configFile = tempFolder.newFile("output_key_complete.yaml");
+    Files.writeString(
+        configFile.toPath(),
+        """
+        agent_class: LlmAgent
+        name: CompleteAgentWithOutputKey
+        model: gemini-2.0-flash
+        description: Agent with output key and other configurations
+        instruction: Process and store output
+        output_key: result_data
+        include_contents: NONE
+        disallow_transfer_to_parent: true
+        disallow_transfer_to_peers: false
+        """);
+    String configPath = configFile.getAbsolutePath();
+
+    BaseAgent agent = ConfigAgentUtils.fromConfig(configPath);
+
+    assertThat(agent).isInstanceOf(LlmAgent.class);
+    LlmAgent llmAgent = (LlmAgent) agent;
+    assertThat(llmAgent.name()).isEqualTo("CompleteAgentWithOutputKey");
+    assertThat(llmAgent.outputKey()).hasValue("result_data");
+    assertThat(llmAgent.includeContents()).isEqualTo(LlmAgent.IncludeContents.NONE);
+    assertThat(llmAgent.disallowTransferToParent()).isTrue();
+    assertThat(llmAgent.disallowTransferToPeers()).isFalse();
+    assertThat(llmAgent.model()).isPresent();
   }
 }
