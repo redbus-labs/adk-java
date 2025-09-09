@@ -35,6 +35,9 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class GeminiUtilTest {
 
+  private static final Content CONTINUE_CONTENT =
+      Content.fromParts(Part.fromText(GeminiUtil.CONTINUE_OUTPUT_MESSAGE));
+
   @Test
   public void stripThoughts_emptyList_returnsEmptyList() {
     assertThat(GeminiUtil.stripThoughts(ImmutableList.of())).isEmpty();
@@ -402,6 +405,115 @@ public final class GeminiUtilTest {
     assertThat(sanitizedPart2.fileData()).hasValue(expectedFd2);
     // Verify Content 3: Should be unchanged.
     assertThat(sanitizedRequest.contents().get(2)).isEqualTo(content3);
+  }
+
+  @Test
+  public void ensureModelResponse_emptyList_appendsContinueMessage() {
+    ImmutableList<Content> contents = ImmutableList.of();
+
+    List<Content> result = GeminiUtil.ensureModelResponse(contents);
+
+    assertThat(result).containsExactly(CONTINUE_CONTENT);
+  }
+
+  @Test
+  public void ensureModelResponse_userRoleIsLast_returnsSameList() {
+    Content modelContent = Content.builder().role("model").build();
+    Content userContent = Content.builder().role("user").build();
+    ImmutableList<Content> contents = ImmutableList.of(modelContent, userContent);
+
+    List<Content> result = GeminiUtil.ensureModelResponse(contents);
+
+    assertThat(result).containsExactly(modelContent, userContent).inOrder();
+  }
+
+  @Test
+  public void ensureModelResponse_lastContentIsNotUser_appendsContinueMessage() {
+    Content modelContent1 = Content.builder().role("model").build();
+    Content modelContent2 = Content.builder().role("model").build();
+    Content modelContent3 = Content.builder().role("model").build();
+    Content userContent1 = Content.builder().role("user").build();
+    Content userContent2 = Content.builder().role("user").build();
+
+    // Case 1: No user role, last is model
+    ImmutableList<Content> contents1 = ImmutableList.of(modelContent1, modelContent2);
+    assertThat(GeminiUtil.ensureModelResponse(contents1))
+        .containsExactly(modelContent1, modelContent2, CONTINUE_CONTENT)
+        .inOrder();
+
+    // Case 2: User role is first, last is model
+    ImmutableList<Content> contents2 = ImmutableList.of(userContent1, modelContent1);
+    assertThat(GeminiUtil.ensureModelResponse(contents2))
+        .containsExactly(userContent1, modelContent1, CONTINUE_CONTENT)
+        .inOrder();
+
+    // Case 3: User role in middle, last is model
+    ImmutableList<Content> contents3 = ImmutableList.of(modelContent1, userContent1, modelContent2);
+    assertThat(GeminiUtil.ensureModelResponse(contents3))
+        .containsExactly(modelContent1, userContent1, modelContent2, CONTINUE_CONTENT)
+        .inOrder();
+
+    // Case 4: Multiple user roles, last is model
+    ImmutableList<Content> contents4 =
+        ImmutableList.of(modelContent1, userContent1, modelContent2, userContent2, modelContent3);
+    assertThat(GeminiUtil.ensureModelResponse(contents4))
+        .containsExactly(
+            modelContent1,
+            userContent1,
+            modelContent2,
+            userContent2,
+            modelContent3,
+            CONTINUE_CONTENT)
+        .inOrder();
+  }
+
+  @Test
+  public void prepareGenenerateContentRequest_emptyRequest_returnsRequestWithContinueContent() {
+    LlmRequest request = LlmRequest.builder().build();
+
+    LlmRequest result = GeminiUtil.prepareGenenerateContentRequest(request, true);
+
+    assertThat(result.contents()).containsExactly(CONTINUE_CONTENT);
+    assertThat(result.config()).isEmpty();
+  }
+
+  @Test
+  public void
+      prepareGenenerateContentRequest_withContentsAndConfig_appliesSanitizationAndEnsuresUserRole() {
+    // Config with labels to be sanitized
+    GenerateContentConfig config =
+        GenerateContentConfig.builder().labels(ImmutableMap.of("key", "value")).build();
+    // Contents: InlineData with display name (to be sanitized) and a model role last (needs
+    // CONTINUE_CONTENT)
+    Blob blobWithDisplayName =
+        Blob.builder()
+            .mimeType("image/png")
+            .data("bytes".getBytes(UTF_8))
+            .displayName("image1")
+            .build();
+    Part inlineDataPart = Part.builder().inlineData(blobWithDisplayName).build();
+    Content content1 = toContent(inlineDataPart);
+    // Content with role "model". sanitizeRequestForGeminiApi ensures that the parts list is
+    // present,
+    // even if empty, so we initialize it as such.
+    Content content2 = Content.builder().role("model").parts(ImmutableList.of()).build();
+    LlmRequest request =
+        LlmRequest.builder().contents(ImmutableList.of(content1, content2)).config(config).build();
+
+    LlmRequest result = GeminiUtil.prepareGenenerateContentRequest(request, /* sanitize= */ true);
+
+    // Expected sanitized config: labels removed
+    assertThat(result.config()).isPresent();
+    assertThat(result.config().get().labels().get()).isEmpty();
+
+    // Expected contents: inlineDataPart display name removed, and CONTINUE_CONTENT appended
+    Blob expectedBlob =
+        Blob.builder().mimeType("image/png").data(blobWithDisplayName.data().get()).build();
+    Part expectedInlineDataPart = Part.builder().inlineData(expectedBlob).build();
+    Content expectedContent1 = toContent(expectedInlineDataPart);
+    assertThat(result.contents())
+        .containsExactly(expectedContent1, content2, CONTINUE_CONTENT)
+        .inOrder();
   }
 
   private static Content toContent(Part... parts) {
