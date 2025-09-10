@@ -111,9 +111,7 @@ public final class ConfigAgentUtils {
         resolvedSubAgents.add(subAgent);
         logger.debug("Successfully resolved subagent: {}", subAgent.name());
       } catch (Exception e) {
-        String errorMsg =
-            "Failed to resolve subagent: "
-                + (subAgentConfig.name() != null ? subAgentConfig.name() : "unnamed");
+        String errorMsg = "Failed to resolve subagent";
         logger.error(errorMsg, e);
         throw new ConfigurationException(errorMsg, e);
       }
@@ -137,19 +135,18 @@ public final class ConfigAgentUtils {
       return resolveSubAgentFromConfigPath(subAgentConfig, configDir);
     }
 
-    // TODO: Add support for programmatic subagent resolution (className/staticField).
-    if (subAgentConfig.className() != null || subAgentConfig.staticField() != null) {
-      throw new ConfigurationException(
-          "Programmatic subagent resolution (className/staticField) is not yet supported for"
-              + " subagent: "
-              + subAgentConfig.name());
+    // Check for programmatic references (only 'code' is supported)
+    if (subAgentConfig.code() != null && !subAgentConfig.code().trim().isEmpty()) {
+      String registryKey = subAgentConfig.code().trim();
+      return ComponentRegistry.resolveAgentInstance(registryKey)
+          .orElseThrow(
+              () ->
+                  new ConfigurationException(
+                      "Failed to resolve subagent from registry with code key: " + registryKey));
     }
 
     throw new ConfigurationException(
-        "Subagent configuration for '"
-            + subAgentConfig.name()
-            + "' must specify 'configPath'."
-            + " Programmatic references (className/staticField) are not yet supported.");
+        "Subagent configuration must specify either 'configPath' or 'code'.");
   }
 
   /** Resolves a subagent from a configuration file path. */

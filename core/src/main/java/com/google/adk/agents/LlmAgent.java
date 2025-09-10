@@ -100,6 +100,7 @@ public class LlmAgent extends BaseAgent {
   private final List<Object> toolsUnion;
   private final ImmutableList<BaseToolset> toolsets;
   private final Optional<GenerateContentConfig> generateContentConfig;
+  // TODO: Remove exampleProvider field - examples should only be provided via ExampleTool
   private final Optional<BaseExampleProvider> exampleProvider;
   private final IncludeContents includeContents;
 
@@ -280,6 +281,8 @@ public class LlmAgent extends BaseAgent {
       return this;
     }
 
+    // TODO: Remove these example provider methods and only use ExampleTool for providing examples.
+    // Direct example methods should be deprecated in favor of using ExampleTool consistently.
     @CanIgnoreReturnValue
     public Builder exampleProvider(BaseExampleProvider exampleProvider) {
       this.exampleProvider = exampleProvider;
@@ -360,9 +363,10 @@ public class LlmAgent extends BaseAgent {
           } else if (callback instanceof BeforeModelCallbackSync beforeModelCallbackSyncInstance) {
             builder.add(
                 (BeforeModelCallback)
-                    (callbackContext, llmRequest) ->
+                    (callbackContext, llmRequestBuilder) ->
                         Maybe.fromOptional(
-                            beforeModelCallbackSyncInstance.call(callbackContext, llmRequest)));
+                            beforeModelCallbackSyncInstance.call(
+                                callbackContext, llmRequestBuilder)));
           } else {
             logger.warn(
                 "Invalid beforeModelCallback callback type: %s. Ignoring this callback.",
@@ -379,8 +383,9 @@ public class LlmAgent extends BaseAgent {
     public Builder beforeModelCallbackSync(BeforeModelCallbackSync beforeModelCallbackSync) {
       this.beforeModelCallback =
           ImmutableList.of(
-              (callbackContext, llmRequest) ->
-                  Maybe.fromOptional(beforeModelCallbackSync.call(callbackContext, llmRequest)));
+              (callbackContext, llmRequestBuilder) ->
+                  Maybe.fromOptional(
+                      beforeModelCallbackSync.call(callbackContext, llmRequestBuilder)));
       return this;
     }
 
@@ -787,6 +792,7 @@ public class LlmAgent extends BaseAgent {
     return generateContentConfig;
   }
 
+  // TODO: Remove this getter - examples should only be provided via ExampleTool
   public Optional<BaseExampleProvider> exampleProvider() {
     return exampleProvider;
   }
@@ -970,6 +976,9 @@ public class LlmAgent extends BaseAgent {
       builder.generateContentConfig(config.generateContentConfig());
     }
 
+    // Resolve callbacks if configured
+    setCallbacksFromConfig(config, builder);
+
     // Build and return the agent
     LlmAgent agent = builder.build();
     logger.info(
@@ -978,6 +987,93 @@ public class LlmAgent extends BaseAgent {
         agent.subAgents() != null ? agent.subAgents().size() : 0);
 
     return agent;
+  }
+
+  private static void setCallbacksFromConfig(LlmAgentConfig config, Builder builder)
+      throws ConfigurationException {
+    var beforeAgentCallbacks = config.beforeAgentCallbacks();
+    if (beforeAgentCallbacks != null) {
+      ImmutableList.Builder<Callbacks.BeforeAgentCallbackBase> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : beforeAgentCallbacks) {
+        var callback = ComponentRegistry.resolveBeforeAgentCallback(ref.name());
+        if (callback.isPresent()) {
+          list.add(callback.get());
+          continue;
+        }
+        throw new ConfigurationException("Invalid before_agent_callback: " + ref.name());
+      }
+      builder.beforeAgentCallback(list.build());
+    }
+
+    var afterAgentCallbacks = config.afterAgentCallbacks();
+    if (afterAgentCallbacks != null) {
+      ImmutableList.Builder<Callbacks.AfterAgentCallbackBase> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : afterAgentCallbacks) {
+        var callback = ComponentRegistry.resolveAfterAgentCallback(ref.name());
+        if (callback.isPresent()) {
+          list.add(callback.get());
+          continue;
+        }
+        throw new ConfigurationException("Invalid after_agent_callback: " + ref.name());
+      }
+      builder.afterAgentCallback(list.build());
+    }
+
+    var beforeModelCallbacks = config.beforeModelCallbacks();
+    if (beforeModelCallbacks != null) {
+      ImmutableList.Builder<Callbacks.BeforeModelCallbackBase> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : beforeModelCallbacks) {
+        var callback = ComponentRegistry.resolveBeforeModelCallback(ref.name());
+        if (callback.isPresent()) {
+          list.add(callback.get());
+          continue;
+        }
+        throw new ConfigurationException("Invalid before_model_callback: " + ref.name());
+      }
+      builder.beforeModelCallback(list.build());
+    }
+
+    var afterModelCallbacks = config.afterModelCallbacks();
+    if (afterModelCallbacks != null) {
+      ImmutableList.Builder<Callbacks.AfterModelCallbackBase> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : afterModelCallbacks) {
+        var callback = ComponentRegistry.resolveAfterModelCallback(ref.name());
+        if (callback.isPresent()) {
+          list.add(callback.get());
+          continue;
+        }
+        throw new ConfigurationException("Invalid after_model_callback: " + ref.name());
+      }
+      builder.afterModelCallback(list.build());
+    }
+
+    var beforeToolCallbacks = config.beforeToolCallbacks();
+    if (beforeToolCallbacks != null) {
+      ImmutableList.Builder<Callbacks.BeforeToolCallbackBase> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : beforeToolCallbacks) {
+        var callback = ComponentRegistry.resolveBeforeToolCallback(ref.name());
+        if (callback.isPresent()) {
+          list.add(callback.get());
+          continue;
+        }
+        throw new ConfigurationException("Invalid before_tool_callback: " + ref.name());
+      }
+      builder.beforeToolCallback(list.build());
+    }
+
+    var afterToolCallbacks = config.afterToolCallbacks();
+    if (afterToolCallbacks != null) {
+      ImmutableList.Builder<Callbacks.AfterToolCallbackBase> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : afterToolCallbacks) {
+        var callback = ComponentRegistry.resolveAfterToolCallback(ref.name());
+        if (callback.isPresent()) {
+          list.add(callback.get());
+          continue;
+        }
+        throw new ConfigurationException("Invalid after_tool_callback: " + ref.name());
+      }
+      builder.afterToolCallback(list.build());
+    }
   }
 
   /**

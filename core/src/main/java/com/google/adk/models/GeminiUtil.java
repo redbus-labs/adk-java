@@ -24,9 +24,7 @@ import com.google.genai.types.Blob;
 import com.google.genai.types.Content;
 import com.google.genai.types.FileData;
 import com.google.genai.types.Part;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Request / Response utilities for {@link Gemini}. */
@@ -70,12 +68,9 @@ public final class GeminiUtil {
     LlmRequest.Builder requestBuilder = llmRequest.toBuilder();
     llmRequest
         .config()
+        .filter(config -> config.labels().isPresent())
         .ifPresent(
-            config -> {
-              if (config.labels().isPresent()) {
-                requestBuilder.config(config.toBuilder().labels(ImmutableMap.of()).build());
-              }
-            });
+            config -> requestBuilder.config(config.toBuilder().labels(ImmutableMap.of()).build()));
 
     if (llmRequest.contents().isEmpty()) {
       return requestBuilder.build();
@@ -170,37 +165,29 @@ public final class GeminiUtil {
    * @return True if accumulated text should be emitted, false otherwise.
    */
   public static boolean shouldEmitAccumulatedText(LlmResponse currentLlmResponse) {
-    Optional<Content> contentOpt = currentLlmResponse.content();
-    if (contentOpt.isEmpty()) {
-      return true;
-    }
-
-    Optional<List<Part>> partsOpt = contentOpt.get().parts();
-    if (partsOpt.isEmpty() || partsOpt.get().isEmpty()) {
-      return true;
-    }
-
-    // If content and parts are present, and parts list is not empty, we want to yield accumulated
-    // text only if `text` is present AND (`not llm_response.content` OR `not
-    // llm_response.content.parts` OR `not llm_response.content.parts[0].inline_data`)
-    // This means we flush if the first part does NOT have inline_data.
-    // If it *has* inline_data, the condition below is false,
-    // and we would not flush based on this specific sub-condition.
-    Part firstPart = partsOpt.get().get(0);
-    return firstPart.inlineData().isEmpty();
+    // We should emit if the first part of the content does NOT have inlineData.
+    // This means we return true if content, parts, or the first part's inlineData is empty.
+    return currentLlmResponse
+        .content()
+        .flatMap(Content::parts)
+        .filter(parts -> !parts.isEmpty())
+        .map(parts -> parts.get(0))
+        .flatMap(Part::inlineData)
+        .isEmpty();
   }
 
   /** Removes any `Part` that contains only a `thought` from the content list. */
   public static List<Content> stripThoughts(List<Content> originalContents) {
-    List<Content> updatedContents = new ArrayList<>();
-    for (Content content : originalContents) {
-      ImmutableList<Part> nonThoughtParts =
-          content.parts().orElse(ImmutableList.of()).stream()
-              // Keep if thought is not present OR if thought is present but false
-              .filter(part -> part.thought().map(isThought -> !isThought).orElse(true))
-              .collect(toImmutableList());
-      updatedContents.add(content.toBuilder().parts(nonThoughtParts).build());
-    }
-    return updatedContents;
+    return originalContents.stream()
+        .map(
+            content -> {
+              ImmutableList<Part> nonThoughtParts =
+                  content.parts().orElse(ImmutableList.of()).stream()
+                      // Keep if thought is not present OR if thought is present but false
+                      .filter(part -> part.thought().map(isThought -> !isThought).orElse(true))
+                      .collect(toImmutableList());
+              return content.toBuilder().parts(nonThoughtParts).build();
+            })
+        .collect(toImmutableList());
   }
 }
