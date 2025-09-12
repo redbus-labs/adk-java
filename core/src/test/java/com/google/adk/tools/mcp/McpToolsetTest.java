@@ -17,19 +17,38 @@
 package com.google.adk.tools.mcp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
+import com.google.adk.agents.ReadonlyContext;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.mcp.McpToolset.McpToolsetConfig;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
+import java.util.List;
+import java.util.Optional;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 @RunWith(JUnit4.class)
 public class McpToolsetTest {
+  @Rule public final MockitoRule mocks = MockitoJUnit.rule();
+
+  @Mock private McpSessionManager mockMcpSessionManager;
+  @Mock private McpSyncClient mockMcpSyncClient;
+  @Mock private ReadonlyContext mockReadonlyContext;
 
   @Test
   public void testMcpToolsetConfig_withStdioServerParams_parsesCorrectly() {
@@ -135,7 +154,6 @@ public class McpToolsetTest {
     McpToolset toolset = McpToolset.fromConfig(config, configPath);
 
     assertThat(toolset).isNotNull();
-    // The toolset should be created successfully with stdio parameters
   }
 
   @Test
@@ -242,5 +260,69 @@ public class McpToolsetTest {
 
     assertThat(toolset).isNotNull();
     // The toolset should be created successfully with empty tool filter
+  }
+
+  @Test
+  public void getTools_withToolFilter_returnsFilteredTools() {
+    ImmutableList<String> toolFilter = ImmutableList.of("tool1", "tool3");
+    McpSchema.Tool mockTool1 =
+        McpSchema.Tool.builder().name("tool1").description("desc1").inputSchema("{}").build();
+    McpSchema.Tool mockTool2 =
+        McpSchema.Tool.builder().name("tool2").description("desc2").inputSchema("{}").build();
+    McpSchema.Tool mockTool3 =
+        McpSchema.Tool.builder().name("tool3").description("desc3").inputSchema("{}").build();
+    McpSchema.ListToolsResult mockResult =
+        new McpSchema.ListToolsResult(ImmutableList.of(mockTool1, mockTool2, mockTool3), null);
+
+    when(mockMcpSessionManager.createSession()).thenReturn(mockMcpSyncClient);
+    when(mockMcpSyncClient.listTools()).thenReturn(mockResult);
+
+    McpToolset toolset =
+        new McpToolset(mockMcpSessionManager, JsonBaseModel.getMapper(), Optional.of(toolFilter));
+
+    List<BaseTool> tools = toolset.getTools(mockReadonlyContext).toList().blockingGet();
+
+    assertThat(tools.stream().map(BaseTool::name).collect(ImmutableList.toImmutableList()))
+        .containsExactly("tool1", "tool3")
+        .inOrder();
+    verify(mockMcpSessionManager).createSession();
+    verify(mockMcpSyncClient).listTools();
+  }
+
+  @Test
+  public void getTools_retriesAndFailsAfterMaxRetries() {
+    when(mockMcpSessionManager.createSession()).thenReturn(mockMcpSyncClient);
+    when(mockMcpSyncClient.listTools()).thenThrow(new RuntimeException("Test Exception"));
+
+    McpToolset toolset =
+        new McpToolset(mockMcpSessionManager, JsonBaseModel.getMapper(), Optional.empty());
+
+    toolset
+        .getTools(mockReadonlyContext)
+        .test()
+        .awaitDone(5, SECONDS)
+        .assertError(McpToolsetException.McpToolLoadingException.class);
+
+    verify(mockMcpSessionManager, times(3)).createSession();
+    verify(mockMcpSyncClient, times(3)).listTools();
+  }
+
+  @Test
+  public void getTools_succeedsOnLastRetryAttempt() {
+    McpSchema.ListToolsResult mockResult = new McpSchema.ListToolsResult(ImmutableList.of(), null);
+    when(mockMcpSessionManager.createSession()).thenReturn(mockMcpSyncClient);
+    when(mockMcpSyncClient.listTools())
+        .thenThrow(new RuntimeException("Attempt 1 failed"))
+        .thenThrow(new RuntimeException("Attempt 2 failed"))
+        .thenReturn(mockResult);
+
+    McpToolset toolset =
+        new McpToolset(mockMcpSessionManager, JsonBaseModel.getMapper(), Optional.empty());
+
+    List<BaseTool> tools = toolset.getTools(mockReadonlyContext).toList().blockingGet();
+
+    assertThat(tools).isEmpty();
+    verify(mockMcpSessionManager, times(3)).createSession();
+    verify(mockMcpSyncClient, times(3)).listTools();
   }
 }
