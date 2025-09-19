@@ -12,6 +12,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
@@ -257,6 +258,8 @@ public class RedbusADG extends BaseLlm {
             messages,
             LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null),
             false); // Tools/functions can not be of 0 length
+    // Parse usage information from the response
+    GenerateContentResponseUsageMetadata usageMetadata = getUsageMetadata(agentresponse);
     JSONObject responseQuantum =
         agentresponse.has("response")
             ? agentresponse
@@ -290,7 +293,10 @@ public class RedbusADG extends BaseLlm {
       responseBuilder.content(
           Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
     }
-
+    // Add usage metadata if available
+    if (usageMetadata != null) {
+      responseBuilder.usageMetadata(usageMetadata);
+    }
     return Flowable.just(responseBuilder.build());
   }
 
@@ -410,6 +416,10 @@ public class RedbusADG extends BaseLlm {
               final StringBuilder accumulatedText = new StringBuilder();
               try {
                 String line;
+                // Usage tracking variables
+                int totalPromptTokens = 0;
+                int totalCompletionTokens = 0;
+                int totalTokens = 0;
                 outer:
                 while (reader != null && (line = reader.readLine()) != null) {
                   line = line.trim();
@@ -421,8 +431,12 @@ public class RedbusADG extends BaseLlm {
                   if (line.equals("[DONE]")) {
                     logger.info("[DONE] marker found, completing stream");
                     if (accumulatedText.length() > 0 && !functionCallDetected.get()) {
+                      // Create usage metadata if we have token counts
+                      GenerateContentResponseUsageMetadata usageMetadata =
+                          getUsageMetadata(totalPromptTokens, totalCompletionTokens, totalTokens);
+
                       // Emit any remaining accumulated text as a final, complete response
-                      LlmResponse finalAggregatedTextResponse =
+                      LlmResponse.Builder finalResponseBuilder =
                           LlmResponse.builder()
                               .content(
                                   Content.builder()
@@ -433,10 +447,13 @@ public class RedbusADG extends BaseLlm {
                                                   .text(accumulatedText.toString())
                                                   .build()))
                                       .build())
-                              .partial(false) // This is a final content part
-                              .build();
-                      emitter.onNext(finalAggregatedTextResponse);
-                      accumulatedText.setLength(0); // Clear buffer
+                              .partial(false); // This is a final content part
+
+                      if (usageMetadata != null) {
+                        finalResponseBuilder.usageMetadata(usageMetadata);
+                      }
+
+                      emitter.onNext(finalResponseBuilder.build());
                     }
                     break outer;
                   }
@@ -464,6 +481,24 @@ public class RedbusADG extends BaseLlm {
                     logger.info("Chunk is null, skipping");
                     continue;
                   }
+
+                  // Parse usage information if present
+                  if (chunk.has("usage")) {
+                    JSONObject usage = chunk.optJSONObject("usage");
+                    if (usage != null) {
+                      totalPromptTokens =
+                          Math.max(totalPromptTokens, usage.optInt("prompt_tokens", 0));
+                      totalCompletionTokens =
+                          Math.max(totalCompletionTokens, usage.optInt("completion_tokens", 0));
+                      totalTokens = Math.max(totalTokens, usage.optInt("total_tokens", 0));
+                      logger.info(
+                          "Updated token counts: prompt={}, completion={}, total={}",
+                          totalPromptTokens,
+                          totalCompletionTokens,
+                          totalTokens);
+                    }
+                  }
+
                   if (chunk.has("choices")) {
                     JSONArray choices = chunk.optJSONArray("choices");
                     logger.info(
@@ -859,6 +894,51 @@ public class RedbusADG extends BaseLlm {
     throw new UnsupportedOperationException("Not supported yet.");
   }
 
+  private GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
+    return Optional.ofNullable(agentResponse)
+        .map(response -> response.optJSONObject("response"))
+        .map(response -> response.optJSONObject("openAIResponse"))
+        .map(openAIResponse -> openAIResponse.optJSONObject("usage"))
+        .flatMap(
+            usage -> {
+              int promptTokens = usage.optInt("prompt_tokens", 0);
+              int completionTokens = usage.optInt("completion_tokens", 0);
+              int totalTokens = usage.optInt("total_tokens", 0);
+
+              if (totalTokens == 0) {
+                totalTokens = promptTokens + completionTokens;
+              }
+
+              if (totalTokens > 0) {
+                logger.info(
+                    "Non-streaming token counts: prompt={}, completion={}, total={}",
+                    promptTokens,
+                    completionTokens,
+                    totalTokens);
+                return Optional.of(
+                    GenerateContentResponseUsageMetadata.builder()
+                        .promptTokenCount(promptTokens)
+                        .candidatesTokenCount(completionTokens)
+                        .totalTokenCount(totalTokens)
+                        .build());
+              }
+              return Optional.empty();
+            })
+        .orElse(null);
+  }
+
+  private GenerateContentResponseUsageMetadata getUsageMetadata(
+      int promptTokens, int completionTokens, int totalTokens) {
+    if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+      return GenerateContentResponseUsageMetadata.builder()
+          .promptTokenCount(promptTokens)
+          .candidatesTokenCount(completionTokens)
+          .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
+          .build();
+    }
+    return null;
+  }
+
   private void updateTypeString(Map<String, Object> valueDict) {
     if (valueDict == null) {
       return;
@@ -887,7 +967,7 @@ public class RedbusADG extends BaseLlm {
 
   public static void main(String[] args) {
     // Example model ID as a String
-    String modelId = "40";
+    String modelId = "413";
     try {
       RedbusADG llm = new RedbusADG(modelId);
       // Create a simple LlmRequest with a user prompt
