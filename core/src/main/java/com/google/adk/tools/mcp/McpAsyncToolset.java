@@ -145,6 +145,23 @@ public class McpAsyncToolset implements BaseToolset {
     this.toolFilter = toolFilter;
   }
 
+  /**
+   * Initializes the McpAsyncToolset with a provided McpSessionManager.
+   *
+   * @param mcpSessionManager The session manager for MCP connections.
+   * @param objectMapper An ObjectMapper instance for parsing schemas.
+   * @param toolFilter null or an implement for {@link ToolPredicate}, {@link
+   *     com.google.adk.tools.NamedToolPredicate}
+   */
+  public McpAsyncToolset(
+      McpSessionManager mcpSessionManager, ObjectMapper objectMapper, ToolPredicate toolFilter) {
+    Objects.requireNonNull(mcpSessionManager);
+    Objects.requireNonNull(objectMapper);
+    this.objectMapper = objectMapper;
+    this.mcpSessionManager = mcpSessionManager;
+    this.toolFilter = toolFilter;
+  }
+
   @Override
   public Flowable<BaseTool> getTools(ReadonlyContext readonlyContext) {
     return Maybe.defer(() -> Maybe.fromCompletionStage(this.initAndGetTools().toFuture()))

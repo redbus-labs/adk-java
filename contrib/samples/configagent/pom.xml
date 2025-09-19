@@ -2,13 +2,10 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example</groupId>
-    <artifactId>simple-adk-agent</artifactId>
+    <groupId>com.google.adk.samples</groupId>
+    <artifactId>configagent-samples</artifactId>
     <version>0.3.0</version>
     <packaging>jar</packaging>
-
-    <name>Simple ADK Agent Example</name>
-    <description>Example project showing how to create and run ADK agents with the Maven plugin</description>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
@@ -23,20 +20,10 @@
             <artifactId>google-adk</artifactId>
             <version>${google-adk.version}</version>
         </dependency>
-
-        <!-- Dev dependency for AgentLoader interface -->
         <dependency>
             <groupId>com.google.adk</groupId>
             <artifactId>google-adk-dev</artifactId>
             <version>${google-adk.version}</version>
-        </dependency>
-
-        <!-- Maven plugin dependency for AgentProvider interface -->
-        <dependency>
-            <groupId>com.google.adk</groupId>
-            <artifactId>google-adk-maven-plugin</artifactId>
-            <version>${google-adk.version}</version>
-            <scope>compile</scope>
         </dependency>
     </dependencies>
 
@@ -49,10 +36,11 @@
                 <configuration>
                     <source>11</source>
                     <target>11</target>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
-
-            <!-- ADK Maven Plugin -->
             <plugin>
                 <groupId>com.google.adk</groupId>
                 <artifactId>google-adk-maven-plugin</artifactId>
