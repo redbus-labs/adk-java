@@ -23,11 +23,13 @@ import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.LoopAgent;
 import com.google.adk.agents.ParallelAgent;
+import com.google.adk.agents.ReadonlyContext;
 import com.google.adk.agents.SequentialAgent;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.BaseToolset;
 import com.google.adk.tools.GoogleSearchTool;
 import com.google.adk.tools.mcp.McpToolset;
+import io.reactivex.rxjava3.core.Flowable;
 import java.util.ArrayList;
 import java.util.Optional;
 import java.util.Set;
@@ -336,6 +338,37 @@ public final class ComponentRegistryTest {
     assertThat(resolvedFullName.get()).isSameInstanceAs(resolvedPythonName.get());
     assertThat(resolvedPythonName.get()).isSameInstanceAs(resolvedSimpleName.get());
     assertThat(resolvedSimpleName.get()).isSameInstanceAs(resolvedMcpName.get());
+  }
+
+  // Dummy Toolset class for testing loadToolsetClass
+  public static class TestToolset implements BaseToolset {
+    @Override
+    public Flowable<BaseTool> getTools(ReadonlyContext readonlyContext) {
+      return Flowable.empty();
+    }
+
+    @Override
+    public void close() {}
+  }
+
+  @Test
+  public void testLoadToolsetClass() {
+    // Test with a valid, fully qualified class name
+    assertThat(
+            ComponentRegistry.resolveToolsetClass(
+                "com.google.adk.utils.ComponentRegistryTest$TestToolset"))
+        .hasValue(TestToolset.class);
+
+    // Test with a non-existent class name
+    assertThat(
+            ComponentRegistry.resolveToolsetClass(
+                "com.google.adk.utils.ComponentRegistryTest$NonExistent"))
+        .isEmpty();
+
+    // Test with a class name that doesn't extend BaseToolset
+    assertThat(
+            ComponentRegistry.resolveToolsetClass("com.google.adk.utils.ComponentRegistryTest$Foo"))
+        .isEmpty();
   }
 
   @Test
