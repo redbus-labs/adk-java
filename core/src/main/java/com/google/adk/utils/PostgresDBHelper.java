@@ -145,7 +145,7 @@ public class PostgresDBHelper {
                       + "function_response_name=EXCLUDED.function_response_name, function_response_data=EXCLUDED.function_response_data")) {
         for (int i = 0; i < events.length(); i++) {
           JSONObject ev = events.getJSONObject(i);
-          logger.info("Processing event for insertion: {}", ev.toString());
+          //          logger.info("Processing event for insertion: {}", ev.toString());
           JSONObject actions = ev.getJSONObject("actions");
           JSONObject content = ev.optJSONObject("content");
           if (content == null) {
