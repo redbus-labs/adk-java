@@ -430,11 +430,11 @@ public final class Functions {
       Maybe<Map<String, Object>> pluginResult =
           invocationContext.pluginManager().runBeforeToolCallback(tool, functionArgs, toolContext);
 
-      Optional<List<BeforeToolCallback>> callbacksOpt = agent.beforeToolCallback();
+      Optional<List<? extends BeforeToolCallback>> callbacksOpt = agent.beforeToolCallback();
       if (callbacksOpt.isEmpty() || callbacksOpt.get().isEmpty()) {
         return pluginResult;
       }
-      List<BeforeToolCallback> callbacks = callbacksOpt.get();
+      List<? extends BeforeToolCallback> callbacks = callbacksOpt.get();
 
       Maybe<Map<String, Object>> callbackResult =
           Maybe.defer(
@@ -464,11 +464,11 @@ public final class Functions {
               .pluginManager()
               .runAfterToolCallback(tool, functionArgs, toolContext, functionResult);
 
-      Optional<List<AfterToolCallback>> callbacksOpt = agent.afterToolCallback();
+      Optional<List<? extends AfterToolCallback>> callbacksOpt = agent.afterToolCallback();
       if (callbacksOpt.isEmpty() || callbacksOpt.get().isEmpty()) {
         return pluginResult;
       }
-      List<AfterToolCallback> callbacks = callbacksOpt.get();
+      List<? extends AfterToolCallback> callbacks = callbacksOpt.get();
 
       Maybe<Map<String, Object>> callbackResult =
           Maybe.defer(

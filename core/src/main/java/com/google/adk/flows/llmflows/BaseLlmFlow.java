@@ -279,12 +279,12 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
     LlmAgent agent = (LlmAgent) context.agent();
 
-    Optional<List<BeforeModelCallback>> callbacksOpt = agent.beforeModelCallback();
+    Optional<List<? extends BeforeModelCallback>> callbacksOpt = agent.beforeModelCallback();
     if (callbacksOpt.isEmpty() || callbacksOpt.get().isEmpty()) {
       return pluginResult.map(Optional::of).defaultIfEmpty(Optional.empty());
     }
 
-    List<BeforeModelCallback> callbacks = callbacksOpt.get();
+    List<? extends BeforeModelCallback> callbacks = callbacksOpt.get();
 
     Maybe<LlmResponse> callbackResult =
         Maybe.defer(
@@ -314,7 +314,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
         context.pluginManager().runAfterModelCallback(callbackContext, llmResponse);
 
     LlmAgent agent = (LlmAgent) context.agent();
-    Optional<List<AfterModelCallback>> callbacksOpt = agent.afterModelCallback();
+    Optional<List<? extends AfterModelCallback>> callbacksOpt = agent.afterModelCallback();
 
     if (callbacksOpt.isEmpty() || callbacksOpt.get().isEmpty()) {
       return pluginResult.defaultIfEmpty(llmResponse);

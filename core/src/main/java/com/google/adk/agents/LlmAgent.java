@@ -68,6 +68,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -100,10 +101,10 @@ public class LlmAgent extends BaseAgent {
   private final Optional<Integer> maxSteps;
   private final boolean disallowTransferToParent;
   private final boolean disallowTransferToPeers;
-  private final Optional<List<BeforeModelCallback>> beforeModelCallback;
-  private final Optional<List<AfterModelCallback>> afterModelCallback;
-  private final Optional<List<BeforeToolCallback>> beforeToolCallback;
-  private final Optional<List<AfterToolCallback>> afterToolCallback;
+  private final Optional<List<? extends BeforeModelCallback>> beforeModelCallback;
+  private final Optional<List<? extends AfterModelCallback>> afterModelCallback;
+  private final Optional<List<? extends BeforeToolCallback>> beforeToolCallback;
+  private final Optional<List<? extends AfterToolCallback>> afterToolCallback;
   private final Optional<Schema> inputSchema;
   private final Optional<Schema> outputSchema;
   private final Optional<Executor> executor;
@@ -182,12 +183,12 @@ public class LlmAgent extends BaseAgent {
     private Integer maxSteps;
     private Boolean disallowTransferToParent;
     private Boolean disallowTransferToPeers;
-    private ImmutableList<BeforeModelCallback> beforeModelCallback;
-    private ImmutableList<AfterModelCallback> afterModelCallback;
-    private ImmutableList<BeforeAgentCallback> beforeAgentCallback;
-    private ImmutableList<AfterAgentCallback> afterAgentCallback;
-    private ImmutableList<BeforeToolCallback> beforeToolCallback;
-    private ImmutableList<AfterToolCallback> afterToolCallback;
+    private ImmutableList<? extends BeforeModelCallback> beforeModelCallback;
+    private ImmutableList<? extends AfterModelCallback> afterModelCallback;
+    private ImmutableList<? extends BeforeAgentCallback> beforeAgentCallback;
+    private ImmutableList<? extends AfterAgentCallback> afterAgentCallback;
+    private ImmutableList<? extends BeforeToolCallback> beforeToolCallback;
+    private ImmutableList<? extends AfterToolCallback> afterToolCallback;
     private Schema inputSchema;
     private Schema outputSchema;
     private Executor executor;
@@ -283,25 +284,13 @@ public class LlmAgent extends BaseAgent {
 
     @CanIgnoreReturnValue
     public Builder exampleProvider(List<Example> examples) {
-      this.exampleProvider =
-          new BaseExampleProvider() {
-            @Override
-            public List<Example> getExamples(String query) {
-              return examples;
-            }
-          };
+      this.exampleProvider = (query) -> examples;
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder exampleProvider(Example... examples) {
-      this.exampleProvider =
-          new BaseExampleProvider() {
-            @Override
-            public ImmutableList<Example> getExamples(String query) {
-              return ImmutableList.copyOf(examples);
-            }
-          };
+      this.exampleProvider = (query) -> ImmutableList.copyOf(examples);
       return this;
     }
 
@@ -474,7 +463,8 @@ public class LlmAgent extends BaseAgent {
     }
 
     @CanIgnoreReturnValue
-    public Builder beforeToolCallback(@Nullable List<BeforeToolCallbackBase> beforeToolCallbacks) {
+    public Builder beforeToolCallback(
+        @Nullable List<? extends BeforeToolCallbackBase> beforeToolCallbacks) {
       if (beforeToolCallbacks == null) {
         this.beforeToolCallback = null;
       } else if (beforeToolCallbacks.isEmpty()) {
@@ -651,20 +641,18 @@ public class LlmAgent extends BaseAgent {
               SchemaUtils.validateOutputSchema(rawResult, outputSchema.get());
           output = validatedMap;
         } catch (JsonProcessingException e) {
-          System.err.println(
-              "Error: LlmAgent output for outputKey '"
-                  + outputKey().get()
-                  + "' was not valid JSON, despite an outputSchema being present."
-                  + " Saving raw output to state. Error: "
-                  + e.getMessage());
+          logger.error(
+              "LlmAgent output for outputKey '{}' was not valid JSON, despite an outputSchema being"
+                  + " present. Saving raw output to state.",
+              outputKey().get(),
+              e);
           output = rawResult;
         } catch (IllegalArgumentException e) {
-          System.err.println(
-              "Error: LlmAgent output for outputKey '"
-                  + outputKey().get()
-                  + "' did not match the outputSchema."
-                  + " Saving raw output to state. Error: "
-                  + e.getMessage());
+          logger.error(
+              "LlmAgent output for outputKey '{}' did not match the outputSchema. Saving raw output"
+                  + " to state.",
+              outputKey().get(),
+              e);
           output = rawResult;
         }
       } else {
@@ -813,19 +801,19 @@ public class LlmAgent extends BaseAgent {
     return disallowTransferToPeers;
   }
 
-  public Optional<List<BeforeModelCallback>> beforeModelCallback() {
+  public Optional<List<? extends BeforeModelCallback>> beforeModelCallback() {
     return beforeModelCallback;
   }
 
-  public Optional<List<AfterModelCallback>> afterModelCallback() {
+  public Optional<List<? extends AfterModelCallback>> afterModelCallback() {
     return afterModelCallback;
   }
 
-  public Optional<List<BeforeToolCallback>> beforeToolCallback() {
+  public Optional<List<? extends BeforeToolCallback>> beforeToolCallback() {
     return beforeToolCallback;
   }
 
-  public Optional<List<AfterToolCallback>> afterToolCallback() {
+  public Optional<List<? extends AfterToolCallback>> afterToolCallback() {
     return afterToolCallback;
   }
 
@@ -930,9 +918,7 @@ public class LlmAgent extends BaseAgent {
 
     try {
       if (config.tools() != null) {
-        ImmutableList<Object> resolvedToolsAndToolsets =
-            ToolResolver.resolveToolsAndToolsets(config.tools(), configAbsPath);
-        builder.tools(resolvedToolsAndToolsets);
+        builder.tools(ToolResolver.resolveToolsAndToolsets(config.tools(), configAbsPath));
       }
     } catch (ConfigurationException e) {
       throw new ConfigurationException("Error resolving tools for agent " + config.name(), e);
@@ -983,88 +969,56 @@ public class LlmAgent extends BaseAgent {
 
   private static void setCallbacksFromConfig(LlmAgentConfig config, Builder builder)
       throws ConfigurationException {
-    var beforeAgentCallbacks = config.beforeAgentCallbacks();
-    if (beforeAgentCallbacks != null) {
-      ImmutableList.Builder<Callbacks.BeforeAgentCallbackBase> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : beforeAgentCallbacks) {
-        var callback = ComponentRegistry.resolveBeforeAgentCallback(ref.name());
-        if (callback.isPresent()) {
-          list.add(callback.get());
-          continue;
-        }
-        throw new ConfigurationException("Invalid before_agent_callback: " + ref.name());
-      }
-      builder.beforeAgentCallback(list.build());
-    }
+    setCallbackFromConfig(
+        config.beforeAgentCallbacks(),
+        Callbacks.BeforeAgentCallbackBase.class,
+        "before_agent_callback",
+        builder::beforeAgentCallback);
+    setCallbackFromConfig(
+        config.afterAgentCallbacks(),
+        Callbacks.AfterAgentCallbackBase.class,
+        "after_agent_callback",
+        builder::afterAgentCallback);
+    setCallbackFromConfig(
+        config.beforeModelCallbacks(),
+        Callbacks.BeforeModelCallbackBase.class,
+        "before_model_callback",
+        builder::beforeModelCallback);
+    setCallbackFromConfig(
+        config.afterModelCallbacks(),
+        Callbacks.AfterModelCallbackBase.class,
+        "after_model_callback",
+        builder::afterModelCallback);
+    setCallbackFromConfig(
+        config.beforeToolCallbacks(),
+        Callbacks.BeforeToolCallbackBase.class,
+        "before_tool_callback",
+        builder::beforeToolCallback);
+    setCallbackFromConfig(
+        config.afterToolCallbacks(),
+        Callbacks.AfterToolCallbackBase.class,
+        "after_tool_callback",
+        builder::afterToolCallback);
+  }
 
-    var afterAgentCallbacks = config.afterAgentCallbacks();
-    if (afterAgentCallbacks != null) {
-      ImmutableList.Builder<Callbacks.AfterAgentCallbackBase> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : afterAgentCallbacks) {
-        var callback = ComponentRegistry.resolveAfterAgentCallback(ref.name());
-        if (callback.isPresent()) {
-          list.add(callback.get());
-          continue;
-        }
-        throw new ConfigurationException("Invalid after_agent_callback: " + ref.name());
+  private static <T> void setCallbackFromConfig(
+      @Nullable List<LlmAgentConfig.CallbackRef> refs,
+      Class<T> callbackBaseClass,
+      String callbackTypeName,
+      Consumer<ImmutableList<T>> builderSetter)
+      throws ConfigurationException {
+    if (refs != null) {
+      ImmutableList.Builder<T> list = ImmutableList.builder();
+      for (LlmAgentConfig.CallbackRef ref : refs) {
+        list.add(
+            ComponentRegistry.getInstance()
+                .get(ref.name(), callbackBaseClass)
+                .orElseThrow(
+                    () ->
+                        new ConfigurationException(
+                            "Invalid " + callbackTypeName + ": " + ref.name())));
       }
-      builder.afterAgentCallback(list.build());
-    }
-
-    var beforeModelCallbacks = config.beforeModelCallbacks();
-    if (beforeModelCallbacks != null) {
-      ImmutableList.Builder<Callbacks.BeforeModelCallbackBase> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : beforeModelCallbacks) {
-        var callback = ComponentRegistry.resolveBeforeModelCallback(ref.name());
-        if (callback.isPresent()) {
-          list.add(callback.get());
-          continue;
-        }
-        throw new ConfigurationException("Invalid before_model_callback: " + ref.name());
-      }
-      builder.beforeModelCallback(list.build());
-    }
-
-    var afterModelCallbacks = config.afterModelCallbacks();
-    if (afterModelCallbacks != null) {
-      ImmutableList.Builder<Callbacks.AfterModelCallbackBase> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : afterModelCallbacks) {
-        var callback = ComponentRegistry.resolveAfterModelCallback(ref.name());
-        if (callback.isPresent()) {
-          list.add(callback.get());
-          continue;
-        }
-        throw new ConfigurationException("Invalid after_model_callback: " + ref.name());
-      }
-      builder.afterModelCallback(list.build());
-    }
-
-    var beforeToolCallbacks = config.beforeToolCallbacks();
-    if (beforeToolCallbacks != null) {
-      ImmutableList.Builder<Callbacks.BeforeToolCallbackBase> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : beforeToolCallbacks) {
-        var callback = ComponentRegistry.resolveBeforeToolCallback(ref.name());
-        if (callback.isPresent()) {
-          list.add(callback.get());
-          continue;
-        }
-        throw new ConfigurationException("Invalid before_tool_callback: " + ref.name());
-      }
-      builder.beforeToolCallback(list.build());
-    }
-
-    var afterToolCallbacks = config.afterToolCallbacks();
-    if (afterToolCallbacks != null) {
-      ImmutableList.Builder<Callbacks.AfterToolCallbackBase> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : afterToolCallbacks) {
-        var callback = ComponentRegistry.resolveAfterToolCallback(ref.name());
-        if (callback.isPresent()) {
-          list.add(callback.get());
-          continue;
-        }
-        throw new ConfigurationException("Invalid after_tool_callback: " + ref.name());
-      }
-      builder.afterToolCallback(list.build());
+      builderSetter.accept(list.build());
     }
   }
 }

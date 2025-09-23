@@ -58,8 +58,8 @@ public abstract class BaseAgent {
 
   private final List<? extends BaseAgent> subAgents;
 
-  private final Optional<List<BeforeAgentCallback>> beforeAgentCallback;
-  private final Optional<List<AfterAgentCallback>> afterAgentCallback;
+  private final Optional<List<? extends BeforeAgentCallback>> beforeAgentCallback;
+  private final Optional<List<? extends AfterAgentCallback>> afterAgentCallback;
 
   /**
    * Creates a new BaseAgent.
@@ -76,8 +76,8 @@ public abstract class BaseAgent {
       String name,
       String description,
       List<? extends BaseAgent> subAgents,
-      List<BeforeAgentCallback> beforeAgentCallback,
-      List<AfterAgentCallback> afterAgentCallback) {
+      List<? extends BeforeAgentCallback> beforeAgentCallback,
+      List<? extends AfterAgentCallback> afterAgentCallback) {
     this.name = name;
     this.description = description;
     this.parentAgent = null;
@@ -170,11 +170,11 @@ public abstract class BaseAgent {
     return subAgents;
   }
 
-  public Optional<List<BeforeAgentCallback>> beforeAgentCallback() {
+  public Optional<List<? extends BeforeAgentCallback>> beforeAgentCallback() {
     return beforeAgentCallback;
   }
 
-  public Optional<List<AfterAgentCallback>> afterAgentCallback() {
+  public Optional<List<? extends AfterAgentCallback>> afterAgentCallback() {
     return afterAgentCallback;
   }
 
@@ -248,7 +248,7 @@ public abstract class BaseAgent {
    * @return callback functions.
    */
   private ImmutableList<Function<CallbackContext, Maybe<Content>>> beforeCallbacksToFunctions(
-      PluginManager pluginManager, List<BeforeAgentCallback> callbacks) {
+      PluginManager pluginManager, List<? extends BeforeAgentCallback> callbacks) {
     return Stream.concat(
             Stream.of(ctx -> pluginManager.runBeforeAgentCallback(this, ctx)),
             callbacks.stream()
@@ -263,7 +263,7 @@ public abstract class BaseAgent {
    * @return callback functions.
    */
   private ImmutableList<Function<CallbackContext, Maybe<Content>>> afterCallbacksToFunctions(
-      PluginManager pluginManager, List<AfterAgentCallback> callbacks) {
+      PluginManager pluginManager, List<? extends AfterAgentCallback> callbacks) {
     return Stream.concat(
             Stream.of(ctx -> pluginManager.runAfterAgentCallback(this, ctx)),
             callbacks.stream()
