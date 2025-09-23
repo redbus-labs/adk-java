@@ -458,19 +458,18 @@ public class RedbusADG extends BaseLlm {
                     break outer;
                   }
                   if (line.isEmpty()) {
-                    logger.info("Skipping empty line");
+                    //                    logger.info("Skipping empty line");
                     continue;
                   }
                   JSONObject chunk = null;
                   try {
                     if (!line.trim().isEmpty()) {
                       chunk = new JSONObject(line);
-                      logger.info("Parsed JSON chunk: {}", chunk.toString(1));
                     } else {
-                      logger.info("Skipping empty or null line after trim");
+                      //                      logger.info("Skipping empty or null line after trim");
                     }
                   } catch (JSONException e) {
-                    logger.warn("Failed to parse JSON line: [{}]", line);
+                    //                    logger.warn("Failed to parse JSON line: [{}]", line);
                     logger.warn("Error: {}", e.getMessage());
                     continue;
                   } catch (NullPointerException e) {
@@ -501,10 +500,12 @@ public class RedbusADG extends BaseLlm {
 
                   if (chunk.has("choices")) {
                     JSONArray choices = chunk.optJSONArray("choices");
-                    logger.info(
-                        "Choices array found, length: {}", choices != null ? choices.length() : 0);
+                    //                    logger.info(
+                    //                        "Choices array found, length: {}", choices != null ?
+                    // choices.length() : 0);
                     if (choices == null || choices.length() == 0) {
-                      logger.info("Choices array is null or empty, skipping");
+                      //                      logger.info("Choices array is null or empty,
+                      // skipping");
                       continue;
                     }
                     for (int i = 0; i < choices.length(); i++) {

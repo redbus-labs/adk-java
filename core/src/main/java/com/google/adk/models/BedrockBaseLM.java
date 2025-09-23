@@ -18,6 +18,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
@@ -124,8 +125,6 @@ public class BedrockBaseLM extends BaseLlm {
     llmRequest.contents().stream()
         .forEach(
             item -> {
-              //   return new MessageParam(content.role().get().equals("model") ||
-              // content.role().get().equals("assistant") ? "" : "",content.text());
               JSONObject messageQuantum = new JSONObject();
               messageQuantum.put(
                   "role",
@@ -133,7 +132,6 @@ public class BedrockBaseLM extends BaseLlm {
                       ? "assistant"
                       : "user");
 
-              // Additinal override work to add function response
               if (item.parts().get().get(0).functionResponse().isPresent()) {
                 JSONObject txtMsg3 = new JSONObject();
                 txtMsg3.put(
@@ -143,10 +141,8 @@ public class BedrockBaseLM extends BaseLlm {
                         + new JSONObject(
                                 item.parts().get().get(0).functionResponse().get().response().get())
                             .toString());
-
                 JSONArray contentArray2 = new JSONArray();
                 contentArray2.put(txtMsg3);
-
                 messageQuantum.put("content", contentArray2);
               } else if (item.parts().get().get(0).functionCall().isPresent()) {
                 JSONObject txtMsg3 = new JSONObject();
@@ -157,13 +153,10 @@ public class BedrockBaseLM extends BaseLlm {
                         + new JSONObject(
                                 item.parts().get().get(0).functionCall().get().args().get())
                             .toString());
-
                 JSONArray contentArray2 = new JSONArray();
                 contentArray2.put(txtMsg3);
-
                 messageQuantum.put("content", contentArray2);
               } else {
-
                 JSONObject txtMsg3 = new JSONObject();
                 txtMsg3.put("text", item.text());
                 JSONArray contentArray2 = new JSONArray();
@@ -296,6 +289,20 @@ public class BedrockBaseLM extends BaseLlm {
                     ? functions
                     : null)); // Tools/functions can not be of 0 length
 
+    // Attempt usage metadata extraction & logging
+    try {
+      GenerateContentResponseUsageMetadata usage = getUsageMetadata(agentresponse);
+      if (usage != null) {
+        logger.info(
+            "Non-streaming token counts: prompt={}, completion={}, total={}",
+            usage.promptTokenCount().orElse(0),
+            usage.candidatesTokenCount().orElse(0),
+            usage.totalTokenCount().orElse(0));
+      }
+    } catch (Exception e) {
+      logger.debug("Usage metadata parsing failed (non-critical)", e);
+    }
+
     JSONObject responseQuantum = agentresponse.getJSONObject("output").getJSONObject("message");
 
     // Check if tool call is required
@@ -357,15 +364,15 @@ public class BedrockBaseLM extends BaseLlm {
 
     JSONObject llmMessageJson1 = new JSONObject();
     llmMessageJson1.put("role", "assistant");
-    llmMessageJson1.put("content", systemText);
+    JSONArray sysContentArray = new JSONArray();
+    sysContentArray.put(new JSONObject().put("text", systemText));
+    llmMessageJson1.put("content", sysContentArray);
     messages.put(llmMessageJson1); // Agent system prompt is always added
 
     final List<Content> finalContents = contents;
     finalContents.stream()
         .forEach(
             item -> {
-              //   return new MessageParam(content.role().get().equals("model") ||
-              // content.role().get().equals("assistant") ? "" : "",content.text());
               JSONObject messageQuantum = new JSONObject();
               messageQuantum.put(
                   "role",
@@ -510,6 +517,7 @@ public class BedrockBaseLM extends BaseLlm {
 
             if (message != null) {
               if (message.has("content") && message.get("content") instanceof String) {
+                // This branch retained for backward compatibility if upstream sends raw string
                 String text = message.getString("content");
                 if (!text.isEmpty()) {
                   Part part = Part.fromText(text);
@@ -525,6 +533,28 @@ public class BedrockBaseLM extends BaseLlm {
                           .build();
                   emitter.onNext(llmResponse);
                 }
+              } else if (message.has("content") && message.get("content") instanceof JSONArray) {
+                JSONArray contentArr = message.getJSONArray("content");
+                for (int i = 0; i < contentArr.length(); i++) {
+                  JSONObject c = contentArr.getJSONObject(i);
+                  if (c.has("text")) {
+                    String t = c.getString("text");
+                    if (!t.isEmpty()) {
+                      Part part = Part.fromText(t);
+                      parts.add(part);
+                      LlmResponse llmResponse =
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(ImmutableList.of(part))
+                                      .build())
+                              .partial(true)
+                              .build();
+                      emitter.onNext(llmResponse);
+                    }
+                  }
+                }
               }
 
               if (message.has("tool_calls")) {
@@ -537,8 +567,7 @@ public class BedrockBaseLM extends BaseLlm {
                     functionCallName.append(function.getString("name"));
                   }
                   if (function.has("arguments")) {
-                    JSONObject argsJson =
-                        function.optJSONObject("arguments"); // Use optJSONObject for null safety*/
+                    JSONObject argsJson = function.optJSONObject("arguments");
                     functionCallArgs.append(argsJson.toString());
                   }
                 }
@@ -586,7 +615,7 @@ public class BedrockBaseLM extends BaseLlm {
       String AWS_BEARER_TOKEN_BEDROCK = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
       System.out.println("Using Bedrock URL: " + apiUrl);
       JSONObject payload = new JSONObject();
-      payload.put("model", model);
+      // Model already encoded in path; omit 'model' field to avoid Unexpected field type errors
       payload.put("stream", true);
       payload.put("messages", messages);
       if (tools != null) {
@@ -605,6 +634,7 @@ public class BedrockBaseLM extends BaseLlm {
 
       try (OutputStream outputStream = connection.getOutputStream();
           OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
+        System.out.println("Bedrock Base LM => " + jsonString);
         writer.write(jsonString);
         writer.flush();
       }
@@ -615,18 +645,19 @@ public class BedrockBaseLM extends BaseLlm {
       if (responseCode >= 200 && responseCode < 300) {
         return new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
       } else {
+        StringBuilder errorResponse = new StringBuilder();
         try (InputStream errorStream = connection.getErrorStream();
             BufferedReader errorReader =
                 new BufferedReader(new InputStreamReader(errorStream, "UTF-8"))) {
-          StringBuilder errorResponse = new StringBuilder();
           String errorLine;
           while ((errorLine = errorReader.readLine()) != null) {
             errorResponse.append(errorLine);
           }
-          System.err.println("Error Response Body: " + errorResponse.toString());
         } catch (IOException errorEx) {
           logger.error("Error reading error stream", errorEx);
         }
+        logger.error(
+            "Bedrock streaming request failed: status={} body={}", responseCode, errorResponse);
         connection.disconnect();
         return null;
       }
@@ -653,10 +684,8 @@ public class BedrockBaseLM extends BaseLlm {
     if (valueDict.containsKey("type")) {
       valueDict.put("type", ((String) valueDict.get("type")).toLowerCase());
     }
-
     if (valueDict.containsKey("items")) {
       updateTypeString((Map<String, Object>) valueDict.get("items"));
-
       if (valueDict.get("items") instanceof Map
           && ((Map) valueDict.get("items")).containsKey("properties")) {
         Map<String, Object> properties =
@@ -673,9 +702,6 @@ public class BedrockBaseLM extends BaseLlm {
   }
 
   public static Part ollamaContentBlockToPart(JSONObject blockJson) {
-    // Check for tool_calls first, as the example with tool_calls had empty content
-
-    // If no valid tool_calls were processed, check for text content
     if (blockJson.has("content")) {
       JSONArray contentArray = blockJson.getJSONArray("content");
       for (int i = 0; i < contentArray.length(); i++) {
@@ -683,35 +709,20 @@ public class BedrockBaseLM extends BaseLlm {
         if (tempObj.has("text")) {
           return Part.builder().text(tempObj.getString("text")).build();
         }
-
         if (tempObj.has("toolUse")) {
-          JSONObject toolUse = tempObj.getJSONObject("toolUse"); // Use optJSONArray for null safety
+          JSONObject toolUse = tempObj.getJSONObject("toolUse");
           if (toolUse != null) {
-            // Based on the provided structure and LangChain4j Part,
-            // we typically handle one function call per Part.
-            // We will process the first tool call in the array.
-            // JSONObject toolCall = toolUse.optJSONObject("toolUse"); // Use optJSONObject for null
-            // safety
-
             if (toolUse.has("name")) {
-              JSONObject input =
-                  toolUse.optJSONObject("input"); // Use optJSONObject for null safety
+              JSONObject input = toolUse.optJSONObject("input");
               Map<String, Object> args = input.toMap();
               FunctionCall functionCall =
                   FunctionCall.builder().name(toolUse.getString("name")).args(args).build();
-
               return Part.builder().functionCall(functionCall).build();
             }
           }
         }
       }
-
-      // If 'content' key exists but value is not a String, might be unsupported.
     }
-
-    // If neither usable tool_calls nor String content was found
-    // This covers cases like malformed JSON matching the structure,
-    // or structures not covered (e.g., image parts, other types).
     throw new UnsupportedOperationException(
         "Unsupported content block format or missing required fields: " + blockJson.toString());
   }
@@ -729,16 +740,12 @@ public class BedrockBaseLM extends BaseLlm {
   public JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
     try {
       JSONObject responseJ = new JSONObject();
-      // API endpoint URL //OLLAMA_API_BASE
       String apiUrl = D_URL != null ? D_URL : System.getenv(BEDROCK_ENV_VAR);
       String AWS_BEARER_TOKEN_BEDROCK = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
-      // apiUrl = apiUrl + "/api/chat";
-
-      // Constructing the JSON payload
       JSONObject payload = new JSONObject();
       payload.put("model", model);
-      payload.put("stream", false); // Non-streaming
-      payload.put("messages", messages); // Use same structure as streaming
+      payload.put("stream", false);
+      payload.put("messages", messages);
       if (tools != null) {
         payload.put("tools", tools);
       }
@@ -755,6 +762,7 @@ public class BedrockBaseLM extends BaseLlm {
       try (OutputStream outputStream = connection.getOutputStream();
           OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
         writer.write(jsonString);
+        System.out.println("Bedrock Base LM => " + jsonString);
         writer.flush();
       } catch (IOException ex) {
         java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
@@ -804,68 +812,40 @@ public class BedrockBaseLM extends BaseLlm {
       boolean stream, String prompt, String model, JSONArray messages, JSONArray tools) {
     JSONObject responseJ = new JSONObject();
     try {
-      // API endpoint URL //OLLAMA_API_BASE
       String apiUrl = System.getenv(BEDROCK_ENV_VAR);
       String AWS_BEARER_TOKEN_BEDROCK = System.getenv(BEDROCK_ENV_VAR);
       apiUrl = apiUrl + "/api/chat";
-
-      // Constructing the JSON payload
       JSONObject payload = new JSONObject();
       payload.put("model", model);
-      payload.put(
-          "stream", false); // Assuming non-streaming as per current generateContent implementation
+      payload.put("stream", false);
       payload.put("think", false);
-
       JSONObject options = new JSONObject();
       options.put("num_ctx", 4096);
       payload.put("options", options);
-
-      // Add messages to the payload
       payload.put("messages", messages);
-
-      // Add tools if provided
       if (tools != null) {
         payload.put("tools", tools);
       }
-
-      // Convert payload to string
       String jsonString = payload.toString();
-
-      // Create URL object
       URL url = new URL(apiUrl);
-
-      // Open connection
       HttpURLConnection connection = (HttpURLConnection) url.openConnection();
       System.out.print("HTTP Connection to Ollama API: " + apiUrl.toString());
-      // Set request method
       connection.setRequestMethod("POST");
-
-      // Set headers
       connection.setRequestProperty("Content-Type", "application/json");
-      connection.setRequestProperty(
-          "Authorization",
-          "Bearer " + AWS_BEARER_TOKEN_BEDROCK); // This header is less standard than
-
-      // Enable output and set content length
+      connection.setRequestProperty("Authorization", "Bearer " + AWS_BEARER_TOKEN_BEDROCK);
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(jsonString.getBytes().length);
-
-      // Write JSON data to output stream
       try (DataOutputStream outputStream = new DataOutputStream(connection.getOutputStream())) {
         outputStream.writeBytes(jsonString);
+        System.out.println("Bedrock Base LM => " + jsonString);
         outputStream.flush();
       }
-
-      // Read response
       int responseCode = connection.getResponseCode();
       System.out.println("Response Code: " + responseCode);
-
-      // Read response body
       try (BufferedReader reader =
           new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
         StringBuilder response = new StringBuilder();
         String line;
-
         if (stream) {
           StringBuilder streamOutput = new StringBuilder();
           // Read each line (JSON object) from the stream
@@ -922,7 +902,7 @@ public class BedrockBaseLM extends BaseLlm {
     } catch (IOException ex) {
       logger.error("IO Exception when calling Ollama API.", ex);
       java.util.logging.Logger.getLogger(BedrockBaseLM.class.getName()).log(Level.SEVERE, null, ex);
-    } catch (Exception ex) { // Catch any other unexpected exceptions
+    } catch (Exception ex) {
       logger.error("An unexpected error occurred when calling Ollama API.", ex);
       java.util.logging.Logger.getLogger(BedrockBaseLM.class.getName()).log(Level.SEVERE, null, ex);
     }
@@ -973,12 +953,10 @@ public class BedrockBaseLM extends BaseLlm {
               StringBuilder responseBuilder = new StringBuilder();
               while ((line = reader.readLine()) != null) {
                 if (stream) {
-                  // Try to parse each line as JSON and emit
                   try {
                     JSONObject chunk = new JSONObject(line);
                     emitter.onNext(chunk);
                   } catch (Exception e) {
-                    // If not valid JSON, accumulate for later
                     responseBuilder.append(line);
                   }
                 } else {
@@ -1000,6 +978,38 @@ public class BedrockBaseLM extends BaseLlm {
           }
         },
         io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+  }
+
+  // Added private method for usage metadata extraction
+  private GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
+    return Optional.ofNullable(agentResponse)
+        .map(response -> response.optJSONObject("response"))
+        .map(response -> response.optJSONObject("openAIResponse"))
+        .map(openAIResponse -> openAIResponse.optJSONObject("usage"))
+        .flatMap(
+            usage -> {
+              int promptTokens = usage.optInt("prompt_tokens", 0);
+              int completionTokens = usage.optInt("completion_tokens", 0);
+              int totalTokens = usage.optInt("total_tokens", 0);
+              if (totalTokens == 0) {
+                totalTokens = promptTokens + completionTokens;
+              }
+              if (totalTokens > 0) {
+                logger.info(
+                    "Non-streaming token counts: prompt={}, completion={}, total={}",
+                    promptTokens,
+                    completionTokens,
+                    totalTokens);
+                return Optional.of(
+                    GenerateContentResponseUsageMetadata.builder()
+                        .promptTokenCount(promptTokens)
+                        .candidatesTokenCount(completionTokens)
+                        .totalTokenCount(totalTokens)
+                        .build());
+              }
+              return Optional.empty();
+            })
+        .orElse(null);
   }
 
   public static void main(String[] args) {
