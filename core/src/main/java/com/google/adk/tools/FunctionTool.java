@@ -173,7 +173,8 @@ public class FunctionTool extends BaseTool {
       return this.call(args, toolContext).defaultIfEmpty(ImmutableMap.of());
     } catch (Exception e) {
       e.printStackTrace();
-      return Single.just(ImmutableMap.of());
+      return Single.just(
+          ImmutableMap.of("status", "error", "message", "An internal error occurred."));
     }
   }
 

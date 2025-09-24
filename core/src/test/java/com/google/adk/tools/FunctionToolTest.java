@@ -351,6 +351,15 @@ public final class FunctionToolTest {
   }
 
   @Test
+  public void call_throwsException_returnsInternalError() {
+    FunctionTool tool = FunctionTool.create(Functions.class, "throwException");
+
+    Map<String, Object> result = tool.runAsync(ImmutableMap.of(), null).blockingGet();
+
+    assertThat(result).containsExactly("status", "error", "message", "An internal error occurred.");
+  }
+
+  @Test
   public void create_withPojoParamWithGettersAndSetters() {
     FunctionTool tool = FunctionTool.create(Functions.class, "pojoParamWithGettersAndSetters");
 
@@ -602,6 +611,10 @@ public final class FunctionToolTest {
         @Annotations.Schema(name = "second_param", description = "A string parameter")
             String param2,
         ToolContext toolContext) {}
+
+    public static void throwException() {
+      throw new RuntimeException("test exception");
+    }
 
     public static void voidReturnWithoutSchema() {}
 
