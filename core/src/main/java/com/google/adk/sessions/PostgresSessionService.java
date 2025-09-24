@@ -252,7 +252,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
 
           PostgresDBHelper.getInstance().saveSession(sessionId, updatedSession);
 
-          logger.info("Event appended successfully to session {}.", sessionId);
+          logger.debug("Event appended successfully to session {}.", sessionId);
           // Call super implementation if there are additional side effects
           BaseSessionService.super.appendEvent(session, event);
           return Single.just(event);

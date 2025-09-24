@@ -99,7 +99,7 @@ public class PostgresDBHelper {
        * Commits the transaction happening inside the insertEvents function so no need here.
        * conn.commit();
        */
-      logger.info("Session {} saved/updated successfully.", sessionId);
+      logger.debug("Session {} saved/updated successfully.", sessionId);
     } catch (SQLException e) {
       e.printStackTrace();
       logger.error("Error saving session {}. Rolling back transaction.", sessionId, e);
