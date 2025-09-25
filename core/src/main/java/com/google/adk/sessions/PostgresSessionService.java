@@ -217,7 +217,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     Objects.requireNonNull(session.id(), "session.id cannot be null");
 
     String sessionId = session.id();
-    logger.info("Attempting to append event to session: {}", sessionId);
+    logger.debug("Attempting to append event to session: {}", sessionId);
 
     try {
       // Get the latest session state from DB to append event correctly
