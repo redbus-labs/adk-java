@@ -48,6 +48,8 @@ public abstract class RunConfig {
 
   public abstract @Nullable AudioTranscriptionConfig outputAudioTranscription();
 
+  public abstract @Nullable AudioTranscriptionConfig inputAudioTranscription();
+
   public abstract int maxLlmCalls();
 
   public static Builder builder() {
@@ -65,7 +67,8 @@ public abstract class RunConfig {
         .setMaxLlmCalls(runConfig.maxLlmCalls())
         .setResponseModalities(runConfig.responseModalities())
         .setSpeechConfig(runConfig.speechConfig())
-        .setOutputAudioTranscription(runConfig.outputAudioTranscription());
+        .setOutputAudioTranscription(runConfig.outputAudioTranscription())
+        .setInputAudioTranscription(runConfig.inputAudioTranscription());
   }
 
   /** Builder for {@link RunConfig}. */
@@ -87,6 +90,10 @@ public abstract class RunConfig {
     @CanIgnoreReturnValue
     public abstract Builder setOutputAudioTranscription(
         AudioTranscriptionConfig outputAudioTranscription);
+
+    @CanIgnoreReturnValue
+    public abstract Builder setInputAudioTranscription(
+        AudioTranscriptionConfig inputAudioTranscription);
 
     @CanIgnoreReturnValue
     public abstract Builder setMaxLlmCalls(int maxLlmCalls);
