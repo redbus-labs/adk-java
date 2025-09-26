@@ -198,7 +198,6 @@ public class PostgresDBHelper {
           }
         }
         conn.commit();
-        System.out.println("Events inserted successfully.");
       } catch (Exception ex) {
         logger.error(
             "Error inserting events for session {}. Rolling back transaction.", session.id(), ex);
