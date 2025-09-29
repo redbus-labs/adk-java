@@ -310,8 +310,7 @@ public class Runner {
   private InvocationContext newInvocationContextForLive(
       Session session, Optional<LiveRequestQueue> liveRequestQueue, RunConfig runConfig) {
     RunConfig.Builder runConfigBuilder = RunConfig.builder(runConfig);
-    if (!CollectionUtils.isNullOrEmpty(runConfig.responseModalities())
-        && liveRequestQueue.isPresent()) {
+    if (liveRequestQueue.isPresent() && !this.agent.subAgents().isEmpty()) {
       // Default to AUDIO modality if not specified.
       if (CollectionUtils.isNullOrEmpty(runConfig.responseModalities())) {
         runConfigBuilder.setResponseModalities(
@@ -323,6 +322,9 @@ public class Runner {
         if (runConfig.outputAudioTranscription() == null) {
           runConfigBuilder.setOutputAudioTranscription(AudioTranscriptionConfig.builder().build());
         }
+      }
+      if (runConfig.inputAudioTranscription() == null) {
+        runConfigBuilder.setInputAudioTranscription(AudioTranscriptionConfig.builder().build());
       }
     }
     return newInvocationContext(
