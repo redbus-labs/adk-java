@@ -15,86 +15,72 @@
  */
 package com.google.adk.memory;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
-
 import com.google.adk.events.Event;
 import com.google.adk.sessions.Session;
-import com.google.common.base.Strings;
+import com.google.cloud.vertexai.api.EndpointName;
+import com.google.cloud.vertexai.api.PredictRequest;
+import com.google.cloud.vertexai.api.PredictResponse;
+import com.google.cloud.vertexai.api.PredictionServiceClient;
+import com.google.cloud.vertexai.api.PredictionServiceSettings;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
+import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import com.google.protobuf.Value;
+import com.google.protobuf.util.JsonFormat;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
 import java.io.File;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.PriorityQueue;
+import java.util.UUID;
 import org.mapdb.BTreeMap;
 import org.mapdb.DB;
 import org.mapdb.DBMaker;
 import org.mapdb.Serializer;
-import org.mapdb.serializer.SerializerArrayTuple;
 
-/**
- * A MapDB-based memory service for persistent storage using modern composite keys.
- *
- * <p>Uses keyword matching instead of semantic search.
- */
 public final class MapDBMemoryService implements BaseMemoryService {
 
-  // Pattern to extract words, matching the Python version.
-  private static final Pattern WORD_PATTERN = Pattern.compile("[A-Za-z]+");
-
   private final DB db;
-  // The key is Object[], representing a composite key of [userKey, sessionId]
-  private final BTreeMap<Object[], List<Event>> sessionEvents;
+  private final BTreeMap<String, Vector> vectorMap;
+  PredictionServiceClient predictionServiceClient;
 
-  public MapDBMemoryService() {
-    this(new File("adk_memory.db"));
-  }
-
-  /**
-   * Creates a new MapDBMemoryService with a specified database file.
-   *
-   * @param dbFile The file to use for the MapDB database.
-   */
-  public MapDBMemoryService(File dbFile) {
+  public MapDBMemoryService(File dbFile) throws IOException {
     dbFile.getParentFile().mkdirs();
     this.db = DBMaker.fileDB(dbFile).transactionEnable().closeOnJvmShutdown().make();
-    // Use the modern Tuple Key Serializer for Object[] keys
-    this.sessionEvents =
-        db.treeMap("sessionEvents")
-            .keySerializer(new SerializerArrayTuple(Serializer.STRING, Serializer.STRING))
-            .valueSerializer(Serializer.JAVA)
-            .createOrOpen();
+    this.vectorMap = db.treeMap("vectors", Serializer.STRING, Serializer.JAVA).createOrOpen();
+    this.predictionServiceClient = createPredictionServiceClient();
   }
 
-  private static String userKey(String appName, String userId) {
-    return appName + "/" + userId;
+  private PredictionServiceClient createPredictionServiceClient() throws IOException {
+    PredictionServiceSettings settings =
+        PredictionServiceSettings.newBuilder()
+            .setEndpoint("us-central1-aiplatform.googleapis.com:443")
+            .build();
+    return PredictionServiceClient.create(settings);
   }
 
   @Override
   public Completable addSessionToMemory(Session session) {
     return Completable.fromAction(
         () -> {
-          String key = userKey(session.appName(), session.userId());
-          ImmutableList<Event> nonEmptyEvents =
-              session.events().stream()
-                  .filter(
-                      event ->
-                          event.content().isPresent()
-                              && event.content().get().parts().isPresent()
-                              && !event.content().get().parts().get().isEmpty())
-                  .collect(toImmutableList());
-          // Use an Object array for the composite key
-          sessionEvents.put(new Object[] {key, session.id()}, nonEmptyEvents);
+          for (Event event : session.events()) {
+            if (event.content().isPresent() && event.content().get().parts().isPresent()) {
+              String text = event.stringifyContent();
+              double[] embedding = getEmbedding(text);
+              Map<String, Object> metadata = new HashMap<>();
+              metadata.put("author", event.author());
+              metadata.put("timestamp", formatTimestamp(event.timestamp()));
+              metadata.put("content", text);
+              Vector vector = new Vector(UUID.randomUUID().toString(), embedding, metadata);
+              vectorMap.put(vector.getId(), vector);
+            }
+          }
           db.commit();
         });
   }
@@ -103,57 +89,80 @@ public final class MapDBMemoryService implements BaseMemoryService {
   public Single<SearchMemoryResponse> searchMemory(String appName, String userId, String query) {
     return Single.fromCallable(
         () -> {
-          String key = userKey(appName, userId);
-
-          // Use subMap for an efficient prefix search on the composite key.
-          // This gets all entries where the first part of the key matches.
-          Map<Object[], List<Event>> userSessions = sessionEvents.prefixSubMap(new Object[] {key});
-
-          if (userSessions.isEmpty()) {
-            return SearchMemoryResponse.builder().build();
-          }
-
-          ImmutableSet<String> wordsInQuery =
-              ImmutableSet.copyOf(query.toLowerCase(Locale.ROOT).split("\\s+"));
-
-          List<MemoryEntry> matchingMemories = new ArrayList<>();
-
-          for (List<Event> eventsInSession : userSessions.values()) {
-            for (Event event : eventsInSession) {
-              if (event.content().isEmpty() || event.content().get().parts().isEmpty()) {
-                continue;
-              }
-
-              Set<String> wordsInEvent = new HashSet<>();
-              for (Part part : event.content().get().parts().get()) {
-                if (part.text().isPresent() && !Strings.isNullOrEmpty(part.text().get())) {
-                  Matcher matcher = WORD_PATTERN.matcher(part.text().get());
-                  while (matcher.find()) {
-                    wordsInEvent.add(matcher.group().toLowerCase(Locale.ROOT));
-                  }
-                }
-              }
-
-              if (wordsInEvent.isEmpty()) {
-                continue;
-              }
-
-              if (!Collections.disjoint(wordsInQuery, wordsInEvent)) {
-                MemoryEntry memory =
-                    MemoryEntry.builder()
-                        .content(event.content().get())
-                        .author(event.author())
-                        .timestamp(formatTimestamp(event.timestamp()))
-                        .build();
-                matchingMemories.add(memory);
-              }
-            }
-          }
-
+          double[] queryEmbedding = getEmbedding(query);
+          List<MemoryEntry> matchingMemories = searchTopNVectors(queryEmbedding, 0.7, 10);
           return SearchMemoryResponse.builder()
               .setMemories(ImmutableList.copyOf(matchingMemories))
               .build();
         });
+  }
+
+  private double[] getEmbedding(String text) throws IOException {
+    EndpointName endpointName = EndpointName.of("us-central1", "google", "textembedding-gecko@001");
+    Value.Builder instance = Value.newBuilder();
+    JsonFormat.parser().merge("{\"content\": \"" + text + "\"}", instance);
+    PredictRequest request =
+        PredictRequest.newBuilder()
+            .setEndpoint(endpointName.toString())
+            .addInstances(instance)
+            .build();
+    PredictResponse response = predictionServiceClient.predict(request);
+    Value embeddingValue = response.getPredictions(0);
+    double[] embedding =
+        embeddingValue
+            .getStructValue()
+            .getFieldsOrThrow("embedding")
+            .getListValue()
+            .getValuesList()
+            .stream()
+            .mapToDouble(Value::getNumberValue)
+            .toArray();
+    return embedding;
+  }
+
+  private List<MemoryEntry> searchTopNVectors(double[] queryVector, double threshold, int topN) {
+    PriorityQueue<VectorWithScore> topVectors =
+        new PriorityQueue<>(topN, Comparator.comparingDouble(v -> v.score));
+    for (Vector vector : vectorMap.values()) {
+      double similarity = cosineSimilarity(vector.getEmbedding(), queryVector);
+      if (similarity >= threshold) {
+        if (topVectors.size() < topN) {
+          topVectors.offer(new VectorWithScore(vector, similarity));
+        } else if (similarity > topVectors.peek().score) {
+          topVectors.poll();
+          topVectors.offer(new VectorWithScore(vector, similarity));
+        }
+      }
+    }
+    List<MemoryEntry> result = new ArrayList<>();
+    for (VectorWithScore vectorWithScore : topVectors) {
+      Vector vector = vectorWithScore.vector;
+      result.add(
+          MemoryEntry.builder()
+              .content(
+                  Content.builder()
+                      .parts(
+                          ImmutableList.of(
+                              Part.fromText((String) vector.getMetadata().get("content"))))
+                      .build())
+              .author((String) vector.getMetadata().get("author"))
+              .timestamp((String) vector.getMetadata().get("timestamp"))
+              .build());
+    }
+    result.sort(Comparator.comparingDouble(v -> ((VectorWithScore) v).score).reversed());
+    return result;
+  }
+
+  private double cosineSimilarity(double[] vectorA, double[] vectorB) {
+    double dotProduct = 0.0;
+    double normA = 0.0;
+    double normB = 0.0;
+    for (int i = 0; i < vectorA.length; i++) {
+      dotProduct += vectorA[i] * vectorB[i];
+      normA += Math.pow(vectorA[i], 2);
+      normB += Math.pow(vectorB[i], 2);
+    }
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
   private String formatTimestamp(long timestamp) {
@@ -162,5 +171,15 @@ public final class MapDBMemoryService implements BaseMemoryService {
 
   public void close() {
     db.close();
+  }
+
+  private static class VectorWithScore {
+    final Vector vector;
+    final double score;
+
+    VectorWithScore(Vector vector, double score) {
+      this.vector = vector;
+      this.score = score;
+    }
   }
 }
