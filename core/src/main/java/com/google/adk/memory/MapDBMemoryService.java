@@ -57,8 +57,17 @@ public final class MapDBMemoryService implements BaseMemoryService {
   private final BTreeMap<Object[], List<Event>> sessionEvents;
 
   public MapDBMemoryService() {
-    this.db =
-        DBMaker.fileDB(new File("adk_memory.db")).transactionEnable().closeOnJvmShutdown().make();
+    this(new File("adk_memory.db"));
+  }
+
+  /**
+   * Creates a new MapDBMemoryService with a specified database file.
+   *
+   * @param dbFile The file to use for the MapDB database.
+   */
+  public MapDBMemoryService(File dbFile) {
+    dbFile.getParentFile().mkdirs();
+    this.db = DBMaker.fileDB(dbFile).transactionEnable().closeOnJvmShutdown().make();
     // Use the modern Tuple Key Serializer for Object[] keys
     this.sessionEvents =
         db.treeMap("sessionEvents")
@@ -149,5 +158,9 @@ public final class MapDBMemoryService implements BaseMemoryService {
 
   private String formatTimestamp(long timestamp) {
     return Instant.ofEpochSecond(timestamp).toString();
+  }
+
+  public void close() {
+    db.close();
   }
 }

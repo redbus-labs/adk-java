@@ -250,7 +250,8 @@
 
 //   @Test
 //   void testListSessions_noSessions_returnsEmptyList() {
-//     assertEquals(0, sessionService.listSessions(APP_NAME, userId).blockingGet().sessions().size());
+//     assertEquals(0, sessionService.listSessions(APP_NAME,
+// userId).blockingGet().sessions().size());
 //   }
 
 //   @Test
@@ -259,18 +260,21 @@
 //         .createSession(APP_NAME, userId, new ConcurrentHashMap<>(), sessionId)
 //         .blockingGet();
 
-//     Event event1 = Event.builder().id("event1").timestamp(Instant.now().getEpochSecond()).build();
+//     Event event1 =
+// Event.builder().id("event1").timestamp(Instant.now().getEpochSecond()).build();
 //     Event event2 =
 //         Event.builder().id("event2").timestamp(Instant.now().getEpochSecond() + 1).build();
 
 //     sessionService
 //         .appendEvent(
-//             sessionService.getSession(APP_NAME, userId, sessionId, Optional.empty()).blockingGet(),
+//             sessionService.getSession(APP_NAME, userId, sessionId,
+// Optional.empty()).blockingGet(),
 //             event1)
 //         .blockingGet();
 //     sessionService
 //         .appendEvent(
-//             sessionService.getSession(APP_NAME, userId, sessionId, Optional.empty()).blockingGet(),
+//             sessionService.getSession(APP_NAME, userId, sessionId,
+// Optional.empty()).blockingGet(),
 //             event2)
 //         .blockingGet();
 
@@ -343,7 +347,8 @@
 
 //     assertEquals(
 //         2,
-//         artifactService.listVersions(APP_NAME, userId, sessionId, filename).blockingGet().size());
+//         artifactService.listVersions(APP_NAME, userId, sessionId,
+// filename).blockingGet().size());
 //   }
 
 //   @Test

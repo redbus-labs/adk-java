@@ -172,7 +172,7 @@ public class FunctionTool extends BaseTool {
     try {
       return this.call(args, toolContext).defaultIfEmpty(ImmutableMap.of());
     } catch (Exception e) {
-      e.printStackTrace();
+      logger.error("Exception occurred while calling function tool: " + func.getName(), e);
       return Single.just(
           ImmutableMap.of("status", "error", "message", "An internal error occurred."));
     }
