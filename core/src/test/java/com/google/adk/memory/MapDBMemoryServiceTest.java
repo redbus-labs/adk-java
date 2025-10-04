@@ -71,8 +71,7 @@ public class MapDBMemoryServiceTest {
   }
 
   @Test
-  public void testMapDBSimple()
-  {}
+  public void testMapDBSimple() {}
 
   /*  @Test
   public void addSessionToMemory_andSearch_findsMatchingContent() {

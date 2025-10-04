@@ -69,4 +69,26 @@ public class RedisArtifactServiceIT {
             .blockingGet();
     assertThat(loadedArtifact.text().get()).isEqualTo("hello world");
   }
+
+  @Test
+  public void testSaveAndLoadBinaryArtifact() {
+    String appName = "testApp";
+    String userId = "testUserBinary";
+    String sessionId = "testSessionBinary";
+    String filename = "test.bin";
+    byte[] binaryData = new byte[] {1, 2, 3, 4, 5};
+    Part artifact = Part.fromBytes(binaryData, "application/octet-stream");
+
+    Integer version =
+        artifactService.saveArtifact(appName, userId, sessionId, filename, artifact).blockingGet();
+    assertThat(version).isEqualTo(0);
+
+    Part loadedArtifact =
+        artifactService
+            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
+            .blockingGet();
+    assertThat(loadedArtifact.inlineData().get().data().get()).isEqualTo(binaryData);
+    assertThat(loadedArtifact.inlineData().get().mimeType().get())
+        .isEqualTo("application/octet-stream");
+  }
 }

@@ -29,6 +29,8 @@ Located in `com.google.adk.artifacts`, this service handles the storage and retr
 - **`deleteArtifact`**: Deletes all versions of a specific artifact.
 - **`listVersions`**: Lists all available version numbers for a given artifact.
 
+**Note on Binary Data:** To store binary files (e.g., images, audio), you should read the file into a `byte[]` and create a `Part` using `Part.fromData(bytes, mimeType)`. The service will automatically serialize the `Part` object (with the binary data Base64 encoded within the JSON structure) and store it in a `BLOB` field for efficient retrieval.
+
 ### 3. `CassandraMemoryService`
 Located in `com.google.adk.memory`, this service provides a simple keyword-based memory search for agents.
 
@@ -76,7 +78,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     session_id TEXT,
     filename TEXT,
     version INT,
-    artifact_data TEXT,
+    artifact_data BLOB,
     PRIMARY KEY ((app_name, user_id, session_id), filename, version)
 );
 
@@ -148,10 +150,12 @@ import com.google.adk.artifacts.CassandraArtifactService;
 import com.google.adk.store.CassandraHelper;
 import com.google.genai.types.Part;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Optional;
 
 public class CassandraArtifactServiceExample {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         CqlSessionBuilder sessionBuilder = CqlSession.builder()
             .addContactPoint(new InetSocketAddress("127.0.0.1", 9042))
             .withLocalDatacenter("datacenter1");
@@ -162,16 +166,25 @@ public class CassandraArtifactServiceExample {
         String appName = "myApp";
         String userId = "user123";
         String sessionId = "session456";
-        String filename = "greeting.txt";
-        Part artifact = Part.fromText("Hello, world!");
+        
+        // Example with a text file
+        String textFilename = "greeting.txt";
+        Part textArtifact = Part.fromText("Hello, world!");
+        Integer textVersion = artifactService.saveArtifact(appName, userId, sessionId, textFilename, textArtifact).blockingGet();
+        System.out.println("Saved text artifact '" + textFilename + "' with version: " + textVersion);
+        Part loadedTextArtifact = artifactService.loadArtifact(appName, userId, sessionId, textFilename, Optional.of(textVersion)).blockingGet();
+        System.out.println("Loaded text artifact content: " + loadedTextArtifact.text().get());
 
-        // Save an artifact
-        Integer version = artifactService.saveArtifact(appName, userId, sessionId, filename, artifact).blockingGet();
-        System.out.println("Saved artifact '" + filename + "' with version: " + version);
-
-        // Load the artifact
-        Part loadedArtifact = artifactService.loadArtifact(appName, userId, sessionId, filename, Optional.of(version)).blockingGet();
-        System.out.println("Loaded artifact content: " + loadedArtifact.text().get());
+        // Example with a binary file (e.g., an image)
+        String binaryFilename = "my-image.png";
+        // Create a dummy file for the example
+        Files.write(Paths.get(binaryFilename), new byte[]{1, 2, 3, 4, 5});
+        byte[] binaryData = Files.readAllBytes(Paths.get(binaryFilename));
+        Part binaryArtifact = Part.fromBytes(binaryData, "image/png");
+        Integer binaryVersion = artifactService.saveArtifact(appName, userId, sessionId, binaryFilename, binaryArtifact).blockingGet();
+        System.out.println("Saved binary artifact '" + binaryFilename + "' with version: " + binaryVersion);
+        Part loadedBinaryArtifact = artifactService.loadArtifact(appName, userId, sessionId, binaryFilename, Optional.of(binaryVersion)).blockingGet();
+        System.out.println("Loaded binary artifact content has " + loadedBinaryArtifact.inlineData().get().data().get().length + " bytes.");
 
         CassandraHelper.close();
     }

@@ -55,7 +55,10 @@ public final class CassandraArtifactService implements BaseArtifactService {
               int newVersion = versions.size();
               return Single.fromCallable(
                   () -> {
-                    String artifactData = objectMapper.writeValueAsString(artifact);
+                    // Serialize the entire Part object to a byte array.
+                    // Jackson automatically handles Base64 encoding for any binary data within the
+                    // Part.
+                    byte[] artifactData = objectMapper.writeValueAsBytes(artifact);
                     session.execute(
                         "INSERT INTO artifacts (app_name, user_id, session_id, filename, version, artifact_data) VALUES (?, ?, ?, ?, ?, ?)",
                         appName,
@@ -63,7 +66,7 @@ public final class CassandraArtifactService implements BaseArtifactService {
                         sessionId,
                         filename,
                         newVersion,
-                        artifactData);
+                        java.nio.ByteBuffer.wrap(artifactData));
                     return newVersion;
                   });
             });
@@ -101,7 +104,16 @@ public final class CassandraArtifactService implements BaseArtifactService {
           if (row == null) {
             return null;
           }
-          return objectMapper.readValue(row.getString("artifact_data"), Part.class);
+          // Retrieve the bytes from the BLOB column.
+          java.nio.ByteBuffer byteBuffer = row.getByteBuffer("artifact_data");
+          if (byteBuffer == null) {
+            return null;
+          }
+          byte[] artifactData = new byte[byteBuffer.remaining()];
+          byteBuffer.get(artifactData);
+
+          // Deserialize the byte array back into a Part object.
+          return objectMapper.readValue(artifactData, Part.class);
         });
   }
 

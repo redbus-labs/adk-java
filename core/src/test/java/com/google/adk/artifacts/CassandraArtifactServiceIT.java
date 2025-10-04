@@ -114,4 +114,26 @@ public class CassandraArtifactServiceIT {
         artifactService.listArtifactKeys(appName, userId, sessionId).blockingGet().filenames();
     assertThat(artifactKeys).containsExactly(filename1, filename2);
   }
+
+  @Test
+  public void testSaveAndLoadBinaryArtifact() {
+    String appName = "testApp";
+    String userId = "testUserBinary";
+    String sessionId = "testSessionBinary";
+    String filename = "test.bin";
+    byte[] binaryData = new byte[] {1, 2, 3, 4, 5};
+    Part artifact = Part.fromBytes(binaryData, "application/octet-stream");
+
+    Integer version =
+        artifactService.saveArtifact(appName, userId, sessionId, filename, artifact).blockingGet();
+    assertThat(version).isEqualTo(0);
+
+    Part loadedBinaryArtifact =
+        artifactService
+            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
+            .blockingGet();
+    assertThat(loadedBinaryArtifact.inlineData().get().data().get()).isEqualTo(binaryData);
+    assertThat(loadedBinaryArtifact.inlineData().get().mimeType().get())
+        .isEqualTo("application/octet-stream");
+  }
 }

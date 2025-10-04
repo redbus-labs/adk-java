@@ -129,7 +129,9 @@ public class CassandraHelper {
             + "session_id TEXT, "
             + "filename TEXT, "
             + "version INT, "
-            + "artifact_data TEXT, "
+            // The entire Part object is serialized to JSON and stored as bytes.
+            // This handles both text and binary (via Base64) content uniformly.
+            + "artifact_data BLOB, "
             + "PRIMARY KEY ((app_name, user_id, session_id), filename, version))");
 
     // Memory Service Tables
