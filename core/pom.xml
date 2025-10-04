@@ -233,6 +233,16 @@
       <version>1.19.7</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>io.lettuce</groupId>
+      <artifactId>lettuce-core</artifactId>
+      <version>6.3.2.RELEASE</version>
+    </dependency>
+    <dependency>
+      <groupId>io.projectreactor.addons</groupId>
+      <artifactId>reactor-adapter</artifactId>
+      <version>3.5.1</version>
+    </dependency>
   </dependencies>
   <build>
     <resources>
