@@ -2,11 +2,13 @@ package com.google.adk.tools.mcp;
 
 import com.google.common.collect.ImmutableMap;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.spec.McpClientTransport;
 import java.util.Collection;
 import java.util.Optional;
+import reactor.core.publisher.Mono;
 
 /**
  * The default builder for creating MCP client transports. Supports StdioClientTransport based on

@@ -67,7 +67,7 @@ public class McpSessionManager {
       requestTimeout = sseServerParams.sseReadTimeout();
     } else if (connectionParams instanceof StreamableHttpServerParameters streamableParams) {
       initializationTimeout = streamableParams.timeout();
-      requestTimeout = streamableParams.sseReadTimeout();
+      requestTimeout = streamableParams.readTimeout();
     }
     McpSyncClient client =
         McpClient.sync(transport)
@@ -100,7 +100,7 @@ public class McpSessionManager {
       requestTimeout = sseServerParams.sseReadTimeout();
     } else if (connectionParams instanceof StreamableHttpServerParameters streamableParams) {
       initializationTimeout = streamableParams.timeout();
-      requestTimeout = streamableParams.sseReadTimeout();
+      requestTimeout = streamableParams.readTimeout();
     }
     return McpClient.async(transport)
         .initializationTimeout(

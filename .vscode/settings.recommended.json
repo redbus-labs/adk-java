@@ -1,4 +1,6 @@
 {
+  // A recommended set of settings for VS Code.
+  //
   // formatOnType and formatOnPaste is a very bad idea for slow formatters
   // (such as an external Google Java Format invocation exec), so just on Save:
   "editor.formatOnSave": true,

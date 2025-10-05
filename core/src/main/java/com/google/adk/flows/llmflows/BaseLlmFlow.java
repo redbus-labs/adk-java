@@ -52,7 +52,6 @@ import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.observers.DisposableCompletableObserver;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -131,9 +130,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
   /**
    * Post-processes the LLM response after receiving it from the LLM. Executes all registered {@link
-   * ResponseProcessor} instances. Handles function calls if present in the response.
+   * ResponseProcessor} instances. Emits events for the model response and any subsequent function
+   * calls.
    */
-  protected Single<ResponseProcessingResult> postprocess(
+  protected Flowable<Event> postprocess(
       InvocationContext context,
       Event baseEventForLlmResponse,
       LlmRequest llmRequest,
@@ -154,46 +154,36 @@ public abstract class BaseLlmFlow implements BaseFlow {
               .map(ResponseProcessingResult::updatedResponse);
     }
 
-    return currentLlmResponse.flatMap(
+    return currentLlmResponse.flatMapPublisher(
         updatedResponse -> {
+          Flowable<Event> processorEvents = Flowable.fromIterable(Iterables.concat(eventIterables));
+
           if (updatedResponse.content().isEmpty()
               && updatedResponse.errorCode().isEmpty()
               && !updatedResponse.interrupted().orElse(false)
               && !updatedResponse.turnComplete().orElse(false)) {
-            return Single.just(
-                ResponseProcessingResult.create(
-                    updatedResponse, Iterables.concat(eventIterables), Optional.empty()));
+            return processorEvents;
           }
 
           Event modelResponseEvent =
               buildModelResponseEvent(baseEventForLlmResponse, llmRequest, updatedResponse);
-          eventIterables.add(Collections.singleton(modelResponseEvent));
+
+          Flowable<Event> modelEventStream = Flowable.just(modelResponseEvent);
+
+          if (modelResponseEvent.functionCalls().isEmpty()) {
+            return processorEvents.concatWith(modelEventStream);
+          }
 
           Maybe<Event> maybeFunctionCallEvent;
-          if (modelResponseEvent.functionCalls().isEmpty()) {
-            maybeFunctionCallEvent = Maybe.empty();
-          } else if (context.runConfig().streamingMode() == StreamingMode.BIDI) {
+          if (context.runConfig().streamingMode() == StreamingMode.BIDI) {
             maybeFunctionCallEvent =
                 Functions.handleFunctionCallsLive(context, modelResponseEvent, llmRequest.tools());
           } else {
             maybeFunctionCallEvent =
                 Functions.handleFunctionCalls(context, modelResponseEvent, llmRequest.tools());
           }
-          return maybeFunctionCallEvent
-              .map(Optional::of)
-              .defaultIfEmpty(Optional.empty())
-              .map(
-                  functionCallEventOpt -> {
-                    Optional<String> transferToAgent = Optional.empty();
-                    if (functionCallEventOpt.isPresent()) {
-                      Event functionCallEvent = functionCallEventOpt.get();
-                      eventIterables.add(Collections.singleton(functionCallEvent));
-                      transferToAgent = functionCallEvent.actions().transferToAgent();
-                    }
-                    Iterable<Event> combinedEvents = Iterables.concat(eventIterables);
-                    return ResponseProcessingResult.create(
-                        updatedResponse, combinedEvents, transferToAgent);
-                  });
+
+          return processorEvents.concatWith(modelEventStream).concatWith(maybeFunctionCallEvent);
         });
   }
 
@@ -374,33 +364,27 @@ public abstract class BaseLlmFlow implements BaseFlow {
               Flowable<Event> restOfFlow =
                   callLlm(context, llmRequestAfterPreprocess, mutableEventTemplate)
                       .concatMap(
-                          llmResponse -> {
-                            Single<ResponseProcessingResult> postResultSingle =
-                                postprocess(
-                                    context,
-                                    mutableEventTemplate,
-                                    llmRequestAfterPreprocess,
-                                    llmResponse);
-
-                            return postResultSingle
-                                .doOnSuccess(
-                                    ignored -> {
-                                      String oldId = mutableEventTemplate.id();
-                                      mutableEventTemplate.setId(Event.generateEventId());
-                                      logger.debug(
-                                          "Updated mutableEventTemplate ID from {} to {} for next"
-                                              + " LlmResponse",
-                                          oldId,
-                                          mutableEventTemplate.id());
-                                    })
-                                .toFlowable();
-                          })
+                          llmResponse ->
+                              postprocess(
+                                      context,
+                                      mutableEventTemplate,
+                                      llmRequestAfterPreprocess,
+                                      llmResponse)
+                                  .doFinally(
+                                      () -> {
+                                        String oldId = mutableEventTemplate.id();
+                                        mutableEventTemplate.setId(Event.generateEventId());
+                                        logger.debug(
+                                            "Updated mutableEventTemplate ID from {} to {} for"
+                                                + " next LlmResponse",
+                                            oldId,
+                                            mutableEventTemplate.id());
+                                      }))
                       .concatMap(
-                          postResult -> {
-                            Flowable<Event> postProcessedEvents =
-                                Flowable.fromIterable(postResult.events());
-                            if (postResult.transferToAgent().isPresent()) {
-                              String agentToTransfer = postResult.transferToAgent().get();
+                          event -> {
+                            Flowable<Event> postProcessedEvents = Flowable.just(event);
+                            if (event.actions().transferToAgent().isPresent()) {
+                              String agentToTransfer = event.actions().transferToAgent().get();
                               logger.debug("Transferring to agent: {}", agentToTransfer);
                               BaseAgent rootAgent = context.agent().rootAgent();
                               BaseAgent nextAgent = rootAgent.findAgent(agentToTransfer);
@@ -569,7 +553,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
               Flowable<Event> receiveFlow =
                   connection
                       .receive()
-                      .flatMapSingle(
+                      .flatMap(
                           llmResponse -> {
                             Event baseEventForThisLlmResponse =
                                 liveEventBuilderTemplate.id(Event.generateEventId()).build();
@@ -580,15 +564,15 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                 llmResponse);
                           })
                       .flatMap(
-                          postResult -> {
-                            Flowable<Event> events = Flowable.fromIterable(postResult.events());
-                            if (postResult.transferToAgent().isPresent()) {
+                          event -> {
+                            Flowable<Event> events = Flowable.just(event);
+                            if (event.actions().transferToAgent().isPresent()) {
                               BaseAgent rootAgent = invocationContext.agent().rootAgent();
                               BaseAgent nextAgent =
-                                  rootAgent.findAgent(postResult.transferToAgent().get());
+                                  rootAgent.findAgent(event.actions().transferToAgent().get());
                               if (nextAgent == null) {
                                 throw new IllegalStateException(
-                                    "Agent not found: " + postResult.transferToAgent().get());
+                                    "Agent not found: " + event.actions().transferToAgent().get());
                               }
                               Flowable<Event> nextAgentEvents =
                                   nextAgent.runLive(invocationContext);

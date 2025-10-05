@@ -145,4 +145,26 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <profile>
+      <id>a2a</id>
+      <dependencies>
+        <dependency>
+          <groupId>com.google.adk</groupId>
+          <artifactId>google-adk-a2a</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>com.google.adk</groupId>
+          <artifactId>google-adk-a2a-webservice</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+        <dependency>
+          <groupId>com.google.adk</groupId>
+          <artifactId>google-adk-sample-a2a-remote</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>
 </project>

@@ -198,7 +198,14 @@ Coming soon...
 
 For remote agent-to-agent communication, ADK integrates with the
 [A2A protocol](https://github.com/google/A2A/).
-Examples coming soon...
+To build the full runtime, Spring transport, and samples, activate the
+`a2a` Maven profile:
+
+```bash
+./mvnw -Pa2a clean package
+```
+
+See `a2a/README.md` for end-to-end setup instructions and sample commands.
 
 ## 🤝 Contributing
 

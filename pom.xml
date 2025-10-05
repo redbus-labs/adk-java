@@ -459,6 +459,15 @@
   </build>
   <profiles>
     <profile>
+      <id>a2a</id>
+      <modules>
+        <module>a2a</module>
+        <module>a2a/webservice</module>
+        <module>contrib/samples/a2a_basic</module>
+        <module>contrib/samples/a2a_remote</module>
+      </modules>
+    </profile>
+    <profile>
       <id>release</id>
       <build>
         <plugins>

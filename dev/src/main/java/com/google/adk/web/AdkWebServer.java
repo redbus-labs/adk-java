@@ -170,6 +170,7 @@ public class AdkWebServer implements WebMvcConfigurer {
    * @param args Command line arguments.
    */
   public static void main(String[] args) {
+    // Increase the default websocket buffer size to 10MB to accommodate live API messages.
     System.setProperty(
         "org.apache.tomcat.websocket.DEFAULT_BUFFER_SIZE", String.valueOf(10 * 1024 * 1024));
     SpringApplication.run(AdkWebServer.class, args);
@@ -180,6 +181,9 @@ public class AdkWebServer implements WebMvcConfigurer {
   public static void start(BaseAgent... agents) {
     // Disable CompiledAgentLoader by setting property to prevent its creation
     System.setProperty("adk.agents.loader", "static");
+    // Increase the default websocket buffer size to 10MB to accommodate live API messages.
+    System.setProperty(
+        "org.apache.tomcat.websocket.DEFAULT_BUFFER_SIZE", String.valueOf(10 * 1024 * 1024));
 
     // Create Spring Application with custom initializer
     SpringApplication app = new SpringApplication(AdkWebServer.class);
