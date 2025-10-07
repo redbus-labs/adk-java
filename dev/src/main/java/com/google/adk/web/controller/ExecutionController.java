@@ -80,7 +80,8 @@ public class ExecutionController {
 
       RunConfig runConfig = RunConfig.builder().setStreamingMode(StreamingMode.NONE).build();
       Flowable<Event> eventStream =
-          runner.runAsync(request.userId, request.sessionId, request.newMessage, runConfig);
+          runner.runAsync(
+              request.userId, request.sessionId, request.newMessage, runConfig, request.stateDelta);
 
       List<Event> events = Lists.newArrayList(eventStream.blockingIterable());
       log.info("Agent run for session {} generated {} events.", request.sessionId, events.size());
@@ -99,7 +100,7 @@ public class ExecutionController {
    */
   @PostMapping(value = "/run_sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   public SseEmitter agentRunSse(@RequestBody AgentRunRequest request) {
-    SseEmitter emitter = new SseEmitter();
+    SseEmitter emitter = new SseEmitter(60 * 60 * 1000L); // 1 hour timeout
 
     if (request.appName == null || request.appName.trim().isEmpty()) {
       log.warn(
@@ -151,7 +152,12 @@ public class ExecutionController {
                   .build();
 
           Flowable<Event> eventFlowable =
-              runner.runAsync(request.userId, request.sessionId, request.newMessage, runConfig);
+              runner.runAsync(
+                  request.userId,
+                  request.sessionId,
+                  request.newMessage,
+                  runConfig,
+                  request.stateDelta);
 
           Disposable disposable =
               eventFlowable

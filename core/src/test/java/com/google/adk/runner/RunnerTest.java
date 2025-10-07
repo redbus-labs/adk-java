@@ -29,6 +29,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
@@ -46,6 +47,8 @@ import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -368,6 +371,143 @@ public final class RunnerTest {
     assertThat(simplifyEvents(events)).containsExactly("author: content for event form plugin");
 
     verify(plugin).onEventCallback(any(), any());
+  }
+
+  @Test
+  public void runAsync_withStateDelta_mergesStateIntoSession() {
+    ImmutableMap<String, Object> stateDelta = ImmutableMap.of("key1", "value1", "key2", 42);
+
+    var events =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                createContent("test message"),
+                RunConfig.builder().build(),
+                stateDelta)
+            .toList()
+            .blockingGet();
+
+    // Verify agent runs successfully
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+
+    // Verify state was merged into session
+    Session finalSession =
+        runner
+            .sessionService()
+            .getSession("test", "user", session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(finalSession.state()).containsAtLeastEntriesIn(stateDelta);
+  }
+
+  @Test
+  public void runAsync_withEmptyStateDelta_doesNotModifySession() {
+    ImmutableMap<String, Object> emptyStateDelta = ImmutableMap.of();
+
+    var events =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                createContent("test message"),
+                RunConfig.builder().build(),
+                emptyStateDelta)
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+
+    // Verify no state events were emitted for empty delta
+    Session finalSession =
+        runner
+            .sessionService()
+            .getSession("test", "user", session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(finalSession.state()).isEmpty();
+  }
+
+  @Test
+  public void runAsync_withNullStateDelta_doesNotModifySession() {
+    var events =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                createContent("test message"),
+                RunConfig.builder().build(),
+                null)
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+
+    Session finalSession =
+        runner
+            .sessionService()
+            .getSession("test", "user", session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(finalSession.state()).isEmpty();
+  }
+
+  @Test
+  public void runAsync_withStateDelta_appendsStateEventToHistory() {
+    var unused =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                createContent("test message"),
+                RunConfig.builder().build(),
+                ImmutableMap.of("testKey", "testValue"))
+            .toList()
+            .blockingGet();
+
+    Session finalSession =
+        runner
+            .sessionService()
+            .getSession("test", "user", session.id(), Optional.empty())
+            .blockingGet();
+
+    assertThat(
+            finalSession.events().stream()
+                .anyMatch(
+                    e ->
+                        e.author().equals("user")
+                            && e.actions() != null
+                            && e.actions().stateDelta() != null
+                            && !e.actions().stateDelta().isEmpty()))
+        .isTrue();
+  }
+
+  @Test
+  public void runAsync_withStateDelta_mergesWithExistingState() {
+    // Create a new session with initial state
+    ConcurrentHashMap<String, Object> initialState = new ConcurrentHashMap<>();
+    initialState.put("existing_key", "existing_value");
+    Session sessionWithState =
+        runner.sessionService().createSession("test", "user", initialState, null).blockingGet();
+
+    // Add new state via stateDelta
+    ImmutableMap<String, Object> newDelta = ImmutableMap.of("new_key", "new_value");
+    var unused =
+        runner
+            .runAsync(
+                "user",
+                sessionWithState.id(),
+                createContent("test message"),
+                RunConfig.builder().build(),
+                newDelta)
+            .toList()
+            .blockingGet();
+
+    // Verify both old and new states are present (merged, not replaced)
+    Session finalSession =
+        runner
+            .sessionService()
+            .getSession("test", "user", sessionWithState.id(), Optional.empty())
+            .blockingGet();
+    assertThat(finalSession.state()).containsEntry("existing_key", "existing_value");
+    assertThat(finalSession.state()).containsEntry("new_key", "new_value");
   }
 
   private Content createContent(String text) {

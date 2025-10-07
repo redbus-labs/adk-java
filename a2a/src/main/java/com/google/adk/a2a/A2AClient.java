@@ -1,7 +1,10 @@
 package com.google.adk.a2a;
 
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.base.Preconditions;
 import io.a2a.client.http.A2AHttpClient;
 import io.a2a.client.http.A2AHttpResponse;
@@ -39,7 +42,11 @@ public final class A2AClient {
       AgentCard agentCard, A2AHttpClient httpClient, Map<String, String> defaultHeaders) {
     this.agentCard = Preconditions.checkNotNull(agentCard, "agentCard");
     this.httpClient = Preconditions.checkNotNull(httpClient, "httpClient");
-    this.objectMapper = new ObjectMapper();
+    this.objectMapper =
+        JsonMapper.builder()
+            .findAndAddModules()
+            .visibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
+            .build();
     this.defaultHeaders = defaultHeaders == null ? Map.of() : Map.copyOf(defaultHeaders);
   }
 
