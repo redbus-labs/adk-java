@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.json.McpJsonMapper;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,8 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class StdioServerParametersTest {
 
+  private static final McpJsonMapper jsonMapper = McpJsonMapper.getDefault();
+
   @Test
   public void toServerParameters_withNullArgs_createsValidServerParameters() {
     StdioServerParameters params =
@@ -41,7 +44,7 @@ public final class StdioServerParametersTest {
     ServerParameters serverParams = params.toServerParameters();
 
     assertThat(serverParams).isNotNull();
-    StdioClientTransport transport = new StdioClientTransport(serverParams);
+    StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
     assertThat(transport).isNotNull();
   }
 
@@ -53,7 +56,7 @@ public final class StdioServerParametersTest {
     ServerParameters serverParams = params.toServerParameters();
 
     assertThat(serverParams).isNotNull();
-    StdioClientTransport transport = new StdioClientTransport(serverParams);
+    StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
     assertThat(transport).isNotNull();
   }
 
@@ -66,7 +69,7 @@ public final class StdioServerParametersTest {
     ServerParameters serverParams = params.toServerParameters();
 
     assertThat(serverParams).isNotNull();
-    StdioClientTransport transport = new StdioClientTransport(serverParams);
+    StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
     assertThat(transport).isNotNull();
   }
 
@@ -79,7 +82,7 @@ public final class StdioServerParametersTest {
     ServerParameters serverParams = params.toServerParameters();
 
     assertThat(serverParams).isNotNull();
-    StdioClientTransport transport = new StdioClientTransport(serverParams);
+    StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
     assertThat(transport).isNotNull();
   }
 
@@ -94,7 +97,7 @@ public final class StdioServerParametersTest {
     ServerParameters serverParams = params.toServerParameters();
 
     assertThat(serverParams).isNotNull();
-    StdioClientTransport transport = new StdioClientTransport(serverParams);
+    StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
     assertThat(transport).isNotNull();
   }
 
@@ -105,7 +108,7 @@ public final class StdioServerParametersTest {
     ServerParameters serverParams = params.toServerParameters();
 
     assertThat(serverParams).isNotNull();
-    StdioClientTransport transport = new StdioClientTransport(serverParams);
+    StdioClientTransport transport = new StdioClientTransport(serverParams, jsonMapper);
     assertThat(transport).isNotNull();
   }
 

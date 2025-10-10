@@ -111,7 +111,7 @@ transport-agnostic `a2a/src/...` tree described above.
 
 ### Quick Start
 
-All commands below assume you are in `/google_adk`.
+All commands below assume you are in `google_adk`.
 
 1. **Start the Spring webservice sample** (run in its own terminal)
    ```bash
@@ -158,7 +158,7 @@ To build the runtime, Spring webservice, and both samples together, activate the
 opt-in Maven profile:
 
 ```bash
-./mvnw -Pa2a clean package
+./mvnw -pl a2a -am clean package
 ```
 
 #### Manual Smoke Test

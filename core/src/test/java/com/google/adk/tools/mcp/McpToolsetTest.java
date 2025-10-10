@@ -31,6 +31,7 @@ import com.google.adk.tools.mcp.McpToolset.McpToolsetConfig;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.util.List;
 import java.util.Optional;
@@ -49,6 +50,8 @@ public class McpToolsetTest {
   @Mock private McpSessionManager mockMcpSessionManager;
   @Mock private McpSyncClient mockMcpSyncClient;
   @Mock private ReadonlyContext mockReadonlyContext;
+
+  private static final McpJsonMapper jsonMapper = McpJsonMapper.getDefault();
 
   @Test
   public void testMcpToolsetConfig_withStdioServerParams_parsesCorrectly() {
@@ -266,11 +269,23 @@ public class McpToolsetTest {
   public void getTools_withToolFilter_returnsFilteredTools() {
     ImmutableList<String> toolFilter = ImmutableList.of("tool1", "tool3");
     McpSchema.Tool mockTool1 =
-        McpSchema.Tool.builder().name("tool1").description("desc1").inputSchema("{}").build();
+        McpSchema.Tool.builder()
+            .name("tool1")
+            .description("desc1")
+            .inputSchema(jsonMapper, "{}")
+            .build();
     McpSchema.Tool mockTool2 =
-        McpSchema.Tool.builder().name("tool2").description("desc2").inputSchema("{}").build();
+        McpSchema.Tool.builder()
+            .name("tool2")
+            .description("desc2")
+            .inputSchema(jsonMapper, "{}")
+            .build();
     McpSchema.Tool mockTool3 =
-        McpSchema.Tool.builder().name("tool3").description("desc3").inputSchema("{}").build();
+        McpSchema.Tool.builder()
+            .name("tool3")
+            .description("desc3")
+            .inputSchema(jsonMapper, "{}")
+            .build();
     McpSchema.ListToolsResult mockResult =
         new McpSchema.ListToolsResult(ImmutableList.of(mockTool1, mockTool2, mockTool3), null);
 

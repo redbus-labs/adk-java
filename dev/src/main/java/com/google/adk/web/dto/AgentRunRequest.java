@@ -18,8 +18,6 @@ package com.google.adk.web.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.genai.types.Content;
-import java.util.Map;
-import javax.annotation.Nullable;
 
 /**
  * Data Transfer Object (DTO) for POST /run and POST /run-sse requests. Contains information needed
@@ -41,15 +39,6 @@ public class AgentRunRequest {
   @JsonProperty("streaming")
   public boolean streaming = false;
 
-  /**
-   * Optional state delta to merge into the session state before running the agent. This allows
-   * updating session state dynamically per request, useful for injecting configuration (e.g.,
-   * replay mode settings) without modifying the stored session.
-   */
-  @JsonProperty("stateDelta")
-  @Nullable
-  public Map<String, Object> stateDelta;
-
   public AgentRunRequest() {}
 
   public String getAppName() {
@@ -70,10 +59,5 @@ public class AgentRunRequest {
 
   public boolean getStreaming() {
     return streaming;
-  }
-
-  @Nullable
-  public Map<String, Object> getStateDelta() {
-    return stateDelta;
   }
 }
