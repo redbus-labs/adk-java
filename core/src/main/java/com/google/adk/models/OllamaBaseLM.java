@@ -18,6 +18,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
@@ -38,6 +39,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -258,6 +261,9 @@ public class OllamaBaseLM extends BaseLlm {
                 : (functions.length() > 0
                     ? functions
                     : null)); // Tools/functions can not be of 0 length
+
+    GenerateContentResponseUsageMetadata usageMetadata = getUsageMetadata(agentresponse);
+
     JSONObject responseQuantum = agentresponse.getJSONObject("message");
 
     // Check if tool call is required
@@ -283,6 +289,10 @@ public class OllamaBaseLM extends BaseLlm {
     } else {
       responseBuilder.content(
           Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
+    }
+
+    if (usageMetadata != null) {
+      responseBuilder.usageMetadata(usageMetadata);
     }
 
     return Flowable.just(responseBuilder.build());
@@ -409,52 +419,67 @@ public class OllamaBaseLM extends BaseLlm {
             .functionResponse()
             .isPresent();
 
+    return createRobustStreamingResponse(
+        modelId,
+        messages,
+        LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null));
+  }
+
+  private Flowable<LlmResponse> createRobustStreamingResponse(
+      String modelId, JSONArray messages, JSONArray functions) {
+    final StringBuilder accumulatedText = new StringBuilder();
     final StringBuilder functionCallName = new StringBuilder();
     final StringBuilder functionCallArgs = new StringBuilder();
     final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
+    final AtomicBoolean streamCompleted = new AtomicBoolean(false);
+
+    final AtomicInteger inputTokens = new AtomicInteger(0);
+    final AtomicInteger outputTokens = new AtomicInteger(0);
+    final AtomicLong promptEvalDuration = new AtomicLong(0);
+    final AtomicLong evalDuration = new AtomicLong(0);
 
     return Flowable.generate(
-        () ->
-            callLLMChatStream(
-                modelId,
-                messages,
-                LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null)),
+        () -> callLLMChatStream(modelId, messages, functions),
         (reader, emitter) -> {
           try {
             if (reader == null) {
               emitter.onComplete();
               return;
             }
+
             String line = reader.readLine();
             if (line == null) {
+              if (accumulatedText.length() > 0) {
+                LlmResponse finalResponse = createTextResponse(accumulatedText.toString(), false);
+                emitter.onNext(finalResponse);
+              }
               emitter.onComplete();
               return;
             }
+
             if (line.isEmpty()) {
               return;
             }
 
-            JSONObject responseJson = new JSONObject(line);
-            JSONObject message = responseJson.optJSONObject("message");
+            JSONObject responseJson;
+            try {
+              responseJson = new JSONObject(line);
+            } catch (Exception parseEx) {
+              logger.warn("Failed to parse Ollama response line: {}", line, parseEx);
+              return;
+            }
 
-            List<Part> parts = new ArrayList<>();
+            JSONObject message = responseJson.optJSONObject("message");
+            List<LlmResponse> responsesToEmit = new ArrayList<>();
 
             if (message != null) {
               if (message.has("content") && message.get("content") instanceof String) {
                 String text = message.getString("content");
                 if (!text.isEmpty()) {
-                  Part part = Part.fromText(text);
-                  parts.add(part);
-                  LlmResponse llmResponse =
-                      LlmResponse.builder()
-                          .content(
-                              Content.builder()
-                                  .role("model")
-                                  .parts(ImmutableList.copyOf(parts))
-                                  .build())
-                          .partial(true)
-                          .build();
-                  emitter.onNext(llmResponse);
+                  accumulatedText.append(text);
+
+                  LlmResponse partialResponse = createTextResponse(text, true);
+                  responsesToEmit.add(partialResponse);
                 }
               }
 
@@ -468,34 +493,79 @@ public class OllamaBaseLM extends BaseLlm {
                     functionCallName.append(function.getString("name"));
                   }
                   if (function.has("arguments")) {
-                    JSONObject argsJson =
-                        function.optJSONObject("arguments"); // Use optJSONObject for null safety*/
-                    functionCallArgs.append(argsJson.toString());
+                    JSONObject argsJson = function.optJSONObject("arguments");
+                    if (argsJson != null) {
+                      String args = argsJson.toString();
+                      functionCallArgs.append(args);
+                    }
                   }
                 }
               }
             }
 
             if (responseJson.optBoolean("done", false)) {
-              if (inFunctionCall.get()) {
-                Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
-                FunctionCall fc =
-                    FunctionCall.builder().name(functionCallName.toString()).args(args).build();
-                Part part = Part.builder().functionCall(fc).build();
-                parts.add(part);
-                LlmResponse llmResponse =
+              streamCompleted.set(true);
+
+              GenerateContentResponseUsageMetadata usageMetadata = getUsageMetadata(responseJson);
+
+              if (accumulatedText.length() > 0 && !inFunctionCall.get()) {
+                LlmResponse.Builder aggregatedResponseBuilder =
                     LlmResponse.builder()
                         .content(
                             Content.builder()
                                 .role("model")
-                                .parts(ImmutableList.copyOf(parts))
+                                .parts(Part.fromText(accumulatedText.toString()))
                                 .build())
-                        .build();
-                emitter.onNext(llmResponse);
+                        .partial(false);
+
+                if (usageMetadata != null) {
+                  aggregatedResponseBuilder.usageMetadata(usageMetadata);
+                }
+
+                responsesToEmit.add(aggregatedResponseBuilder.build());
+              }
+
+              if (inFunctionCall.get() && functionCallName.length() > 0) {
+                try {
+                  Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
+                  FunctionCall fc =
+                      FunctionCall.builder().name(functionCallName.toString()).args(args).build();
+                  Part part = Part.builder().functionCall(fc).build();
+
+                  LlmResponse.Builder functionResponseBuilder =
+                      LlmResponse.builder()
+                          .content(
+                              Content.builder()
+                                  .role("model")
+                                  .parts(ImmutableList.of(part))
+                                  .build());
+
+                  if (usageMetadata != null) {
+                    functionResponseBuilder.usageMetadata(usageMetadata);
+                  }
+
+                  responsesToEmit.add(functionResponseBuilder.build());
+                } catch (Exception funcEx) {
+                  logger.error("Error creating function call response", funcEx);
+                }
+              }
+
+              for (LlmResponse response : responsesToEmit) {
+                emitter.onNext(response);
               }
               emitter.onComplete();
+              return;
             }
+
+            if (!responsesToEmit.isEmpty()) {
+              for (LlmResponse response : responsesToEmit) {
+                emitter.onNext(response);
+              }
+            }
+
           } catch (Exception e) {
+            logger.error("Error in Ollama streaming", e);
+            e.printStackTrace();
             emitter.onError(e);
           }
         },
@@ -508,6 +578,63 @@ public class OllamaBaseLM extends BaseLlm {
             logger.error("Error closing stream reader", e);
           }
         });
+  }
+
+  private LlmResponse createTextResponse(String text, boolean partial) {
+    return LlmResponse.builder()
+        .content(Content.builder().role("model").parts(Part.fromText(text)).build())
+        .partial(partial)
+        .build();
+  }
+
+  private GenerateContentResponseUsageMetadata getUsageMetadata(
+      int promptTokens, int completionTokens, int totalTokens) {
+    if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+      return GenerateContentResponseUsageMetadata.builder()
+          .promptTokenCount(promptTokens)
+          .candidatesTokenCount(completionTokens)
+          .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
+          .build();
+    }
+    return null;
+  }
+
+  private GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
+    if (agentResponse == null) {
+      return null;
+    }
+
+    try {
+      int promptTokens = 0;
+      int completionTokens = 0;
+      int totalTokens = 0;
+
+      if (agentResponse.has("prompt_eval_count")) {
+        promptTokens = agentResponse.getInt("prompt_eval_count");
+      }
+
+      if (agentResponse.has("eval_count")) {
+        completionTokens = agentResponse.getInt("eval_count");
+      }
+      totalTokens = promptTokens + completionTokens;
+
+      if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+        logger.info(
+            "Ollama token counts: prompt={}, completion={}, total={}",
+            promptTokens,
+            completionTokens,
+            totalTokens);
+        return GenerateContentResponseUsageMetadata.builder()
+            .promptTokenCount(promptTokens)
+            .candidatesTokenCount(completionTokens)
+            .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
+            .build();
+      }
+    } catch (Exception e) {
+      logger.warn("Failed to parse token usage from Ollama response", e);
+    }
+
+    return null;
   }
 
   public BufferedReader callLLMChatStream(String model, JSONArray messages, JSONArray tools) {
@@ -546,7 +673,7 @@ public class OllamaBaseLM extends BaseLlm {
       }
 
       int responseCode = connection.getResponseCode();
-      System.out.println("Response Code: " + responseCode);
+      System.out.println("Response Code from Ollama for model " + model + ": " + responseCode);
 
       if (responseCode >= 200 && responseCode < 300) {
         return new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
