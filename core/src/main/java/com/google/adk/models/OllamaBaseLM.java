@@ -616,6 +616,7 @@ public class OllamaBaseLM extends BaseLlm {
       if (agentResponse.has("eval_count")) {
         completionTokens = agentResponse.getInt("eval_count");
       }
+      totalTokens = promptTokens + completionTokens;
 
       if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
         logger.info(
