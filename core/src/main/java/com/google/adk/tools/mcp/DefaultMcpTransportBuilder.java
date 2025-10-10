@@ -51,16 +51,18 @@ public class DefaultMcpTransportBuilder implements McpTransportBuilder {
               (builder, method, uri, body, context) -> {
                 streamableParams.headers().forEach((key, value) -> builder.header(key, value));
                 return Mono.just(builder);
-      // Fallback: use SSE transport for streamable parameters until streamable HTTP transport
-      // class is present in the dependency.
+              })
+          .build();
+      // Fallback SSE transport for streamable parameters (unreachable, comment out if not needed)
+      /*
       return HttpClientSseClientTransport.builder(streamableParams.url())
           .sseEndpoint("sse")
           .customizeRequest(
               builder -> {
                 streamableParams.headers().forEach(builder::header);
-                // no return; functional interface is likely a Consumer
               })
           .build();
+      */
     } else {
       throw new IllegalArgumentException(
           "DefaultMcpTransportBuilder supports only ServerParameters, SseServerParameters, or"
