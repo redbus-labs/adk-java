@@ -560,9 +560,6 @@ public class BedrockBaseLM extends BaseLlm {
               return reader;
             }
 
-            // Print streaming response chunk to console
-            //            System.out.println("Raw JSON: " + responseJson.toString(2));
-
             // Extract token usage information from Bedrock's response format
             if (responseJson.has("usage")) {
               JSONObject usage = responseJson.getJSONObject("usage");
@@ -611,8 +608,6 @@ public class BedrockBaseLM extends BaseLlm {
                   if (c.has("text")) {
                     String t = c.getString("text");
                     if (!t.isEmpty()) {
-                      //                      System.out.println("  [" + i + "] Streaming text: " +
-                      // t);
                       chunkText.append(t);
                       hasContent = true;
                     }
@@ -621,7 +616,6 @@ public class BedrockBaseLM extends BaseLlm {
               }
 
               if (message.has("tool_calls")) {
-                System.out.println("Tool calls found in streaming response");
                 inFunctionCall.set(true);
                 JSONArray toolCalls = message.getJSONArray("tool_calls");
                 if (toolCalls.length() > 0) {
@@ -629,14 +623,12 @@ public class BedrockBaseLM extends BaseLlm {
                   JSONObject function = toolCall.getJSONObject("function");
                   if (function.has("name")) {
                     String functionName = function.getString("name");
-                    System.out.println("  Function name: " + functionName);
                     functionCallName.append(functionName);
                   }
                   if (function.has("arguments")) {
                     JSONObject argsJson = function.optJSONObject("arguments");
                     if (argsJson != null) {
                       String argsString = argsJson.toString();
-                      System.out.println("  Function arguments: " + argsString);
                       functionCallArgs.append(argsString);
                     }
                   }
@@ -657,11 +649,9 @@ public class BedrockBaseLM extends BaseLlm {
                       || "content_filtered".equals(stopReason);
             } else if (responseJson.optBoolean("done", false)) {
               isDone = true;
-              System.out.println("Streaming response marked as DONE");
             }
 
             if (isDone) {
-              //              System.out.println("Streaming response completed");
               streamCompleted.set(true);
 
               // Create usage metadata from accumulated token counts
@@ -671,9 +661,6 @@ public class BedrockBaseLM extends BaseLlm {
               // Handle function call completion
               if (inFunctionCall.get() && functionCallName.length() > 0) {
                 try {
-                  System.out.println("Finalizing function call:");
-                  System.out.println("  Function: " + functionCallName.toString());
-                  System.out.println("  Arguments: " + functionCallArgs.toString());
                   Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
                   FunctionCall fc =
                       FunctionCall.builder().name(functionCallName.toString()).args(args).build();
@@ -794,7 +781,6 @@ public class BedrockBaseLM extends BaseLlm {
 
       try (OutputStream outputStream = connection.getOutputStream();
           OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
-        //        System.out.println("Bedrock Base LM => " + jsonString);
         writer.write(jsonString);
         writer.flush();
       }
