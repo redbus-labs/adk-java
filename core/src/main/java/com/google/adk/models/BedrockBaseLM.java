@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -485,53 +486,120 @@ public class BedrockBaseLM extends BaseLlm {
             .functionResponse()
             .isPresent();
 
+    return createRobustStreamingResponse(
+        modelId,
+        messages,
+        LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null));
+  }
+
+  /**
+   * Creates a robust streaming response that handles Bedrock's response format properly, avoiding
+   * the "onNext already called in this generate turn" error.
+   */
+  private Flowable<LlmResponse> createRobustStreamingResponse(
+      String modelId, JSONArray messages, JSONArray functions) {
+    final StringBuilder accumulatedText = new StringBuilder();
     final StringBuilder functionCallName = new StringBuilder();
     final StringBuilder functionCallArgs = new StringBuilder();
     final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
+    final AtomicBoolean streamCompleted = new AtomicBoolean(false);
+
+    // Token counting variables for streaming
+    final AtomicInteger inputTokens = new AtomicInteger(0);
+    final AtomicInteger outputTokens = new AtomicInteger(0);
+    final AtomicInteger totalTokens = new AtomicInteger(0);
 
     return Flowable.generate(
-        () ->
-            callLLMChatStream(
-                modelId,
-                messages,
-                LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null)),
+        () -> callLLMChatStream(modelId, messages, functions),
         (reader, emitter) -> {
           try {
-            if (reader == null) {
+            if (reader == null || streamCompleted.get()) {
               emitter.onComplete();
-              return;
+              return reader;
             }
+
             String line = reader.readLine();
             if (line == null) {
+              // End of stream - emit any accumulated text before completing
+              if (accumulatedText.length() > 0) {
+                // Create usage metadata from accumulated token counts
+                GenerateContentResponseUsageMetadata usageMetadata =
+                    getUsageMetadata(inputTokens.get(), outputTokens.get(), totalTokens.get());
+
+                LlmResponse.Builder finalResponseBuilder =
+                    LlmResponse.builder()
+                        .content(
+                            Content.builder()
+                                .role("model")
+                                .parts(Part.fromText(accumulatedText.toString()))
+                                .build())
+                        .partial(false);
+
+                if (usageMetadata != null) {
+                  finalResponseBuilder.usageMetadata(usageMetadata);
+                }
+
+                emitter.onNext(finalResponseBuilder.build());
+                streamCompleted.set(true);
+                return reader;
+              }
               emitter.onComplete();
-              return;
+              return reader;
             }
+
+            // Handle empty lines gracefully
             if (line.isEmpty()) {
-              return;
+              return reader;
             }
 
-            JSONObject responseJson = new JSONObject(line);
-            JSONObject message = responseJson.optJSONObject("message");
+            JSONObject responseJson;
+            try {
+              responseJson = new JSONObject(line);
+            } catch (Exception parseEx) {
+              logger.warn("Failed to parse Bedrock response line: {}", line, parseEx);
+              return reader;
+            }
 
-            List<Part> parts = new ArrayList<>();
+            // Extract token usage information from Bedrock's response format
+            if (responseJson.has("usage")) {
+              JSONObject usage = responseJson.getJSONObject("usage");
+              if (usage.has("inputTokens")) {
+                int promptTokens = usage.getInt("inputTokens");
+                inputTokens.set(promptTokens);
+              }
+              if (usage.has("outputTokens")) {
+                int completionTokens = usage.getInt("outputTokens");
+                outputTokens.set(completionTokens);
+              }
+              if (usage.has("totalTokens")) {
+                int total = usage.getInt("totalTokens");
+                totalTokens.set(total);
+              }
+            }
+
+            JSONObject message = null;
+            if (responseJson.has("output")) {
+              JSONObject output = responseJson.getJSONObject("output");
+              if (output.has("message")) {
+                message = output.getJSONObject("message");
+              }
+            } else if (responseJson.has("message")) {
+              message = responseJson.getJSONObject("message");
+            }
+
+            // Accumulate all text from this response chunk
+            StringBuilder chunkText = new StringBuilder();
+            boolean hasContent = false;
 
             if (message != null) {
+
+              // Handle text content
               if (message.has("content") && message.get("content") instanceof String) {
                 // This branch retained for backward compatibility if upstream sends raw string
                 String text = message.getString("content");
                 if (!text.isEmpty()) {
-                  Part part = Part.fromText(text);
-                  parts.add(part);
-                  LlmResponse llmResponse =
-                      LlmResponse.builder()
-                          .content(
-                              Content.builder()
-                                  .role("model")
-                                  .parts(ImmutableList.copyOf(parts))
-                                  .build())
-                          .partial(true)
-                          .build();
-                  emitter.onNext(llmResponse);
+                  chunkText.append(text);
+                  hasContent = true;
                 }
               } else if (message.has("content") && message.get("content") instanceof JSONArray) {
                 JSONArray contentArr = message.getJSONArray("content");
@@ -540,18 +608,8 @@ public class BedrockBaseLM extends BaseLlm {
                   if (c.has("text")) {
                     String t = c.getString("text");
                     if (!t.isEmpty()) {
-                      Part part = Part.fromText(t);
-                      parts.add(part);
-                      LlmResponse llmResponse =
-                          LlmResponse.builder()
-                              .content(
-                                  Content.builder()
-                                      .role("model")
-                                      .parts(ImmutableList.of(part))
-                                      .build())
-                              .partial(true)
-                              .build();
-                      emitter.onNext(llmResponse);
+                      chunkText.append(t);
+                      hasContent = true;
                     }
                   }
                 }
@@ -564,37 +622,118 @@ public class BedrockBaseLM extends BaseLlm {
                   JSONObject toolCall = toolCalls.getJSONObject(0);
                   JSONObject function = toolCall.getJSONObject("function");
                   if (function.has("name")) {
-                    functionCallName.append(function.getString("name"));
+                    String functionName = function.getString("name");
+                    functionCallName.append(functionName);
                   }
                   if (function.has("arguments")) {
                     JSONObject argsJson = function.optJSONObject("arguments");
-                    functionCallArgs.append(argsJson.toString());
+                    if (argsJson != null) {
+                      String argsString = argsJson.toString();
+                      functionCallArgs.append(argsString);
+                    }
                   }
                 }
               }
+            } else {
+              System.out.println("No message object found in response");
             }
 
-            if (responseJson.optBoolean("done", false)) {
-              if (inFunctionCall.get()) {
-                Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
-                FunctionCall fc =
-                    FunctionCall.builder().name(functionCallName.toString()).args(args).build();
-                Part part = Part.builder().functionCall(fc).build();
-                parts.add(part);
-                LlmResponse llmResponse =
-                    LlmResponse.builder()
-                        .content(
-                            Content.builder()
-                                .role("model")
-                                .parts(ImmutableList.copyOf(parts))
-                                .build())
-                        .build();
-                emitter.onNext(llmResponse);
-              }
-              emitter.onComplete();
+            // Check for completion using Bedrock's stopReason or done flag
+            boolean isDone = false;
+            if (responseJson.has("stopReason")) {
+              String stopReason = responseJson.getString("stopReason");
+              isDone =
+                  "end_turn".equals(stopReason)
+                      || "stop_sequence".equals(stopReason)
+                      || "max_tokens".equals(stopReason)
+                      || "content_filtered".equals(stopReason);
+            } else if (responseJson.optBoolean("done", false)) {
+              isDone = true;
             }
+
+            if (isDone) {
+              streamCompleted.set(true);
+
+              // Create usage metadata from accumulated token counts
+              GenerateContentResponseUsageMetadata usageMetadata =
+                  getUsageMetadata(inputTokens.get(), outputTokens.get(), totalTokens.get());
+
+              // Handle function call completion
+              if (inFunctionCall.get() && functionCallName.length() > 0) {
+                try {
+                  Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
+                  FunctionCall fc =
+                      FunctionCall.builder().name(functionCallName.toString()).args(args).build();
+                  Part part = Part.builder().functionCall(fc).build();
+
+                  LlmResponse.Builder functionResponseBuilder =
+                      LlmResponse.builder()
+                          .content(
+                              Content.builder()
+                                  .role("model")
+                                  .parts(ImmutableList.of(part))
+                                  .build());
+
+                  if (usageMetadata != null) {
+                    functionResponseBuilder.usageMetadata(usageMetadata);
+                  }
+
+                  emitter.onNext(functionResponseBuilder.build());
+                } catch (Exception funcEx) {
+                  logger.error("Error creating function call response", funcEx);
+                }
+              } else {
+                // Add any remaining chunk text to accumulated text
+                if (chunkText.length() > 0) {
+                  accumulatedText.append(chunkText);
+                }
+                // Emit final accumulated text response if we have any content
+                if (accumulatedText.length() > 0) {
+                  LlmResponse.Builder aggregatedResponseBuilder =
+                      LlmResponse.builder()
+                          .content(
+                              Content.builder()
+                                  .role("model")
+                                  .parts(Part.fromText(accumulatedText.toString()))
+                                  .build())
+                          .partial(false);
+
+                  if (usageMetadata != null) {
+                    aggregatedResponseBuilder.usageMetadata(usageMetadata);
+                  }
+
+                  emitter.onNext(aggregatedResponseBuilder.build());
+                } else {
+                  // If no content accumulated, emit empty response to indicate completion
+                  LlmResponse.Builder emptyResponseBuilder =
+                      LlmResponse.builder()
+                          .content(Content.builder().role("model").parts(Part.fromText("")).build())
+                          .partial(false);
+
+                  if (usageMetadata != null) {
+                    emptyResponseBuilder.usageMetadata(usageMetadata);
+                  }
+
+                  emitter.onNext(emptyResponseBuilder.build());
+                }
+              }
+
+              return reader;
+            } else {
+              // For non-final chunks, emit accumulated chunk text if any
+              if (hasContent && chunkText.length() > 0) {
+                accumulatedText.append(chunkText);
+                LlmResponse partialResponse = createTextResponse(chunkText.toString(), true);
+                emitter.onNext(partialResponse);
+              }
+            }
+
+            return reader;
+
           } catch (Exception e) {
+            logger.error("Error in Bedrock streaming", e);
             emitter.onError(e);
+            return reader;
           }
         },
         reader -> {
@@ -606,6 +745,14 @@ public class BedrockBaseLM extends BaseLlm {
             logger.error("Error closing stream reader", e);
           }
         });
+  }
+
+  /** Creates a text-based LlmResponse similar to OllamaBaseLM's approach. */
+  private LlmResponse createTextResponse(String text, boolean partial) {
+    return LlmResponse.builder()
+        .content(Content.builder().role("model").parts(Part.fromText(text)).build())
+        .partial(partial)
+        .build();
   }
 
   public BufferedReader callLLMChatStream(String model, JSONArray messages, JSONArray tools) {
@@ -634,13 +781,12 @@ public class BedrockBaseLM extends BaseLlm {
 
       try (OutputStream outputStream = connection.getOutputStream();
           OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
-        System.out.println("Bedrock Base LM => " + jsonString);
         writer.write(jsonString);
         writer.flush();
       }
 
       int responseCode = connection.getResponseCode();
-      System.out.println("Response Code: " + responseCode);
+      System.out.println("Bedrock Response Code: " + responseCode);
 
       if (responseCode >= 200 && responseCode < 300) {
         return new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
@@ -980,32 +1126,54 @@ public class BedrockBaseLM extends BaseLlm {
         io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
   }
 
+  // Add overloaded method for streaming token usage
+  private GenerateContentResponseUsageMetadata getUsageMetadata(
+      int promptTokens, int completionTokens, int totalTokens) {
+    if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+      logger.info(
+          "Streaming token counts: prompt={}, completion={}, total={}",
+          promptTokens,
+          completionTokens,
+          totalTokens);
+      return GenerateContentResponseUsageMetadata.builder()
+          .promptTokenCount(promptTokens)
+          .candidatesTokenCount(completionTokens)
+          .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
+          .build();
+    }
+    return null;
+  }
+
   // Added private method for usage metadata extraction
   private GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
     return Optional.ofNullable(agentResponse)
-        .map(response -> response.optJSONObject("response"))
-        .map(response -> response.optJSONObject("openAIResponse"))
-        .map(openAIResponse -> openAIResponse.optJSONObject("usage"))
         .flatMap(
-            usage -> {
-              int promptTokens = usage.optInt("prompt_tokens", 0);
-              int completionTokens = usage.optInt("completion_tokens", 0);
-              int totalTokens = usage.optInt("total_tokens", 0);
-              if (totalTokens == 0) {
-                totalTokens = promptTokens + completionTokens;
-              }
-              if (totalTokens > 0) {
-                logger.info(
-                    "Non-streaming token counts: prompt={}, completion={}, total={}",
-                    promptTokens,
-                    completionTokens,
-                    totalTokens);
-                return Optional.of(
-                    GenerateContentResponseUsageMetadata.builder()
-                        .promptTokenCount(promptTokens)
-                        .candidatesTokenCount(completionTokens)
-                        .totalTokenCount(totalTokens)
-                        .build());
+            response -> {
+              if (response.has("usage")) {
+                JSONObject usage = response.optJSONObject("usage");
+                if (usage != null) {
+                  int promptTokens = usage.optInt("input_tokens", 0);
+                  int completionTokens = usage.optInt("output_tokens", 0);
+                  int totalTokens = usage.optInt("total_tokens", 0);
+
+                  if (totalTokens == 0 && (promptTokens > 0 || completionTokens > 0)) {
+                    totalTokens = promptTokens + completionTokens;
+                  }
+
+                  if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+                    logger.info(
+                        "Non-streaming token counts (Bedrock format): prompt={}, completion={}, total={}",
+                        promptTokens,
+                        completionTokens,
+                        totalTokens);
+                    return Optional.of(
+                        GenerateContentResponseUsageMetadata.builder()
+                            .promptTokenCount(promptTokens)
+                            .candidatesTokenCount(completionTokens)
+                            .totalTokenCount(totalTokens)
+                            .build());
+                  }
+                }
               }
               return Optional.empty();
             })
