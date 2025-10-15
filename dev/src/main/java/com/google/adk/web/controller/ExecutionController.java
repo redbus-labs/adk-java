@@ -80,7 +80,8 @@ public class ExecutionController {
 
       RunConfig runConfig = RunConfig.builder().setStreamingMode(StreamingMode.NONE).build();
       Flowable<Event> eventStream =
-          runner.runAsync(request.userId, request.sessionId, request.newMessage, runConfig);
+          runner.runAsync(
+              request.userId, request.sessionId, request.newMessage, runConfig, request.stateDelta);
 
       List<Event> events = Lists.newArrayList(eventStream.blockingIterable());
       log.info("Agent run for session {} generated {} events.", request.sessionId, events.size());
@@ -151,7 +152,12 @@ public class ExecutionController {
                   .build();
 
           Flowable<Event> eventFlowable =
-              runner.runAsync(request.userId, request.sessionId, request.newMessage, runConfig);
+              runner.runAsync(
+                  request.userId,
+                  request.sessionId,
+                  request.newMessage,
+                  runConfig,
+                  request.stateDelta);
 
           Disposable disposable =
               eventFlowable
