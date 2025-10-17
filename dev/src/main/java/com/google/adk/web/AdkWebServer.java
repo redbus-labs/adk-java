@@ -25,6 +25,7 @@ import com.google.adk.artifacts.MapDbArtifactService;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.memory.MapDBMemoryService;
+import com.google.adk.memory.MapDBVectorStore;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.MapDbSessionService;
@@ -102,7 +103,10 @@ public class AdkWebServer implements WebMvcConfigurer {
   public BaseMemoryService memoryService() {
     if (mapDbEnabled) {
       log.info("Using MapDBMemoryService (adk.mapdb.enabled=true)");
-      return new MapDBMemoryService(); // internally uses its own file name
+      String file = mapDbBasePath + "/memory.db";
+      return new MapDBMemoryService(
+          new MapDBVectorStore(file, "adk-memory"),
+          new com.google.adk.memory.ZeroEmbeddingService(768));
     }
     log.info("Using InMemoryMemoryService (MapDB disabled)");
     return new InMemoryMemoryService();
