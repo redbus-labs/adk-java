@@ -174,10 +174,13 @@ public final class TestUtils {
           .build();
     }
     if (part.functionResponse().isPresent()) {
-      return part.toBuilder()
-          .functionResponse(
-              part.functionResponse().get().toBuilder().id("<overwritten by TestUtils>").build())
-          .build();
+      FunctionResponse functionResponse = part.functionResponse().get();
+      FunctionResponse.Builder functionResponseBuilder =
+          functionResponse.toBuilder().id("<overwritten by TestUtils>");
+      if (!functionResponse.parts().isPresent()) {
+        functionResponseBuilder.parts(ImmutableList.of());
+      }
+      return part.toBuilder().functionResponse(functionResponseBuilder.build()).build();
     }
     return part;
   }
