@@ -52,7 +52,7 @@ public class CassandraMemoryServiceIT {
                 new InetSocketAddress(cassandra.getHost(), cassandra.getMappedPort(9042)))
             .withLocalDatacenter(cassandra.getLocalDatacenter());
     CassandraHelper.initialize(sessionBuilder);
-    memoryService = new CassandraMemoryService();
+    memoryService = new CassandraMemoryService(CassandraHelper.getSession(), "rae", "rae_data");
   }
 
   @AfterAll

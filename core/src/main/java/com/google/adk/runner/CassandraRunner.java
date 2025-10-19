@@ -31,7 +31,7 @@ import java.util.List;
  * The class for the Cassandra-backed GenAi runner.
  *
  * @author Sandeep Belgavi
- * @since 2025-10-02
+ * @since 2025-10-19
  */
 public class CassandraRunner extends Runner {
 
@@ -98,7 +98,7 @@ public class CassandraRunner extends Runner {
         appName,
         initArtifactService(sessionBuilder),
         new CassandraSessionService(),
-        new CassandraMemoryService(),
+        new CassandraMemoryService(CassandraHelper.getSession(), "rae", "rae_data"),
         plugins);
   }
 
