@@ -13,154 +13,98 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.adk.memory;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
+package com.google.adk.memory;
 
 import com.google.adk.events.Event;
 import com.google.adk.sessions.Session;
-import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
+import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
-import java.io.File;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import org.mapdb.BTreeMap;
-import org.mapdb.DB;
-import org.mapdb.DBMaker;
-import org.mapdb.Serializer;
-import org.mapdb.serializer.SerializerArrayTuple;
+import java.util.UUID;
 
-/**
- * A MapDB-based memory service for persistent storage using modern composite keys.
- *
- * <p>Uses keyword matching instead of semantic search.
- */
-public final class MapDBMemoryService implements BaseMemoryService {
+/** A memory service that uses MapDB as a vector store. */
+public class MapDBMemoryService implements BaseMemoryService {
 
-  // Pattern to extract words, matching the Python version.
-  private static final Pattern WORD_PATTERN = Pattern.compile("[A-Za-z]+");
+  private final MapDBVectorStore vectorStore;
+  private final EmbeddingService embeddingService;
 
-  private final DB db;
-  // The key is Object[], representing a composite key of [userKey, sessionId]
-  private final BTreeMap<Object[], List<Event>> sessionEvents;
-
-  public MapDBMemoryService() {
-    this(new File("adk_memory.db"));
-  }
-
-  /**
-   * Creates a new MapDBMemoryService with a specified database file.
-   *
-   * @param dbFile The file to use for the MapDB database.
-   */
-  public MapDBMemoryService(File dbFile) {
-    dbFile.getParentFile().mkdirs();
-    this.db = DBMaker.fileDB(dbFile).transactionEnable().closeOnJvmShutdown().make();
-    // Use the modern Tuple Key Serializer for Object[] keys
-    this.sessionEvents =
-        db.treeMap("sessionEvents")
-            .keySerializer(new SerializerArrayTuple(Serializer.STRING, Serializer.STRING))
-            .valueSerializer(Serializer.JAVA)
-            .createOrOpen();
-  }
-
-  private static String userKey(String appName, String userId) {
-    return appName + "/" + userId;
+  public MapDBMemoryService(MapDBVectorStore vectorStore, EmbeddingService embeddingService) {
+    this.vectorStore = vectorStore;
+    this.embeddingService = embeddingService;
   }
 
   @Override
   public Completable addSessionToMemory(Session session) {
     return Completable.fromAction(
         () -> {
-          String key = userKey(session.appName(), session.userId());
-          ImmutableList<Event> nonEmptyEvents =
-              session.events().stream()
-                  .filter(
-                      event ->
-                          event.content().isPresent()
-                              && event.content().get().parts().isPresent()
-                              && !event.content().get().parts().get().isEmpty())
-                  .collect(toImmutableList());
-          // Use an Object array for the composite key
-          sessionEvents.put(new Object[] {key, session.id()}, nonEmptyEvents);
-          db.commit();
+          for (Event event : session.events()) {
+            if (event.content().isEmpty() || event.content().get().parts().isEmpty()) {
+              continue;
+            }
+            for (Part part : event.content().get().parts().get()) {
+              if (part.text().isPresent()) {
+                embeddingService
+                    .generateEmbedding(part.text().get())
+                    .subscribe(
+                        embedding -> {
+                          Map<String, Object> metadata = new HashMap<>();
+                          metadata.put("appName", session.appName());
+                          metadata.put("userId", session.userId());
+                          metadata.put("author", event.author());
+                          metadata.put("timestamp", event.timestamp());
+                          metadata.put("content", part.text().get());
+                          Vector vector =
+                              new Vector(
+                                  UUID.randomUUID().toString(),
+                                  part.text().get(),
+                                  embedding,
+                                  metadata);
+                          vectorStore.insertVector(vector);
+                        });
+              }
+            }
+          }
         });
   }
 
   @Override
   public Single<SearchMemoryResponse> searchMemory(String appName, String userId, String query) {
-    return Single.fromCallable(
-        () -> {
-          String key = userKey(appName, userId);
-
-          // Use subMap for an efficient prefix search on the composite key.
-          // This gets all entries where the first part of the key matches.
-          Map<Object[], List<Event>> userSessions = sessionEvents.prefixSubMap(new Object[] {key});
-
-          if (userSessions.isEmpty()) {
-            return SearchMemoryResponse.builder().build();
-          }
-
-          ImmutableSet<String> wordsInQuery =
-              ImmutableSet.copyOf(query.toLowerCase(Locale.ROOT).split("\\s+"));
-
-          List<MemoryEntry> matchingMemories = new ArrayList<>();
-
-          for (List<Event> eventsInSession : userSessions.values()) {
-            for (Event event : eventsInSession) {
-              if (event.content().isEmpty() || event.content().get().parts().isEmpty()) {
-                continue;
-              }
-
-              Set<String> wordsInEvent = new HashSet<>();
-              for (Part part : event.content().get().parts().get()) {
-                if (part.text().isPresent() && !Strings.isNullOrEmpty(part.text().get())) {
-                  Matcher matcher = WORD_PATTERN.matcher(part.text().get());
-                  while (matcher.find()) {
-                    wordsInEvent.add(matcher.group().toLowerCase(Locale.ROOT));
-                  }
+    return embeddingService
+        .generateEmbedding(query)
+        .map(
+            embedding -> {
+              List<Vector> similarVectors = vectorStore.searchTopNVectors(embedding, 0.8, 10);
+              ImmutableList.Builder<MemoryEntry> memories = ImmutableList.builder();
+              for (Vector vector : similarVectors) {
+                Map<String, Object> metadata = vector.getMetadata();
+                if (metadata.get("appName").equals(appName)
+                    && metadata.get("userId").equals(userId)) {
+                  memories.add(
+                      MemoryEntry.builder()
+                          .content(
+                              Content.builder()
+                                  .role("user")
+                                  .parts(
+                                      ImmutableList.of(
+                                          Part.fromText((String) metadata.get("content"))))
+                                  .build())
+                          .author((String) metadata.get("author"))
+                          .timestamp(formatTimestamp((long) metadata.get("timestamp")))
+                          .build());
                 }
               }
-
-              if (wordsInEvent.isEmpty()) {
-                continue;
-              }
-
-              if (!Collections.disjoint(wordsInQuery, wordsInEvent)) {
-                MemoryEntry memory =
-                    MemoryEntry.builder()
-                        .content(event.content().get())
-                        .author(event.author())
-                        .timestamp(formatTimestamp(event.timestamp()))
-                        .build();
-                matchingMemories.add(memory);
-              }
-            }
-          }
-
-          return SearchMemoryResponse.builder()
-              .setMemories(ImmutableList.copyOf(matchingMemories))
-              .build();
-        });
+              return SearchMemoryResponse.builder().setMemories(memories.build()).build();
+            });
   }
 
   private String formatTimestamp(long timestamp) {
     return Instant.ofEpochSecond(timestamp).toString();
-  }
-
-  public void close() {
-    db.close();
   }
 }
