@@ -4,9 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.google.adk</groupId>
+  <parent>
+    <groupId>com.google.adk</groupId>
+    <artifactId>google-adk-samples</artifactId>
+    <version>0.3.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+    <relativePath>..</relativePath>
+  </parent>
+
   <artifactId>google-adk-sample-a2a-basic</artifactId>
-  <version>0.3.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>Google ADK - Sample - A2A Basic Client</name>
@@ -15,8 +20,8 @@
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <java.version>17</java.version>
-    <google-adk.version>0.3.1-SNAPSHOT</google-adk.version>
-    <google-adk-a2a.version>0.3.1-SNAPSHOT</google-adk-a2a.version>
+    <google-adk.version>${project.version}</google-adk.version>
+    <google-adk-a2a.version>${project.version}</google-adk-a2a.version>
     <slf4j.version>2.0.16</slf4j.version>
   </properties>
 
@@ -68,6 +73,16 @@
             </configuration>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>**/*.jar</exclude>
+            <exclude>target/**</exclude>
+          </excludes>
+        </configuration>
       </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
