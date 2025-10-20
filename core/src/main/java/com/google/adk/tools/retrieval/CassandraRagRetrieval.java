@@ -54,6 +54,18 @@ public class CassandraRagRetrieval extends BaseRetrievalTool {
     this.table = table;
   }
 
+  public CqlSession getSession() {
+    return session;
+  }
+
+  public String getKeyspace() {
+    return keyspace;
+  }
+
+  public String getTable() {
+    return table;
+  }
+
   @Override
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
 

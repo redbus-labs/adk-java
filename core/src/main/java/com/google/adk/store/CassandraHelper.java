@@ -101,9 +101,10 @@ public class CassandraHelper {
         "CREATE TABLE IF NOT EXISTS rae_data ("
             + "client_id TEXT, "
             + "session_id TEXT, "
+            + "turn_id TIMEUUID, "
             + "data TEXT, "
             + "embedding VECTOR<FLOAT, 768>, "
-            + "PRIMARY KEY (client_id, session_id))");
+            + "PRIMARY KEY ((client_id, session_id), turn_id))");
 
     session.execute(
         "CREATE CUSTOM INDEX IF NOT EXISTS ON rae_data (embedding) USING"
