@@ -34,8 +34,8 @@ import org.json.JSONObject;
 /**
  * Generates vector embeddings from text using the Redbus embedding service.
  *
- * <p>The URL for the embedding service can be configured via the `EMBEDDING_GENERATOR_URL` environment
- * variable.
+ * <p>The URL for the embedding service can be configured via the `EMBEDDING_GENERATOR_URL`
+ * environment variable.
  *
  * <p>Example: `export EMBEDDING_GENERATOR_URL="http://www.redbus.com/<serviceprovider>/embeddings"`
  */

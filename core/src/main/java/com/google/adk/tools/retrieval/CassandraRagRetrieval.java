@@ -69,7 +69,7 @@ public class CassandraRagRetrieval extends BaseRetrievalTool {
   @Override
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
 
-    List<Float> embedding = (List<Float>) args.get("embedding");
+    List<Double> embedding = (List<Double>) args.get("embedding");
 
     int topK = (int) args.getOrDefault("top_k", 5);
 
@@ -92,7 +92,7 @@ public class CassandraRagRetrieval extends BaseRetrievalTool {
       String keyspace,
       String table,
       String embeddingColumn,
-      List<Float> embedding,
+      List<Double> embedding,
       int topK,
       float similarityThreshold) {
 

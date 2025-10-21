@@ -26,7 +26,9 @@ import com.google.adk.tools.retrieval.CassandraRagRetrieval;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.reactivex.rxjava3.core.Single;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -45,21 +47,31 @@ public final class CassandraMemoryServiceTest {
 
   @Mock private CqlSession session;
   @Mock private CassandraRagRetrieval cassandraRagRetrieval;
+  @Mock private EmbeddingService embeddingService;
 
   private CassandraMemoryService memoryService;
 
   @Before
   public void setUp() {
     MockitoAnnotations.initMocks(this);
-    memoryService = new CassandraMemoryService(cassandraRagRetrieval);
+    memoryService = new CassandraMemoryService(cassandraRagRetrieval, embeddingService);
   }
 
   @Test
   public void testSearchMemory() {
     // Arrange
     String query = "test query";
+    double[] embedding = new double[] {1.0, 2.0, 3.0};
     List<String> expectedContexts = ImmutableList.of("test context");
-    when(cassandraRagRetrieval.runAsync(eq(ImmutableMap.of("query", query)), any()))
+    when(embeddingService.generateEmbedding(query)).thenReturn(Single.just(embedding));
+    when(cassandraRagRetrieval.runAsync(
+            eq(
+                ImmutableMap.of(
+                    "embedding",
+                    Arrays.stream(embedding)
+                        .mapToObj(d -> (float) d)
+                        .collect(Collectors.toList()))),
+            any()))
         .thenReturn(Single.just(ImmutableMap.of("response", expectedContexts)));
 
     // Act

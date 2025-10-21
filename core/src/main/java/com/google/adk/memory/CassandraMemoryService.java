@@ -27,7 +27,9 @@ import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
 /**
@@ -39,21 +41,32 @@ import javax.annotation.Nonnull;
 public class CassandraMemoryService implements BaseMemoryService {
 
   private final CassandraRagRetrieval cassandraRagRetrieval;
+  private final EmbeddingService embeddingService;
 
-  public CassandraMemoryService(@Nonnull CassandraRagRetrieval cassandraRagRetrieval) {
+  public CassandraMemoryService(
+      @Nonnull CassandraRagRetrieval cassandraRagRetrieval,
+      @Nonnull EmbeddingService embeddingService) {
     this.cassandraRagRetrieval = cassandraRagRetrieval;
+    this.embeddingService = embeddingService;
+  }
+
+  public CassandraMemoryService(
+      @Nonnull CqlSession session,
+      @Nonnull String keyspace,
+      @Nonnull String table,
+      @Nonnull EmbeddingService embeddingService) {
+    this(
+        new CassandraRagRetrieval(
+            "cassandra_rag", "Retrieves information from Cassandra", session, keyspace, table),
+        embeddingService);
   }
 
   public CassandraMemoryService(
       @Nonnull CqlSession session, @Nonnull String keyspace, @Nonnull String table) {
-
-    this(
-        new CassandraRagRetrieval(
-            "cassandra_rag", "Retrieves information from Cassandra", session, keyspace, table));
+    this(session, keyspace, table, new RedbusEmbeddingService("", ""));
   }
 
   public CassandraMemoryService(@Nonnull CqlSession session) {
-
     this(session, "rae", "rae_data");
   }
 
@@ -65,25 +78,43 @@ public class CassandraMemoryService implements BaseMemoryService {
               .events()
               .forEach(
                   event -> {
-                    cassandraRagRetrieval
-                        .getSession()
-                        .execute(
-                            "INSERT INTO "
-                                + cassandraRagRetrieval.getKeyspace()
-                                + "."
-                                + cassandraRagRetrieval.getTable()
-                                + " (client_id, session_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, null)",
-                            session.appName(),
-                            session.id(),
-                            event.content().get().parts().get().get(0).text().get());
+                    String text = event.content().get().parts().get().get(0).text().get();
+                    embeddingService
+                        .generateEmbedding(text)
+                        .subscribe(
+                            embedding -> {
+                              cassandraRagRetrieval
+                                  .getSession()
+                                  .execute(
+                                      "INSERT INTO "
+                                          + cassandraRagRetrieval.getKeyspace()
+                                          + "."
+                                          + cassandraRagRetrieval.getTable()
+                                          + " (client_id, session_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, ?)",
+                                      session.appName(),
+                                      session.id(),
+                                      text,
+                                      Arrays.stream(embedding)
+                                          .mapToObj(d -> (float) d)
+                                          .collect(Collectors.toList()));
+                            });
                   });
         });
   }
 
   @Override
   public Single<SearchMemoryResponse> searchMemory(String appName, String userId, String query) {
-    return cassandraRagRetrieval
-        .runAsync(ImmutableMap.of("query", query), null)
+    return embeddingService
+        .generateEmbedding(query)
+        .flatMap(
+            embedding ->
+                cassandraRagRetrieval.runAsync(
+                    ImmutableMap.of(
+                        "embedding",
+                        Arrays.stream(embedding)
+                            .mapToObj(d -> (float) d)
+                            .collect(Collectors.toList())),
+                    null))
         .map(
             result -> {
               List<String> contexts = (List<String>) result.get("response");
