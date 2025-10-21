@@ -34,10 +34,10 @@ import org.json.JSONObject;
 /**
  * Generates vector embeddings from text using the Redbus embedding service.
  *
- * <p>The URL for the embedding service can be configured via the `EMBEDDING_URL` environment
+ * <p>The URL for the embedding service can be configured via the `EMBEDDING_GENERATOR_URL` environment
  * variable.
  *
- * <p>Example: `export EMBEDDING_URL="http://www.redbus.com/<serviceprovider>/embeddings"`
+ * <p>Example: `export EMBEDDING_GENERATOR_URL="http://www.redbus.com/<serviceprovider>/embeddings"`
  */
 public class RedbusEmbeddingService implements EmbeddingService {
   public static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -57,8 +57,8 @@ public class RedbusEmbeddingService implements EmbeddingService {
     this.password = password;
     this.api = api;
     this.embeddingUrl =
-        System.getenv("EMBEDDING_URL") != null
-            ? System.getenv("EMBEDDING_URL")
+        System.getenv("EMBEDDING_GENERATOR_URL") != null
+            ? System.getenv("EMBEDDING_GENERATOR_URL")
             : "<default embedding url>";
   }
 
