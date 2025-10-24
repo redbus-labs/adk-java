@@ -1,16 +1,19 @@
 CREATE TABLE spans (
     -- Primary identifiers (OpenTelemetry standard)
-    trace_id VARCHAR(32) NOT NULL,
-    span_id VARCHAR(16) NOT NULL,
-    parent_span_id VARCHAR(16),
-
+    trace_id VARCHAR(50) NOT NULL,
+    span_id VARCHAR(50) NOT NULL,
+    parent_span_id VARCHAR(50),
+    user_id VARCHAR(100),
     -- Span metadata
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(100) NOT NULL,
 
-    -- Timing (both nanoseconds for precision)
+    -- Timing (nanoseconds for precision)
     start_time BIGINT NOT NULL,
     end_time BIGINT NOT NULL,
     duration DECIMAL(10,2),
+
+    gen_ai_request_model VARCHAR(100),
+    event_id VARCHAR(100),
 
     -- Status
     status_code VARCHAR(20), -- OK, ERROR, UNSET

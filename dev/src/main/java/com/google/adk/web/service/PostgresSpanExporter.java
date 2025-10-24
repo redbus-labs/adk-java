@@ -51,17 +51,21 @@ public class PostgresSpanExporter implements SpanExporter {
 
       String insertSql =
           "INSERT INTO spans ("
-              + "trace_id, span_id, parent_span_id, name, "
+              + "trace_id, span_id, parent_span_id, user_id, name, "
               + "start_time, end_time, duration, "
+              + "gen_ai_request_model, event_id, "
               + "status_code, status_message, "
               + "attributes"
-              + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) "
+              + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) "
               + "ON CONFLICT (trace_id, span_id) DO UPDATE SET "
               + "parent_span_id = EXCLUDED.parent_span_id, "
+              + "user_id = EXCLUDED.user_id, "
               + "name = EXCLUDED.name, "
               + "start_time = EXCLUDED.start_time, "
               + "end_time = EXCLUDED.end_time, "
               + "duration = EXCLUDED.duration, "
+              + "gen_ai_request_model = EXCLUDED.gen_ai_request_model, "
+              + "event_id = EXCLUDED.event_id, "
               + "status_code = EXCLUDED.status_code, "
               + "status_message = EXCLUDED.status_message, "
               + "attributes = EXCLUDED.attributes";
@@ -106,6 +110,8 @@ public class PostgresSpanExporter implements SpanExporter {
 
     // Extract common attributes
     String sessionId = getStringAttribute(attributes, "gcp.vertex.agent.session_id");
+    String genAiRequestModel = getStringAttribute(attributes, "gen_ai.request.model");
+    String eventId = getStringAttribute(attributes, "gcp.vertex.agent.event_id");
 
     // Convert attributes to JSON
     String attributesJson = convertAttributesToJson(attributes);
@@ -134,10 +140,13 @@ public class PostgresSpanExporter implements SpanExporter {
     pstmt.setString(paramIndex++, span.getSpanContext().getTraceId()); // trace_id
     pstmt.setString(paramIndex++, span.getSpanContext().getSpanId()); // span_id
     pstmt.setString(paramIndex++, parentSpanId); // parent_span_id
+    pstmt.setString(paramIndex++, sessionId); // session_id
     pstmt.setString(paramIndex++, span.getName()); // name
     pstmt.setLong(paramIndex++, startTimeNanos); // start_time_nanos
     pstmt.setLong(paramIndex++, endTimeNanos); // end_time_nanos
     pstmt.setDouble(paramIndex++, durationSeconds); // duration (in seconds)
+    pstmt.setString(paramIndex++, genAiRequestModel); // gen_ai.request.model
+    pstmt.setString(paramIndex++, eventId); // event_id
     pstmt.setString(paramIndex++, statusCode); // status_code
     pstmt.setString(paramIndex++, statusMessage); // status_message
     pstmt.setString(paramIndex++, attributesJson); // attributes (JSONB)
