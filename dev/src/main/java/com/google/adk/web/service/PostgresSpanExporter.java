@@ -50,7 +50,7 @@ public class PostgresSpanExporter implements SpanExporter {
       conn.setAutoCommit(false);
 
       String insertSql =
-          "INSERT INTO spans_V2 ("
+          "INSERT INTO spans ("
               + "trace_id, span_id, parent_span_id, name, "
               + "start_time, end_time, duration, "
               + "status_code, status_message, "
