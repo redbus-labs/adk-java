@@ -34,6 +34,12 @@ import org.testcontainers.containers.CassandraContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+/**
+ * Integration tests for {@link CassandraMemoryService}.
+ *
+ * @author Sandeep Belgavi
+ * @since 2025-10-21
+ */
 @Testcontainers
 public class CassandraMemoryServiceIT {
 
@@ -52,7 +58,7 @@ public class CassandraMemoryServiceIT {
                 new InetSocketAddress(cassandra.getHost(), cassandra.getMappedPort(9042)))
             .withLocalDatacenter(cassandra.getLocalDatacenter());
     CassandraHelper.initialize(sessionBuilder);
-    memoryService = new CassandraMemoryService();
+    memoryService = new CassandraMemoryService(CassandraHelper.getSession(), "rae", "rae_data");
   }
 
   @AfterAll
@@ -94,5 +100,52 @@ public class CassandraMemoryServiceIT {
     assertThat(response.memories()).hasSize(1);
     assertThat(response.memories().get(0).content().parts().get().get(0).text().get())
         .isEqualTo("hello world");
+  }
+
+  @Test
+  public void testAddAndSearchMemoryMultiTurn() {
+    String appName = "testApp";
+    String userId = "testUser";
+    Session session1 =
+        Session.builder("testSession")
+            .appName(appName)
+            .userId(userId)
+            .events(
+                List.of(
+                    Event.builder()
+                        .timestamp(1L)
+                        .author("user")
+                        .content(
+                            Content.builder()
+                                .parts(List.of(Part.fromText("first message")))
+                                .build())
+                        .build()))
+            .build();
+    Session session2 =
+        Session.builder("testSession")
+            .appName(appName)
+            .userId(userId)
+            .events(
+                List.of(
+                    Event.builder()
+                        .timestamp(2L)
+                        .author("model")
+                        .content(
+                            Content.builder()
+                                .parts(List.of(Part.fromText("second message")))
+                                .build())
+                        .build()))
+            .build();
+
+    memoryService.addSessionToMemory(session1).blockingAwait();
+    memoryService.addSessionToMemory(session2).blockingAwait();
+
+    SearchMemoryResponse response =
+        memoryService.searchMemory(appName, userId, "message").blockingGet();
+    assertThat(response.memories()).hasSize(2);
+    assertThat(response.memories().get(0).content().parts().get().get(0).text().get())
+        .isEqualTo("first message");
+    assertThat(response.memories().get(1).content().parts().get().get(0).text().get())
+        .isEqualTo("second message");
   }
 }

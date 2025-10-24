@@ -20,6 +20,7 @@ import com.datastax.oss.driver.api.core.CqlSessionBuilder;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.artifacts.CassandraArtifactService;
 import com.google.adk.memory.CassandraMemoryService;
+import com.google.adk.memory.RedbusEmbeddingService;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.CassandraSessionService;
 import com.google.adk.store.CassandraHelper;
@@ -31,7 +32,7 @@ import java.util.List;
  * The class for the Cassandra-backed GenAi runner.
  *
  * @author Sandeep Belgavi
- * @since 2025-10-02
+ * @since 2025-10-19
  */
 public class CassandraRunner extends Runner {
 
@@ -98,7 +99,8 @@ public class CassandraRunner extends Runner {
         appName,
         initArtifactService(sessionBuilder),
         new CassandraSessionService(),
-        new CassandraMemoryService(),
+        new CassandraMemoryService(
+            CassandraHelper.getSession(), "rae", "rae_data", new RedbusEmbeddingService("", "")),
         plugins);
   }
 

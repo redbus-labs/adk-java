@@ -32,7 +32,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  */
 public class CassandraHelper {
 
-  private static final String KEYSPACE_NAME = "adk";
+  private static final String KEYSPACE_NAME = "rae";
   private static CqlSession session;
   private static final ObjectMapper objectMapper = createObjectMapper();
 
@@ -97,58 +97,17 @@ public class CassandraHelper {
   }
 
   private static void createTables() {
-    // Session Service Tables
     session.execute(
-        "CREATE TABLE IF NOT EXISTS sessions ("
-            + "app_name TEXT, "
-            + "user_id TEXT, "
+        "CREATE TABLE IF NOT EXISTS rae_data ("
+            + "client_id TEXT, "
             + "session_id TEXT, "
-            + "session_data TEXT, "
-            + "PRIMARY KEY ((app_name, user_id), session_id))");
+            + "turn_id TIMEUUID, "
+            + "data TEXT, "
+            + "embedding VECTOR<FLOAT, 768>, "
+            + "PRIMARY KEY ((client_id, session_id), turn_id))");
 
     session.execute(
-        "CREATE TABLE IF NOT EXISTS user_state ("
-            + "app_name TEXT, "
-            + "user_id TEXT, "
-            + "state_key TEXT, "
-            + "state_value TEXT, "
-            + "PRIMARY KEY ((app_name, user_id), state_key))");
-
-    session.execute(
-        "CREATE TABLE IF NOT EXISTS app_state ("
-            + "app_name TEXT, "
-            + "state_key TEXT, "
-            + "state_value TEXT, "
-            + "PRIMARY KEY (app_name, state_key))");
-
-    // Artifact Service Table
-    session.execute(
-        "CREATE TABLE IF NOT EXISTS artifacts ("
-            + "app_name TEXT, "
-            + "user_id TEXT, "
-            + "session_id TEXT, "
-            + "filename TEXT, "
-            + "version INT, "
-            // The entire Part object is serialized to JSON and stored as bytes.
-            // This handles both text and binary (via Base64) content uniformly.
-            + "artifact_data BLOB, "
-            + "PRIMARY KEY ((app_name, user_id, session_id), filename, version))");
-
-    // Memory Service Tables
-    session.execute(
-        "CREATE TABLE IF NOT EXISTS memory_events ("
-            + "app_name TEXT, "
-            + "user_id TEXT, "
-            + "event_id TIMEUUID, "
-            + "event_data TEXT, "
-            + "PRIMARY KEY ((app_name, user_id), event_id))");
-
-    session.execute(
-        "CREATE TABLE IF NOT EXISTS memory_inverted_index ("
-            + "app_name TEXT, "
-            + "user_id TEXT, "
-            + "word TEXT, "
-            + "event_ids SET<TIMEUUID>, "
-            + "PRIMARY KEY ((app_name, user_id), word))");
+        "CREATE CUSTOM INDEX IF NOT EXISTS ON rae_data (embedding) USING"
+            + " 'org.apache.cassandra.index.sai.StorageAttachedIndex' WITH OPTIONS = {'similarity_function': 'COSINE'}");
   }
 }

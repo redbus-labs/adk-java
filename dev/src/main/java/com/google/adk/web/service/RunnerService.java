@@ -19,14 +19,18 @@ package com.google.adk.web.service;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.memory.BaseMemoryService;
+import com.google.adk.plugins.BasePlugin;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.web.AgentLoader;
+import com.google.common.collect.ImmutableList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
@@ -40,18 +44,21 @@ public class RunnerService {
   private final BaseArtifactService artifactService;
   private final BaseSessionService sessionService;
   private final BaseMemoryService memoryService;
+  private final List<BasePlugin> extraPlugins;
   private final Map<String, Runner> runnerCache = new ConcurrentHashMap<>();
 
-  @Autowired
   public RunnerService(
       AgentLoader agentProvider,
       BaseArtifactService artifactService,
       BaseSessionService sessionService,
-      BaseMemoryService memoryService) {
+      BaseMemoryService memoryService,
+      @Autowired(required = false) @Qualifier("extraPlugins") List<BasePlugin> extraPlugins) {
     this.agentProvider = agentProvider;
     this.artifactService = artifactService;
     this.sessionService = sessionService;
     this.memoryService = memoryService;
+    this.extraPlugins =
+        extraPlugins != null ? ImmutableList.copyOf(extraPlugins) : ImmutableList.of();
   }
 
   /**
@@ -72,7 +79,12 @@ public class RunnerService {
                 appName,
                 agent.name());
             return new Runner(
-                agent, appName, this.artifactService, this.sessionService, this.memoryService);
+                agent,
+                appName,
+                this.artifactService,
+                this.sessionService,
+                this.memoryService,
+                this.extraPlugins);
           } catch (java.util.NoSuchElementException e) {
             log.error(
                 "Agent/App named '{}' not found in registry. Available apps: {}",

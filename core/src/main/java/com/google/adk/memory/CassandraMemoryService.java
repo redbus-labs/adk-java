@@ -16,195 +16,120 @@
 
 package com.google.adk.memory;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.datastax.oss.driver.api.core.CqlSession;
-import com.datastax.oss.driver.api.core.CqlSessionBuilder;
-import com.datastax.oss.driver.api.core.cql.ResultSet;
-import com.datastax.oss.driver.api.core.cql.Row;
-import com.datastax.oss.driver.api.core.uuid.Uuids;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.adk.events.Event;
 import com.google.adk.sessions.Session;
-import com.google.adk.store.CassandraHelper;
-import com.google.common.base.Strings;
+import com.google.adk.tools.retrieval.CassandraRagRetrieval;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableMap;
+import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import javax.annotation.Nonnull;
 
 /**
- * A Cassandra-backed implementation of the {@link BaseMemoryService}.
- *
- * <p>This implementation stores session events in a Cassandra database and uses an inverted index
- * for keyword-based search.
+ * An implementation of {@link BaseMemoryService} that uses Cassandra for storage and retrieval.
  *
  * @author Sandeep Belgavi
- * @since 2025-10-02
+ * @since 2025-10-19
  */
-public final class CassandraMemoryService implements BaseMemoryService {
+public class CassandraMemoryService implements BaseMemoryService {
 
-  private static final Pattern WORD_PATTERN = Pattern.compile("[A-Za-z]+");
-  private final CqlSession session;
-  private final ObjectMapper objectMapper;
+  private final CassandraRagRetrieval cassandraRagRetrieval;
+  private final EmbeddingService embeddingService;
 
-  public CassandraMemoryService() {
-    this.session = CassandraHelper.getSession();
-    this.objectMapper = CassandraHelper.getObjectMapper();
+  public CassandraMemoryService(
+      @Nonnull CassandraRagRetrieval cassandraRagRetrieval,
+      @Nonnull EmbeddingService embeddingService) {
+    this.cassandraRagRetrieval = cassandraRagRetrieval;
+    this.embeddingService = embeddingService;
+  }
+
+  public CassandraMemoryService(
+      @Nonnull CqlSession session,
+      @Nonnull String keyspace,
+      @Nonnull String table,
+      @Nonnull EmbeddingService embeddingService) {
+    this(
+        new CassandraRagRetrieval(
+            "cassandra_rag", "Retrieves information from Cassandra", session, keyspace, table),
+        embeddingService);
+  }
+
+  public CassandraMemoryService(
+      @Nonnull CqlSession session, @Nonnull String keyspace, @Nonnull String table) {
+    this(session, keyspace, table, new RedbusEmbeddingService("", ""));
+  }
+
+  public CassandraMemoryService(@Nonnull CqlSession session) {
+    this(session, "rae", "rae_data");
   }
 
   @Override
   public Completable addSessionToMemory(Session session) {
-    return Completable.fromAction(
+    return Completable.fromRunnable(
         () -> {
-          for (Event event : session.events()) {
-            if (event.content().isEmpty()
-                || event.content().get().parts().isEmpty()
-                || event.content().get().parts().get().isEmpty()) {
-              continue;
-            }
-
-            UUID eventId = Uuids.timeBased();
-            String eventData = objectMapper.writeValueAsString(event);
-            this.session.execute(
-                "INSERT INTO memory_events (app_name, user_id, event_id, event_data) VALUES (?, ?, ?, ?)",
-                session.appName(),
-                session.userId(),
-                eventId,
-                eventData);
-
-            Set<String> wordsInEvent = extractWords(event);
-            for (String word : wordsInEvent) {
-              this.session.execute(
-                  "UPDATE memory_inverted_index SET event_ids = event_ids + ? WHERE app_name = ? AND user_id = ? AND word = ?",
-                  Set.of(eventId),
-                  session.appName(),
-                  session.userId(),
-                  word);
-            }
-          }
+          session
+              .events()
+              .forEach(
+                  event -> {
+                    String text = event.content().get().parts().get().get(0).text().get();
+                    embeddingService
+                        .generateEmbedding(text)
+                        .subscribe(
+                            embedding -> {
+                              cassandraRagRetrieval
+                                  .getSession()
+                                  .execute(
+                                      "INSERT INTO "
+                                          + cassandraRagRetrieval.getKeyspace()
+                                          + "."
+                                          + cassandraRagRetrieval.getTable()
+                                          + " (client_id, session_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, ?)",
+                                      session.appName(),
+                                      session.id(),
+                                      text,
+                                      Arrays.stream(embedding)
+                                          .mapToObj(d -> (float) d)
+                                          .collect(Collectors.toList()));
+                            });
+                  });
         });
   }
 
   @Override
   public Single<SearchMemoryResponse> searchMemory(String appName, String userId, String query) {
-    return Single.fromCallable(
-        () -> {
-          ImmutableSet<String> wordsInQuery =
-              ImmutableSet.copyOf(query.toLowerCase(Locale.ROOT).split("\\s+"));
-
-          Set<UUID> matchingEventIds = new HashSet<>();
-          for (String word : wordsInQuery) {
-            ResultSet rs =
-                this.session.execute(
-                    "SELECT event_ids FROM memory_inverted_index WHERE app_name = ? AND user_id = ? AND word = ?",
-                    appName,
-                    userId,
-                    word);
-            Row row = rs.one();
-            if (row != null) {
-              matchingEventIds.addAll(row.getSet("event_ids", UUID.class));
-            }
-          }
-
-          if (matchingEventIds.isEmpty()) {
-            return SearchMemoryResponse.builder().build();
-          }
-
-          String cqlInClause =
-              matchingEventIds.stream().map(UUID::toString).collect(Collectors.joining(","));
-          ResultSet eventRs =
-              this.session.execute(
-                  "SELECT event_data FROM memory_events WHERE app_name = ? AND user_id = ? AND event_id IN ("
-                      + cqlInClause
-                      + ")",
-                  appName,
-                  userId);
-
-          List<MemoryEntry> matchingMemories = new ArrayList<>();
-          for (Row row : eventRs) {
-            Event event = objectMapper.readValue(row.getString("event_data"), Event.class);
-            MemoryEntry memory =
-                MemoryEntry.builder()
-                    .content(event.content().get())
-                    .author(event.author())
-                    .timestamp(formatTimestamp(event.timestamp()))
-                    .build();
-            matchingMemories.add(memory);
-          }
-
-          return SearchMemoryResponse.builder()
-              .setMemories(ImmutableList.copyOf(matchingMemories))
-              .build();
-        });
-  }
-
-  private Set<String> extractWords(Event event) {
-    Set<String> words = new HashSet<>();
-    if (event.content().isPresent() && event.content().get().parts().isPresent()) {
-      for (Part part : event.content().get().parts().get()) {
-        if (!Strings.isNullOrEmpty(part.text().get())) {
-          Matcher matcher = WORD_PATTERN.matcher(part.text().get());
-          while (matcher.find()) {
-            words.add(matcher.group().toLowerCase(Locale.ROOT));
-          }
-        }
-      }
-    }
-    return words;
-  }
-
-  private String formatTimestamp(long timestamp) {
-    return Instant.ofEpochMilli(timestamp).toString();
-  }
-
-  public static class CassandraMemoryServiceExample {
-    public static void main(String[] args) {
-      CqlSessionBuilder sessionBuilder =
-          CqlSession.builder()
-              .addContactPoint(new java.net.InetSocketAddress("127.0.0.1", 9042))
-              .withLocalDatacenter("datacenter1");
-      CassandraHelper.initialize(sessionBuilder);
-
-      CassandraMemoryService memoryService = new CassandraMemoryService();
-
-      String appName = "myApp";
-      String userId = "user123";
-      Session session =
-          Session.builder("session789")
-              .appName(appName)
-              .userId(userId)
-              .events(
-                  List.of(
-                      Event.builder()
-                          .timestamp(1L)
-                          .author("user")
-                          .content(
-                              com.google.genai.types.Content.builder()
-                                  .parts(List.of(Part.fromText("hello from the past")))
+    return embeddingService
+        .generateEmbedding(query)
+        .flatMap(
+            embedding ->
+                cassandraRagRetrieval.runAsync(
+                    ImmutableMap.of(
+                        "embedding",
+                        Arrays.stream(embedding)
+                            .mapToObj(d -> (float) d)
+                            .collect(Collectors.toList())),
+                    null))
+        .map(
+            result -> {
+              List<String> contexts = (List<String>) result.get("response");
+              ImmutableList<MemoryEntry> memories =
+                  contexts.stream()
+                      .map(
+                          context ->
+                              MemoryEntry.builder()
+                                  .content(
+                                      Content.builder()
+                                          .parts(ImmutableList.of(Part.fromText(context)))
+                                          .build())
                                   .build())
-                          .build()))
-              .build();
-
-      // Add a session to memory
-      memoryService.addSessionToMemory(session).blockingAwait();
-      System.out.println("Added session to memory.");
-
-      // Search memory
-      SearchMemoryResponse response =
-          memoryService.searchMemory(appName, userId, "past").blockingGet();
-      System.out.println("Search results: " + response.memories());
-
-      CassandraHelper.close();
-    }
+                      .collect(toImmutableList());
+              return SearchMemoryResponse.builder().setMemories(memories).build();
+            });
   }
 }

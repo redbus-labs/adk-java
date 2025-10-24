@@ -33,6 +33,12 @@ import org.testcontainers.containers.CassandraContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+/**
+ * Integration tests for {@link CassandraArtifactService}.
+ *
+ * @author Sandeep Belgavi
+ * @since 2025-10-21
+ */
 @Testcontainers
 public class CassandraArtifactServiceIT {
 
