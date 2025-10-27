@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
 import java.time.Instant;
 import java.util.HashMap;
@@ -42,36 +43,37 @@ public class MapDBMemoryService implements BaseMemoryService {
 
   @Override
   public Completable addSessionToMemory(Session session) {
-    return Completable.fromAction(
-        () -> {
-          for (Event event : session.events()) {
-            if (event.content().isEmpty() || event.content().get().parts().isEmpty()) {
-              continue;
-            }
-            for (Part part : event.content().get().parts().get()) {
-              if (part.text().isPresent()) {
-                embeddingService
-                    .generateEmbedding(part.text().get())
-                    .subscribe(
-                        embedding -> {
-                          Map<String, Object> metadata = new HashMap<>();
-                          metadata.put("appName", session.appName());
-                          metadata.put("userId", session.userId());
-                          metadata.put("author", event.author());
-                          metadata.put("timestamp", event.timestamp());
-                          metadata.put("content", part.text().get());
-                          Vector vector =
-                              new Vector(
-                                  UUID.randomUUID().toString(),
-                                  part.text().get(),
-                                  embedding,
-                                  metadata);
-                          vectorStore.insertVector(vector);
-                        });
-              }
-            }
-          }
-        });
+    return Completable.concat(
+        Flowable.fromStream(session.events().stream())
+            .filter(
+                event -> event.content().isPresent() && !event.content().get().parts().isEmpty())
+            .concatMap(
+                event ->
+                    Flowable.fromStream(event.content().get().parts().get().stream())
+                        .filter(part -> part.text().isPresent())
+                        .map(part -> processPart(session, event, part)))
+            .collect(ImmutableList.toImmutableList())
+            .blockingGet());
+  }
+
+  private Completable processPart(Session session, Event event, Part part) {
+    return embeddingService
+        .generateEmbedding(part.text().get())
+        .flatMapCompletable(
+            embedding ->
+                Completable.fromAction(
+                    () -> {
+                      Map<String, Object> metadata = new HashMap<>();
+                      metadata.put("appName", session.appName());
+                      metadata.put("userId", session.userId());
+                      metadata.put("author", event.author());
+                      metadata.put("timestamp", event.timestamp());
+                      metadata.put("content", part.text().get());
+                      Vector vector =
+                          new Vector(
+                              UUID.randomUUID().toString(), part.text().get(), embedding, metadata);
+                      vectorStore.insertVector(vector);
+                    }));
   }
 
   @Override
