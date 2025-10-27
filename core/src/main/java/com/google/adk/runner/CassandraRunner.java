@@ -20,6 +20,7 @@ import com.datastax.oss.driver.api.core.CqlSessionBuilder;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.artifacts.CassandraArtifactService;
 import com.google.adk.memory.CassandraMemoryService;
+import com.google.adk.memory.RedbusEmbeddingService;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.CassandraSessionService;
 import com.google.adk.store.CassandraHelper;
@@ -98,7 +99,8 @@ public class CassandraRunner extends Runner {
         appName,
         initArtifactService(sessionBuilder),
         new CassandraSessionService(),
-        new CassandraMemoryService(CassandraHelper.getSession(), "rae", "rae_data"),
+        new CassandraMemoryService(
+            CassandraHelper.getSession(), "rae", "rae_data", new RedbusEmbeddingService("", "")),
         plugins);
   }
 

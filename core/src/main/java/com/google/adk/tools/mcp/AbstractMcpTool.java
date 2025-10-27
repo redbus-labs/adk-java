@@ -28,6 +28,7 @@ import io.modelcontextprotocol.spec.McpSchema.Content;
 import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
+import io.modelcontextprotocol.spec.McpSchema.ToolAnnotations;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +70,14 @@ public abstract class AbstractMcpTool<T> extends BaseTool {
     this.mcpSession = mcpSession;
     this.mcpSessionManager = mcpSessionManager;
     this.objectMapper = objectMapper;
+  }
+
+  public ToolAnnotations annotations() {
+    return mcpTool.annotations();
+  }
+
+  public Map<String, Object> meta() {
+    return mcpTool.meta();
   }
 
   public T getMcpSession() {

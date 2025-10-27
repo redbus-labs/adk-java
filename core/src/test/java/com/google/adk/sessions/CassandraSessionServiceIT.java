@@ -33,6 +33,12 @@ import org.testcontainers.containers.CassandraContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+/**
+ * Integration tests for {@link CassandraSessionService}.
+ *
+ * @author Sandeep Belgavi
+ * @since 2025-10-21
+ */
 @Testcontainers
 public class CassandraSessionServiceIT {
 
@@ -121,5 +127,24 @@ public class CassandraSessionServiceIT {
 
     List<Session> sessions = sessionService.listSessions(appName, userId).blockingGet().sessions();
     assertThat(sessions).hasSize(2);
+  }
+
+  @Test
+  public void testListEvents() {
+    String appName = "testApp";
+    String userId = "testUserListEvents";
+
+    Session session = sessionService.createSession(appName, userId, null, null).blockingGet();
+    Event event1 = Event.builder().timestamp(12345L).author("user").build();
+    Event event2 = Event.builder().timestamp(67890L).author("assistant").build();
+
+    sessionService.appendEvent(session, event1).blockingGet();
+    sessionService.appendEvent(session, event2).blockingGet();
+
+    List<Event> events =
+        sessionService.listEvents(appName, userId, session.id()).blockingGet().events();
+    assertThat(events).hasSize(2);
+    assertThat(events.get(0).author()).isEqualTo("user");
+    assertThat(events.get(1).author()).isEqualTo("assistant");
   }
 }

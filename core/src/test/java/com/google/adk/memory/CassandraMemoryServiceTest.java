@@ -18,59 +18,94 @@ package com.google.adk.memory;
 
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.google.adk.events.Event;
+import com.google.adk.sessions.Session;
 import com.google.adk.tools.retrieval.CassandraRagRetrieval;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.genai.types.Content;
+import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Single;
+import java.util.Arrays;
 import java.util.List;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import java.util.stream.Collectors;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 /**
- * Tests for {@link CassandraMemoryService}.
+ * Unit tests for {@link CassandraMemoryService}.
  *
  * @author Sandeep Belgavi
- * @since 2025-10-19
+ * @since 2025-10-21
  */
-@RunWith(JUnit4.class)
-public final class CassandraMemoryServiceTest {
+public class CassandraMemoryServiceTest {
 
-  @Mock private CqlSession session;
-  @Mock private CassandraRagRetrieval cassandraRagRetrieval;
-
+  private CassandraRagRetrieval mockCassandraRagRetrieval;
+  private EmbeddingService mockEmbeddingService;
   private CassandraMemoryService memoryService;
 
-  @Before
+  @BeforeEach
   public void setUp() {
-    MockitoAnnotations.initMocks(this);
-    memoryService = new CassandraMemoryService(cassandraRagRetrieval);
+    mockCassandraRagRetrieval = mock(CassandraRagRetrieval.class);
+    mockEmbeddingService = mock(EmbeddingService.class);
+    memoryService = new CassandraMemoryService(mockCassandraRagRetrieval, mockEmbeddingService);
+  }
+
+  @Test
+  public void testAddSessionToMemory() {
+    Session session =
+        Session.builder("testSession")
+            .appName("testApp")
+            .userId("testUser")
+            .events(
+                List.of(
+                    Event.builder()
+                        .timestamp(1L)
+                        .author("user")
+                        .content(
+                            Content.builder().parts(List.of(Part.fromText("hello world"))).build())
+                        .build()))
+            .build();
+    double[] embedding = new double[] {1.0, 2.0, 3.0};
+    CqlSession mockCqlSession = mock(CqlSession.class);
+
+    when(mockEmbeddingService.generateEmbedding("hello world")).thenReturn(Single.just(embedding));
+    when(mockCassandraRagRetrieval.getSession()).thenReturn(mockCqlSession);
+    when(mockCassandraRagRetrieval.getKeyspace()).thenReturn("testKeyspace");
+    when(mockCassandraRagRetrieval.getTable()).thenReturn("testTable");
+
+    memoryService.addSessionToMemory(session).blockingAwait();
+
+    verify(mockCqlSession)
+        .execute(
+            "INSERT INTO testKeyspace.testTable (client_id, session_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, ?)",
+            "testApp",
+            "testSession",
+            "hello world",
+            Arrays.stream(embedding).mapToObj(d -> (float) d).collect(Collectors.toList()));
   }
 
   @Test
   public void testSearchMemory() {
-    // Arrange
-    String query = "test query";
-    List<String> expectedContexts = ImmutableList.of("test context");
-    when(cassandraRagRetrieval.runAsync(eq(ImmutableMap.of("query", query)), any()))
-        .thenReturn(Single.just(ImmutableMap.of("response", expectedContexts)));
+    String appName = "testApp";
+    String userId = "testUser";
+    String query = "hello";
+    double[] embedding = new double[] {1.0, 2.0, 3.0};
+    List<String> contexts = List.of("hello world");
 
-    // Act
+    when(mockEmbeddingService.generateEmbedding(query)).thenReturn(Single.just(embedding));
+    when(mockCassandraRagRetrieval.runAsync(any(), any()))
+        .thenReturn(Single.just(ImmutableMap.of("response", contexts)));
+
     SearchMemoryResponse response =
-        memoryService.searchMemory("test_app", "test_user", query).blockingGet();
+        memoryService.searchMemory(appName, userId, query).blockingGet();
 
-    // Assert
-    assertThat(
-            response.memories().stream()
-                .map(memory -> memory.content().parts().get().get(0).text().get())
-                .collect(ImmutableList.toImmutableList()))
-        .isEqualTo(expectedContexts);
+    assertThat(response.memories()).hasSize(1);
+    assertThat(response.memories().get(0).content().parts().get().get(0).text().get())
+        .isEqualTo("hello world");
   }
 }
