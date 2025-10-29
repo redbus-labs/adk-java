@@ -52,6 +52,8 @@ public abstract class RunConfig {
 
   public abstract int maxLlmCalls();
 
+  public abstract Builder toBuilder();
+
   public static Builder builder() {
     return new AutoValue_RunConfig.Builder()
         .setSaveInputBlobsAsArtifacts(false)
