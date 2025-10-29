@@ -158,53 +158,26 @@ public abstract class LlmRequest extends JsonBaseModel {
       if (instructions.isEmpty()) {
         return this;
       }
-      GenerateContentConfig config = config().orElse(GenerateContentConfig.builder().build());
+
+      // Update GenerateContentConfig
+      GenerateContentConfig cfg = config().orElseGet(() -> GenerateContentConfig.builder().build());
+      Content newCfgSi = addInstructions(cfg.systemInstruction(), instructions);
+      config(cfg.toBuilder().systemInstruction(newCfgSi).build());
+
+      // Update LiveConnectConfig
+      LiveConnectConfig liveCfg = liveConnectConfig();
+      Content newLiveSi = addInstructions(liveCfg.systemInstruction(), instructions);
+      return liveConnectConfig(liveCfg.toBuilder().systemInstruction(newLiveSi).build());
+    }
+
+    private Content addInstructions(Optional<Content> currentSi, List<String> newInst) {
       ImmutableList.Builder<Part> parts = ImmutableList.builder();
-      if (config.systemInstruction().isPresent()) {
-        parts.addAll(config.systemInstruction().get().parts().orElse(ImmutableList.of()));
-      }
-      parts.addAll(
-          instructions.stream()
-              .map(instruction -> Part.builder().text(instruction).build())
-              .collect(toImmutableList()));
-      config(
-          config.toBuilder()
-              .systemInstruction(
-                  Content.builder()
-                      .parts(parts.build())
-                      .role(
-                          config
-                              .systemInstruction()
-                              .map(c -> c.role().orElse("user"))
-                              .orElse("user"))
-                      .build())
-              .build());
+      currentSi.flatMap(Content::parts).ifPresent(parts::addAll);
 
-      LiveConnectConfig liveConfig = liveConnectConfig();
-      ImmutableList.Builder<Part> livePartsBuilder = ImmutableList.builder();
+      newInst.stream().map(Part::fromText).forEach(parts::add);
 
-      if (liveConfig.systemInstruction().isPresent()) {
-        livePartsBuilder.addAll(
-            liveConfig.systemInstruction().get().parts().orElse(ImmutableList.of()));
-      }
-
-      livePartsBuilder.addAll(
-          instructions.stream()
-              .map(instruction -> Part.builder().text(instruction).build())
-              .collect(toImmutableList()));
-
-      return liveConnectConfig(
-          liveConfig.toBuilder()
-              .systemInstruction(
-                  Content.builder()
-                      .parts(livePartsBuilder.build())
-                      .role(
-                          liveConfig
-                              .systemInstruction()
-                              .map(c -> c.role().orElse("user"))
-                              .orElse("user"))
-                      .build())
-              .build());
+      String role = currentSi.flatMap(Content::role).orElse("user");
+      return Content.builder().parts(parts.build()).role(role).build();
     }
 
     @CanIgnoreReturnValue

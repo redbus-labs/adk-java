@@ -28,7 +28,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.google.adk.Telemetry;
 import com.google.adk.agents.InvocationContext;
+import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
@@ -44,12 +46,19 @@ import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.Part;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.sdk.testing.junit4.OpenTelemetryRule;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -57,6 +66,7 @@ import org.mockito.ArgumentCaptor;
 
 @RunWith(JUnit4.class)
 public final class RunnerTest {
+  @Rule public final OpenTelemetryRule openTelemetryRule = OpenTelemetryRule.create();
 
   private final BasePlugin plugin = mockPlugin("test");
   private final Content pluginContent = createContent("from plugin");
@@ -65,6 +75,7 @@ public final class RunnerTest {
   private final Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
   private final Session session =
       runner.sessionService().createSession("test", "user").blockingGet();
+  private Tracer originalTracer;
 
   private final FailingEchoTool failingEchoTool = new FailingEchoTool();
   private final EchoTool echoTool = new EchoTool();
@@ -92,6 +103,17 @@ public final class RunnerTest {
     BasePlugin plugin = mock(BasePlugin.class, CALLS_REAL_METHODS);
     when(plugin.getName()).thenReturn(name);
     return plugin;
+  }
+
+  @Before
+  public void setUp() {
+    this.originalTracer = Telemetry.getTracer();
+    Telemetry.setTracerForTesting(openTelemetryRule.getOpenTelemetry().getTracer("RunnerTest"));
+  }
+
+  @After
+  public void tearDown() {
+    Telemetry.setTracerForTesting(originalTracer);
   }
 
   @Test
@@ -605,5 +627,35 @@ public final class RunnerTest {
 
   private Content createContent(String text) {
     return Content.builder().parts(Part.builder().text(text).build()).build();
+  }
+
+  @Test
+  public void runAsync_createsInvocationSpan() {
+    var unused =
+        runner.runAsync("user", session.id(), createContent("test message")).toList().blockingGet();
+
+    List<SpanData> spans = openTelemetryRule.getSpans();
+    assertThat(spans).isNotEmpty();
+
+    Optional<SpanData> invocationSpan =
+        spans.stream().filter(span -> Objects.equals(span.getName(), "invocation")).findFirst();
+
+    assertThat(invocationSpan).isPresent();
+    assertThat(invocationSpan.get().hasEnded()).isTrue();
+  }
+
+  @Test
+  public void runLive_createsInvocationSpan() {
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+    var unused = runner.runLive(session, liveRequestQueue, RunConfig.builder().build()).test();
+
+    List<SpanData> spans = openTelemetryRule.getSpans();
+    assertThat(spans).isNotEmpty();
+
+    Optional<SpanData> invocationSpan =
+        spans.stream().filter(span -> Objects.equals(span.getName(), "invocation")).findFirst();
+
+    assertThat(invocationSpan).isPresent();
+    assertThat(invocationSpan.get().hasEnded()).isTrue();
   }
 }
