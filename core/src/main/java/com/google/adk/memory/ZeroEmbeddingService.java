@@ -33,9 +33,11 @@ import java.util.stream.Collectors;
 /**
  * A placeholder implementation of the EmbeddingService that returns a vector basis given
  * vocabulary.
- * 
- * If the original embedding is larger than the target dimension, I will implement a new compression method. This method will divide the embedding array into dimension number of chunks
-          and then calculate the average of the values in each chunk. The result will be a new, compressed array of the correct dimension.
+ *
+ * <p>If the original embedding is larger than the target dimension, I will implement a new
+ * compression method. This method will divide the embedding array into dimension number of chunks
+ * and then calculate the average of the values in each chunk. The result will be a new, compressed
+ * array of the correct dimension.
  */
 public class ZeroEmbeddingService implements EmbeddingService {
 
