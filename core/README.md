@@ -110,3 +110,257 @@ select * from event_content_parts ecp
 delete from  sessions where id ='asasawe11'
 This will take care of deleting from all other table in case needed.
 
+--------------------------------------------------------------------------------
+
+## 🚀 Kafka Consumer for Event Processing
+
+The ADK includes a Kafka consumer service that reads adk events from Kafka and persists them to PostgreSQL database.
+
+### Prerequisites for Kafka Consumer
+
+1. **Environment Variables**: Set the following environment variables:
+   ```bash
+   export DBURL="your_database_url"
+   export DBUSER="your_database_username" 
+   export DBPASSWORD="your_database_password"
+   ```
+
+2. **Kafka Brokers**: Ensure Kafka brokers are running and accessible
+
+3. **Database Tables**: The required tables (`sessions`, `events`, `event_content_parts`) should already exist from the setup above
+
+### Configuration
+
+The consumer reads configuration from `config.ini`:
+```ini
+[production]
+kafkaBrokerAddress=localhost:9092,localhost:9093,localhost:9094
+kafka_topic=adk-event
+kafka_consumer_group=adk-event-consumer-group
+```
+
+### Running the Kafka Consumer
+
+#### Method 1: Using Maven Exec Plugin (Recommended)
+```bash
+cd /path/to/adk-java
+mvn exec:java -Dexec.mainClass="com.google.adk.kafka.consumer.KafkaConsumerRunner" -pl core
+```
+
+#### Method 2: With Custom Configuration
+```bash
+cd /path/to/adk-java
+mvn exec:java -Dexec.mainClass="com.google.adk.kafka.consumer.KafkaConsumerRunner" -pl core -Dexec.args="/path/to/config.ini production"
+```
+
+#### Method 3: Compile and Run JAR
+```bash
+# Compile the project
+cd /path/to/adk-java
+mvn clean compile -pl core
+
+# Run the compiled classes
+java -cp "core/target/classes:core/target/dependency/*" com.google.adk.kafka.consumer.KafkaConsumerRunner
+```
+
+### What the Consumer Does
+
+1. **Connects** to Kafka brokers specified in config
+2. **Subscribes** to the `adk-event` topic
+3. **Processes** incoming messages with `business_event = "adk-event"`
+4. **Stores** data in PostgreSQL:
+   - Session data in `sessions` table
+   - Event data in `events` table  
+   - Event content parts in `event_content_parts` table
+5. **Handles** errors gracefully and continues processing
+6. **Logs** all activities and errors
+
+### Expected Output
+
+When running successfully, you should see logs like:
+```
+[INFO] Starting Kafka Consumer Runner...
+[INFO] Loading properties from: /path/to/adk-java/core/config.ini with environment: production
+[INFO] Kafka consumer configuration loaded - Broker: localhost:9092,localhost:9093,localhost:9094, Topic: self_help_chat_events, Group: adk-event-consumer-group
+[INFO] Consumer service initialized: KafkaConsumerService{broker='localhost:9092,localhost:9093,localhost:9094', topic='self_help_chat_events', group='adk-event-consumer-group', running=false}
+[INFO] Kafka consumer service started successfully
+[INFO] Kafka consumer is running. Press Ctrl+C to stop.
+[INFO] Starting Kafka consumer loop
+```
+
+### Stopping the Consumer
+
+- Press `Ctrl+C` to gracefully stop the consumer
+- The consumer will finish processing current messages and then stop
+
+### Troubleshooting
+
+1. **Properties not loaded**: Ensure `config.ini` exists and is readable
+2. **Database connection failed**: Check environment variables and database connectivity
+3. **Kafka connection failed**: Verify Kafka brokers are running and accessible
+4. **JSON parsing errors**: Check that incoming messages match expected format
+
+### Monitoring
+
+The consumer logs all activities including:
+- Message processing success/failure
+- Database operations
+- Configuration loading
+- Error conditions
+
+Check the logs to monitor consumer health and performance.
+
+### Kafka Consumer Architecture
+
+```
+Kafka Topic (adk_event)
+    ↓
+KafkaConsumerService
+    ↓
+KafkaEventRepository
+    ↓
+PostgreSQL Database
+    ├── sessions table
+    ├── events table
+    └── event_content_parts table
+```
+
+The consumer processes events in real-time and maintains data consistency across all three database tables.
+
+--------------------------------------------------------------------------------
+
+## 🏗️ Multi-Tier Architecture Support
+
+The ADK supports a multi-tier architecture with optional Redis caching and Kafka event streaming capabilities.
+
+### Architecture Overview
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Application   │    │   PostgreSQL    │    │     Redis       │
+│                 │───▶│   Database      │    │     Cache        │
+│                 │    │                 │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Kafka Event   │    │   Event Data    │    │   Fast Session  │
+│   Streaming     │    │   Persistence   │    │   Retrieval     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### Redis Caching Layer
+
+Redis provides fast session caching for improved performance:
+
+**Configuration:**
+```ini
+[production]
+use_redis=true
+redis_uri=redis://localhost:6379
+```
+
+**Benefits:**
+- **Fast Session Retrieval**: Cached sessions reduce database load
+- **Scalability**: Handle high-frequency session access
+- **Performance**: Sub-millisecond response times for cached data
+
+**How it works:**
+1. Session data is written to both PostgreSQL and Redis
+2. Frequent reads are served from Redis cache
+3. Cache miss falls back to PostgreSQL database
+4. Automatic cache invalidation on session updates
+
+### Kafka Event Streaming
+
+Kafka enables real-time event streaming for downstream consumers:
+
+**Configuration:**
+```ini
+[production]
+use_kafka=true
+kafkaBrokerAddress=localhost:9092,localhost:9093,localhost:9094
+kafkaTopic=adk-event
+```
+
+**Benefits:**
+- **Real-time Processing**: Events are streamed immediately
+- **Decoupling**: Downstream systems can process events independently
+- **Scalability**: Handle high-volume event streams
+- **Reliability**: Message persistence and delivery guarantees
+
+**Event Flow:**
+1. Session events are captured in real-time
+2. Events are published to Kafka topics
+3. Multiple consumers can process events independently
+4. Event processing is asynchronous and non-blocking
+
+### Configuration Options
+
+**Full Multi-Tier Setup:**
+```ini
+[production]
+# Database
+db_url=jdbc:postgresql://localhost:5432/adk_db
+db_user=postgres
+db_password=postgres
+
+# Redis Caching
+use_redis=true
+redis_uri=redis://localhost:6379
+
+# Kafka Streaming
+use_kafka=true
+kafkaBrokerAddress=localhost:9092,localhost:9093,localhost:9094
+kafkaTopic=adk-event
+
+# Consumer Configuration
+kafka_topic=adk-event
+kafka_consumer_group=adk-event-consumer-group
+```
+
+**PostgreSQL Only (Minimal Setup):**
+```ini
+[production]
+# Database only
+db_url=jdbc:postgresql://localhost:5432/adk_db
+db_user=postgres
+db_password=postgres
+
+# Disable optional features
+use_redis=false
+use_kafka=false
+```
+
+### Performance Benefits
+
+| Feature | PostgreSQL Only | With Redis | With Kafka | Full Stack |
+|---------|------------------|------------|------------|------------|
+| Session Read | ~10ms | ~1ms | ~10ms | ~1ms |
+| Session Write | ~5ms | ~5ms | ~5ms | ~5ms |
+| Event Processing | Synchronous | Synchronous | Asynchronous | Asynchronous |
+| Scalability | Limited | High | High | Very High |
+| Reliability | High | High | High | Very High |
+
+### Use Cases
+
+**Redis Caching:**
+- High-frequency session access
+- Real-time applications
+- Performance-critical systems
+- Reduced database load
+
+**Kafka Streaming:**
+- Event-driven architectures
+- Microservices communication
+- Real-time analytics
+- Audit logging
+- Integration with external systems
+
+**Combined Benefits:**
+- **High Performance**: Fast reads from Redis
+- **Real-time Processing**: Event streaming via Kafka
+- **Data Persistence**: Reliable storage in PostgreSQL
+- **Scalability**: Handle growing workloads
+- **Flexibility**: Enable/disable features as needed
