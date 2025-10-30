@@ -364,3 +364,251 @@ use_kafka=false
 - **Data Persistence**: Reliable storage in PostgreSQL
 - **Scalability**: Handle growing workloads
 - **Flexibility**: Enable/disable features as needed
+
+--------------------------------------------------------------------------------
+
+## 📚 Using ADK Core as a Library
+
+The ADK Core module can be used as a dependency in other Java projects. This section explains how to integrate it and handle configuration.
+
+### Maven Dependency
+
+Add the ADK Core dependency to your project's `pom.xml`:
+
+```xml
+<dependency>
+    <groupId>com.google.adk</groupId>
+    <artifactId>google-adk</artifactId>
+    <version>0.3.1-SNAPSHOT</version>
+</dependency>
+```
+
+### Configuration Options
+
+The ADK Core library supports multiple configuration methods for maximum flexibility:
+
+#### Option 1: Configuration File (Recommended)
+
+Place a `config.ini` file in your project's classpath:
+
+**File: `src/main/resources/config.ini`**
+```ini
+[production]
+# Database Configuration
+db_url=jdbc:postgresql://localhost:5432/your_database
+db_user=your_username
+db_password=your_password
+
+# Redis Configuration (Optional)
+use_redis=true
+redis_uri=redis://localhost:6379
+
+# Kafka Configuration (Optional)
+use_kafka=true
+kafkaBrokerAddress=localhost:9092
+kafka_topic=your-topic
+kafka_consumer_group=your-consumer-group
+```
+
+#### Option 2: Environment Variables
+
+Set environment variables in your system or application:
+
+```bash
+# Database
+export DB_URL=jdbc:postgresql://localhost:5432/your_database
+export DB_USER=your_username
+export DB_PASSWORD=your_password
+
+# Redis (Optional)
+export USE_REDIS=true
+export REDIS_URI=redis://localhost:6379
+
+# Kafka (Optional)
+export USE_KAFKA=true
+export KAFKABROKERADDRESS=localhost:9092
+export KAFKA_TOPIC=your-topic
+export KAFKA_CONSUMER_GROUP=your-consumer-group
+```
+
+#### Option 3: System Properties
+
+Set system properties when starting your application:
+
+```bash
+java -Ddb_url=jdbc:postgresql://localhost:5432/your_database \
+     -Ddb_user=your_username \
+     -Ddb_password=your_password \
+     -Duse_redis=true \
+     -Dredis_uri=redis://localhost:6379 \
+     -jar your-application.jar
+```
+
+### Usage Examples
+
+#### Basic Usage with Auto-Configuration
+
+```java
+import com.google.adk.utils.PropertiesHelper;
+import com.google.adk.utils.PostgresDBHelper;
+
+public class MyApplication {
+    public static void main(String[] args) {
+        // The library will automatically try to load config.ini from classpath
+        // or fall back to environment variables
+        PropertiesHelper helper = PropertiesHelper.getInstance();
+        
+        // Use the database helper
+        try {
+            Connection conn = PostgresDBHelper.getInstance().getConnection();
+            // Your database operations here
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+#### Explicit Configuration Loading
+
+```java
+import com.google.adk.utils.PropertiesHelper;
+
+public class MyApplication {
+    public static void main(String[] args) {
+        // Explicitly load configuration
+        PropertiesHelper.loadProperties("config.ini", "production");
+        
+        // Now you can use any ADK components
+        PropertiesHelper helper = PropertiesHelper.getInstance();
+        String dbUrl = helper.getValue("db_url");
+        System.out.println("Database URL: " + dbUrl);
+    }
+}
+```
+
+#### Using Kafka Consumer
+
+```java
+import com.google.adk.kafka.consumer.KafkaConsumerService;
+import com.google.adk.utils.PropertiesHelper;
+
+public class MyKafkaApp {
+    public static void main(String[] args) {
+        // Load configuration
+        PropertiesHelper.loadProperties("config.ini", "production");
+        
+        // Start Kafka consumer
+        KafkaConsumerService consumer = new KafkaConsumerService();
+        consumer.start();
+        
+        // Keep running
+        Runtime.getRuntime().addShutdownHook(new Thread(consumer::stop));
+    }
+}
+```
+
+### Configuration Priority
+
+The library follows this priority order for configuration:
+
+1. **INI File** (if found in classpath or filesystem)
+2. **Environment Variables** (uppercase with underscores)
+3. **System Properties** (as fallback)
+
+### Environment Variable Naming
+
+The library automatically converts property names to environment variable patterns:
+
+| Property Key | Environment Variable Patterns |
+|--------------|------------------------------|
+| `db_url` | `DB_URL`, `DBURL` |
+| `use_redis` | `USE_REDIS`, `USEREDIS` |
+| `kafkaBrokerAddress` | `KAFKABROKERADDRESS`, `KAFKA_BROKER_ADDRESS` |
+
+### Troubleshooting
+
+#### "PropertiesHelper not initialized" Error
+
+This error occurs when the library can't find any configuration. Solutions:
+
+1. **Add config.ini to classpath**: Place `config.ini` in `src/main/resources/`
+2. **Set environment variables**: Export required environment variables
+3. **Explicit initialization**: Call `PropertiesHelper.loadProperties()` before using
+
+#### Configuration Not Found
+
+If your configuration isn't being loaded:
+
+1. **Check file location**: Ensure `config.ini` is in the classpath
+2. **Verify environment variables**: Use `echo $VARIABLE_NAME` to check
+3. **Enable debug logging**: Set log level to DEBUG to see loading attempts
+4. **Check property names**: Ensure property keys match exactly
+
+#### Example Debug Setup
+
+```java
+// Enable debug logging to see configuration loading
+System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "debug");
+
+// Try loading with explicit path
+PropertiesHelper.loadProperties("src/main/resources/config.ini", "production");
+```
+
+### Best Practices
+
+1. **Use configuration files** for development and testing
+2. **Use environment variables** for production deployments
+3. **Validate configuration** at application startup
+4. **Provide sensible defaults** for optional features
+5. **Use the `getValue(key, defaultValue)` method** for optional properties
+
+### Example Complete Setup
+
+**Project Structure:**
+```
+your-project/
+├── pom.xml
+├── src/
+│   └── main/
+│       ├── java/
+│       │   └── com/yourcompany/
+│       │       └── MyApp.java
+│       └── resources/
+│           └── config.ini
+```
+
+**config.ini:**
+```ini
+[production]
+db_url=jdbc:postgresql://localhost:5432/myapp_db
+db_user=myapp_user
+db_password=secure_password
+use_redis=true
+redis_uri=redis://localhost:6379
+```
+
+**MyApp.java:**
+```java
+package com.yourcompany;
+
+import com.google.adk.utils.PropertiesHelper;
+import com.google.adk.utils.PostgresDBHelper;
+
+public class MyApp {
+    public static void main(String[] args) {
+        // Configuration is auto-loaded from classpath
+        PropertiesHelper config = PropertiesHelper.getInstance();
+        
+        // Use ADK components
+        try {
+            Connection conn = PostgresDBHelper.getInstance().getConnection();
+            System.out.println("Connected to database successfully!");
+        } catch (Exception e) {
+            System.err.println("Database connection failed: " + e.getMessage());
+        }
+    }
+}
+```
+
+This setup allows you to use the ADK Core library in any Java project with flexible configuration options.
