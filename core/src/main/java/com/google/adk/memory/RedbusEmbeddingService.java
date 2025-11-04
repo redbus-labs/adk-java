@@ -70,6 +70,7 @@ public class RedbusEmbeddingService implements EmbeddingService {
           requestBody.put("username", this.username);
           JSONObject requestObject = new JSONObject();
           requestObject.put("input", text);
+          requestObject.put("model", "text-embedding-3-small");
           requestBody.put("request", requestObject);
           requestBody.put("password", this.password);
           requestBody.put("api", this.api);
@@ -93,6 +94,7 @@ public class RedbusEmbeddingService implements EmbeddingService {
             for (int i = 0; i < embedding.length(); i++) {
               embeddingArray[i] = embedding.getDouble(i);
             }
+            System.out.println("Embedding dimension: " + embeddingArray.length);
             return embeddingArray;
           }
         });

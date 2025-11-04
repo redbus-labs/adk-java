@@ -83,7 +83,7 @@ public final class CassandraRagRetrievalTest {
             "embedding");
 
     String expectedCql =
-        "SELECT client_id, similarity_cosine(embedding, ?) as score, data FROM"
+        "SELECT agent_name, similarity_cosine(embedding, ?) as score, data FROM"
             + " test_keyspace.test_table"
             + " ORDER BY embedding ANN OF ? LIMIT ?";
 
@@ -93,7 +93,7 @@ public final class CassandraRagRetrievalTest {
 
     String expectedData = "{\"key\":\"value\"}";
 
-    when(row.getString("client_id")).thenReturn(expectedId);
+    when(row.getString("agent_name")).thenReturn(expectedId);
 
     when(row.getFloat("score")).thenReturn(expectedScore);
 
@@ -115,7 +115,7 @@ public final class CassandraRagRetrievalTest {
 
     assertThat(response).hasSize(1);
 
-    assertThat(response.get(0)).containsEntry("client_id", expectedId);
+    assertThat(response.get(0)).containsEntry("agent_name", expectedId);
 
     assertThat(response.get(0)).containsEntry("score", expectedScore);
 
@@ -145,7 +145,7 @@ public final class CassandraRagRetrievalTest {
             "embedding");
 
     String expectedCql =
-        "SELECT client_id, similarity_cosine(embedding, ?) as score, data FROM"
+        "SELECT agent_name, similarity_cosine(embedding, ?) as score, data FROM"
             + " test_keyspace.test_table"
             + " ORDER BY embedding ANN OF ? LIMIT ?";
 
@@ -155,7 +155,7 @@ public final class CassandraRagRetrievalTest {
 
     String expectedData = "{\"key\":\"value\"}";
 
-    when(row.getString("client_id")).thenReturn(expectedId);
+    when(row.getString("agent_name")).thenReturn(expectedId);
 
     when(row.getFloat("score")).thenReturn(expectedScore);
 

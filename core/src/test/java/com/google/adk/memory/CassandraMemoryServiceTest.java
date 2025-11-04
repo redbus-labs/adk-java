@@ -23,6 +23,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.data.CqlVector;
 import com.google.adk.events.Event;
 import com.google.adk.sessions.Session;
 import com.google.adk.tools.retrieval.CassandraRagRetrieval;
@@ -80,13 +81,18 @@ public class CassandraMemoryServiceTest {
 
     memoryService.addSessionToMemory(session).blockingAwait();
 
+    // Create the expected CqlVector for verification
+    List<Float> floatList =
+        Arrays.stream(embedding).mapToObj(d -> (float) d).collect(Collectors.toList());
+    CqlVector<Float> expectedVector = CqlVector.newInstance(floatList);
+
     verify(mockCqlSession)
         .execute(
-            "INSERT INTO testKeyspace.testTable (client_id, session_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, ?)",
+            "INSERT INTO testKeyspace.testTable (agent_name, user_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, ?)",
             "testApp",
             "testSession",
             "hello world",
-            Arrays.stream(embedding).mapToObj(d -> (float) d).collect(Collectors.toList()));
+            expectedVector);
   }
 
   @Test
@@ -95,7 +101,8 @@ public class CassandraMemoryServiceTest {
     String userId = "testUser";
     String query = "hello";
     double[] embedding = new double[] {1.0, 2.0, 3.0};
-    List<String> contexts = List.of("hello world");
+    List<ImmutableMap<String, Object>> contexts =
+        List.of(ImmutableMap.of("agent_name", "testApp", "score", 0.9f, "data", "hello world"));
 
     when(mockEmbeddingService.generateEmbedding(query)).thenReturn(Single.just(embedding));
     when(mockCassandraRagRetrieval.runAsync(any(), any()))

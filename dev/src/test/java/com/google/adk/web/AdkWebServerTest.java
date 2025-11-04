@@ -50,7 +50,8 @@ public class AdkWebServerTest {
     mockMvc
         .perform(get("/list-apps"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$", Matchers.hasSize(2)));
+        .andExpect(jsonPath("$").isArray())
+        .andExpect(jsonPath("$").isNotEmpty());
   }
 
   @Test

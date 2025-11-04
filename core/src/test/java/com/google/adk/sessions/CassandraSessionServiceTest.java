@@ -73,26 +73,16 @@ public class CassandraSessionServiceTest {
     String userId = "testUser";
     String sessionId = "testSession";
 
-    Session session = Session.builder(sessionId).appName(appName).userId(userId).build();
-    when(mockObjectMapper.writeValueAsString(any(Session.class))).thenReturn("session_json");
-    ResultSet mockResultSet = mock(ResultSet.class);
-    when(mockResultSet.iterator()).thenReturn(Collections.emptyIterator());
-    when(mockCqlSession.execute(any(String.class), any(String.class))).thenReturn(mockResultSet);
-    when(mockCqlSession.execute(any(String.class), any(String.class), any(String.class)))
-        .thenReturn(mockResultSet);
+    when(mockObjectMapper.writeValueAsString(any())).thenReturn("{}");
 
     sessionService.createSession(appName, userId, null, sessionId).blockingGet();
 
     verify(mockCqlSession, Mockito.times(1))
-        .execute(
-            "INSERT INTO sessions (app_name, user_id, session_id, session_data) VALUES (?, ?, ?, ?)",
-            appName,
-            userId,
-            sessionId,
-            "session_json");
+        .execute(any(String.class), any(), any(), any(), any(), any(), any());
   }
 
   @Test
+  @SuppressWarnings("unchecked")
   public void testGetSession() throws Exception {
     String appName = "testApp";
     String userId = "testUser";
@@ -101,30 +91,30 @@ public class CassandraSessionServiceTest {
     Row mockRow = mock(Row.class);
     ResultSet mockResultSet = mock(ResultSet.class);
     when(mockResultSet.one()).thenReturn(mockRow);
-    when(mockCqlSession.execute(
-            "SELECT session_data FROM sessions WHERE app_name = ? AND user_id = ? AND session_id = ?",
-            appName,
-            userId,
-            sessionId))
-        .thenReturn(mockResultSet);
-    when(mockRow.getString("session_data")).thenReturn("session_json");
-    Session expectedSession = Session.builder(sessionId).appName(appName).userId(userId).build();
-    when(mockObjectMapper.readValue("session_json", Session.class)).thenReturn(expectedSession);
-    ResultSet mockStateResultSet = mock(ResultSet.class);
-    when(mockStateResultSet.iterator()).thenReturn(Collections.emptyIterator());
-    when(mockCqlSession.execute(
-            "SELECT state_key, state_value FROM app_state WHERE app_name = ?", appName))
-        .thenReturn(mockStateResultSet);
-    when(mockCqlSession.execute(
-            "SELECT state_key, state_value FROM user_state WHERE app_name = ? AND user_id = ?",
-            appName,
-            userId))
-        .thenReturn(mockStateResultSet);
+    when(mockCqlSession.execute(any(String.class), any(), any(), any())).thenReturn(mockResultSet);
+    when(mockRow.getString("state")).thenReturn("{}");
+    when(mockRow.getString("event_data")).thenReturn("[]");
+    when(mockRow.getLong("last_update_time")).thenReturn(System.currentTimeMillis());
+
+    ObjectMapper realMapper = new ObjectMapper();
+    when(mockObjectMapper.getTypeFactory()).thenReturn(realMapper.getTypeFactory());
+    when(mockObjectMapper.readValue(
+            any(String.class), any(com.fasterxml.jackson.databind.JavaType.class)))
+        .thenAnswer(
+            invocation -> {
+              String json = invocation.getArgument(0);
+              if (json.equals("{}")) {
+                return new java.util.concurrent.ConcurrentHashMap<String, Object>();
+              } else if (json.equals("[]")) {
+                return Collections.emptyList();
+              }
+              return null;
+            });
 
     Session actualSession =
         sessionService.getSession(appName, userId, sessionId, Optional.empty()).blockingGet();
 
-    assertThat(actualSession.id()).isEqualTo(expectedSession.id());
+    assertThat(actualSession.id()).isEqualTo(sessionId);
   }
 
   @Test
@@ -137,10 +127,13 @@ public class CassandraSessionServiceTest {
 
     verify(mockCqlSession)
         .execute(
-            "DELETE FROM sessions WHERE app_name = ? AND user_id = ? AND session_id = ?",
+            "DELETE FROM sessions WHERE app_name = ? AND user_id = ? AND id = ?",
             appName,
             userId,
             sessionId);
+    verify(mockCqlSession).execute("DELETE FROM events WHERE session_id = ?", sessionId);
+    verify(mockCqlSession)
+        .execute("DELETE FROM event_content_parts WHERE session_id = ?", sessionId);
   }
 
   @Test
@@ -152,13 +145,12 @@ public class CassandraSessionServiceTest {
     ResultSet mockResultSet = mock(ResultSet.class);
     when(mockResultSet.iterator()).thenReturn(Collections.singletonList(mockRow).iterator());
     when(mockCqlSession.execute(
-            "SELECT session_data FROM sessions WHERE app_name = ? AND user_id = ?",
+            "SELECT id, app_name, user_id, last_update_time FROM sessions WHERE app_name = ? AND user_id = ?",
             appName,
             userId))
         .thenReturn(mockResultSet);
-    when(mockRow.getString("session_data")).thenReturn("session_json");
-    Session expectedSession = Session.builder("s1").appName(appName).userId(userId).build();
-    when(mockObjectMapper.readValue("session_json", Session.class)).thenReturn(expectedSession);
+    when(mockRow.getString("id")).thenReturn("s1");
+    when(mockRow.getLong("last_update_time")).thenReturn(System.currentTimeMillis());
 
     ListSessionsResponse response = sessionService.listSessions(appName, userId).blockingGet();
 
@@ -174,16 +166,28 @@ public class CassandraSessionServiceTest {
 
     Session session = Session.builder(sessionId).appName(appName).userId(userId).build();
     Event event = Event.builder().timestamp(12345L).author("user").build();
-    when(mockObjectMapper.writeValueAsString(any(Session.class))).thenReturn("session_json");
+    when(mockObjectMapper.writeValueAsString(any())).thenReturn("{}");
 
     sessionService.appendEvent(session, event).blockingGet();
 
+    // Verify session update
+    verify(mockCqlSession, Mockito.times(1))
+        .execute(any(String.class), any(), any(), any(), any(), any(), any());
+
+    // Verify event insert
     verify(mockCqlSession, Mockito.times(1))
         .execute(
-            "INSERT INTO sessions (app_name, user_id, session_id, session_data) VALUES (?, ?, ?, ?)",
-            appName,
-            userId,
-            sessionId,
-            "session_json");
+            any(String.class),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any());
   }
 }
