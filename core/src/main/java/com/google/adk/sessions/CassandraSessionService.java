@@ -17,7 +17,6 @@
 package com.google.adk.sessions;
 
 import com.datastax.oss.driver.api.core.CqlSession;
-import com.datastax.oss.driver.api.core.CqlSessionBuilder;
 import com.datastax.oss.driver.api.core.cql.ResultSet;
 import com.datastax.oss.driver.api.core.cql.Row;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -29,31 +28,28 @@ import com.google.common.collect.ImmutableList;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.jspecify.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * A Cassandra-backed implementation of {@link BaseSessionService}.
  *
- * <p>This implementation stores sessions, user state, and app state in a Cassandra database.
+ * <p>This implementation stores sessions and events in a Cassandra database with normalized event
+ * storage matching the PostgresRunner structure.
  *
  * @author Sandeep Belgavi
  * @since 2025-10-02
  */
 public final class CassandraSessionService implements BaseSessionService {
 
-  private static final Logger logger = LoggerFactory.getLogger(CassandraSessionService.class);
+  // private static final Logger logger = LoggerFactory.getLogger(CassandraSessionService.class);
   private final CqlSession session;
   private final ObjectMapper objectMapper;
 
@@ -83,6 +79,7 @@ public final class CassandraSessionService implements BaseSessionService {
           ConcurrentMap<String, Object> initialState =
               (state == null) ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(state);
           List<Event> initialEvents = new ArrayList<>();
+          Instant now = Instant.now();
 
           Session newSession =
               Session.builder(resolvedSessionId)
@@ -90,19 +87,23 @@ public final class CassandraSessionService implements BaseSessionService {
                   .userId(userId)
                   .state(initialState)
                   .events(initialEvents)
-                  .lastUpdateTime(Instant.now())
+                  .lastUpdateTime(now)
                   .build();
 
-          String sessionData = objectMapper.writeValueAsString(newSession);
+          // Store session in normalized structure
+          String stateJson = objectMapper.writeValueAsString(newSession.state());
+          String eventDataJson = objectMapper.writeValueAsString(newSession.events());
 
           session.execute(
-              "INSERT INTO sessions (app_name, user_id, session_id, session_data) VALUES (?, ?, ?, ?)",
+              "INSERT INTO sessions (id, app_name, user_id, state, event_data, last_update_time) VALUES (?, ?, ?, ?, ?, ?)",
+              resolvedSessionId,
               appName,
               userId,
-              resolvedSessionId,
-              sessionData);
+              stateJson,
+              eventDataJson,
+              now.toEpochMilli());
 
-          return mergeWithGlobalState(appName, userId, newSession);
+          return newSession;
         });
   }
 
@@ -119,7 +120,7 @@ public final class CassandraSessionService implements BaseSessionService {
           Row row =
               session
                   .execute(
-                      "SELECT session_data FROM sessions WHERE app_name = ? AND user_id = ? AND session_id = ?",
+                      "SELECT id, app_name, user_id, state, event_data, last_update_time FROM sessions WHERE app_name = ? AND user_id = ? AND id = ?",
                       appName,
                       userId,
                       sessionId)
@@ -129,11 +130,23 @@ public final class CassandraSessionService implements BaseSessionService {
             return null;
           }
 
-          Session storedSession =
-              objectMapper.readValue(row.getString("session_data"), Session.class);
+          String stateJson = row.getString("state");
+          String eventDataJson = row.getString("event_data");
+          long lastUpdateTimeMillis = row.getLong("last_update_time");
+
+          ConcurrentMap<String, Object> state =
+              objectMapper.readValue(
+                  stateJson,
+                  objectMapper
+                      .getTypeFactory()
+                      .constructMapType(ConcurrentMap.class, String.class, Object.class));
+
+          List<Event> events =
+              objectMapper.readValue(
+                  eventDataJson,
+                  objectMapper.getTypeFactory().constructCollectionType(List.class, Event.class));
 
           GetSessionConfig config = configOpt.orElse(GetSessionConfig.builder().build());
-          List<Event> events = new ArrayList<>(storedSession.events());
 
           if (config.numRecentEvents().isPresent()) {
             int num = config.numRecentEvents().get();
@@ -145,16 +158,16 @@ public final class CassandraSessionService implements BaseSessionService {
             events.removeIf(e -> getInstantFromEvent(e).isBefore(threshold));
           }
 
-          Session updatedSession =
-              Session.builder(storedSession.id())
-                  .appName(storedSession.appName())
-                  .userId(storedSession.userId())
-                  .state(storedSession.state())
+          Session storedSession =
+              Session.builder(sessionId)
+                  .appName(appName)
+                  .userId(userId)
+                  .state(state)
                   .events(events)
-                  .lastUpdateTime(storedSession.lastUpdateTime())
+                  .lastUpdateTime(Instant.ofEpochMilli(lastUpdateTimeMillis))
                   .build();
 
-          return mergeWithGlobalState(appName, userId, updatedSession);
+          return storedSession;
         });
   }
 
@@ -167,18 +180,20 @@ public final class CassandraSessionService implements BaseSessionService {
 
           ResultSet rs =
               session.execute(
-                  "SELECT session_data FROM sessions WHERE app_name = ? AND user_id = ?",
+                  "SELECT id, app_name, user_id, last_update_time FROM sessions WHERE app_name = ? AND user_id = ?",
                   appName,
                   userId);
 
           List<Session> sessions = new ArrayList<>();
           for (Row row : rs) {
-            Session session = objectMapper.readValue(row.getString("session_data"), Session.class);
+            String sessionId = row.getString("id");
+            long lastUpdateTimeMillis = row.getLong("last_update_time");
+
             sessions.add(
-                Session.builder(session.id())
-                    .appName(session.appName())
-                    .userId(session.userId())
-                    .lastUpdateTime(session.lastUpdateTime())
+                Session.builder(sessionId)
+                    .appName(appName)
+                    .userId(userId)
+                    .lastUpdateTime(Instant.ofEpochMilli(lastUpdateTimeMillis))
                     .build());
           }
 
@@ -194,11 +209,18 @@ public final class CassandraSessionService implements BaseSessionService {
           Objects.requireNonNull(userId, "userId cannot be null");
           Objects.requireNonNull(sessionId, "sessionId cannot be null");
 
+          // Delete from sessions table
           session.execute(
-              "DELETE FROM sessions WHERE app_name = ? AND user_id = ? AND session_id = ?",
+              "DELETE FROM sessions WHERE app_name = ? AND user_id = ? AND id = ?",
               appName,
               userId,
               sessionId);
+
+          // Delete associated events
+          session.execute("DELETE FROM events WHERE session_id = ?", sessionId);
+
+          // Delete associated event content parts
+          session.execute("DELETE FROM event_content_parts WHERE session_id = ?", sessionId);
         });
   }
 
@@ -218,109 +240,129 @@ public final class CassandraSessionService implements BaseSessionService {
           Objects.requireNonNull(session, "session cannot be null");
           Objects.requireNonNull(event, "event cannot be null");
 
-          EventActions actions = event.actions();
-          if (actions != null) {
-            Map<String, Object> stateDelta = actions.stateDelta();
-            if (stateDelta != null && !stateDelta.isEmpty()) {
-              stateDelta.forEach(
-                  (key, value) -> {
-                    try {
-                      String valueStr = objectMapper.writeValueAsString(value);
-                      if (key.startsWith(State.APP_PREFIX)) {
-                        String appStateKey = key.substring(State.APP_PREFIX.length());
-                        this.session.execute(
-                            "INSERT INTO app_state (app_name, state_key, state_value) VALUES (?, ?, ?)",
-                            session.appName(),
-                            appStateKey,
-                            valueStr);
-                      } else if (key.startsWith(State.USER_PREFIX)) {
-                        String userStateKey = key.substring(State.USER_PREFIX.length());
-                        this.session.execute(
-                            "INSERT INTO user_state (app_name, user_id, state_key, state_value) VALUES (?, ?, ?, ?)",
-                            session.appName(),
-                            session.userId(),
-                            userStateKey,
-                            valueStr);
-                      }
-                    } catch (JsonProcessingException e) {
-                      logger.error("Error serializing state value for key: " + key, e);
-                    }
-                  });
-            }
-          }
-
+          // Add event to session's event list
           BaseSessionService.super.appendEvent(session, event);
           session.lastUpdateTime(getInstantFromEvent(event));
 
-          String sessionData = objectMapper.writeValueAsString(session);
+          // Update session table with new event_data and timestamp
+          String eventDataJson = objectMapper.writeValueAsString(session.events());
           this.session.execute(
-              "INSERT INTO sessions (app_name, user_id, session_id, session_data) VALUES (?, ?, ?, ?)",
+              "INSERT INTO sessions (id, app_name, user_id, state, event_data, last_update_time) VALUES (?, ?, ?, ?, ?, ?)",
+              session.id(),
               session.appName(),
               session.userId(),
-              session.id(),
-              sessionData);
+              objectMapper.writeValueAsString(session.state()),
+              eventDataJson,
+              session.lastUpdateTime().toEpochMilli());
+
+          // Insert normalized event into events table
+          insertEvent(session, event);
 
           return event;
         });
   }
 
+  private void insertEvent(Session session, Event event) throws JsonProcessingException {
+    EventActions actions = event.actions();
+    String stateDelta =
+        actions != null && actions.stateDelta() != null
+            ? objectMapper.writeValueAsString(actions.stateDelta())
+            : "{}";
+    String artifactDelta =
+        actions != null && actions.artifactDelta() != null
+            ? objectMapper.writeValueAsString(actions.artifactDelta())
+            : "{}";
+    String requestedAuthConfigs =
+        actions != null && actions.requestedAuthConfigs() != null
+            ? objectMapper.writeValueAsString(actions.requestedAuthConfigs())
+            : "{}";
+    String transferToAgent =
+        actions != null && actions.transferToAgent().isPresent()
+            ? actions.transferToAgent().get()
+            : null;
+
+    String contentRole =
+        event.content().isPresent() && event.content().get().role().isPresent()
+            ? event.content().get().role().get()
+            : null;
+
+    // Insert event
+    this.session.execute(
+        "INSERT INTO events (id, session_id, author, actions_state_delta, actions_artifact_delta, "
+            + "actions_requested_auth_configs, actions_transfer_to_agent, content_role, timestamp, "
+            + "invocation_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        event.id(),
+        session.id(),
+        event.author(),
+        stateDelta,
+        artifactDelta,
+        requestedAuthConfigs,
+        transferToAgent,
+        contentRole,
+        event.timestamp(),
+        event.invocationId(),
+        Instant.now().toEpochMilli());
+
+    // Insert event content parts
+    if (event.content().isPresent() && event.content().get().parts().isPresent()) {
+      List<com.google.genai.types.Part> parts = event.content().get().parts().get();
+      for (com.google.genai.types.Part part : parts) {
+        insertEventContentPart(session.id(), event.id(), part);
+      }
+    }
+  }
+
+  private void insertEventContentPart(
+      String sessionId, String eventId, com.google.genai.types.Part part)
+      throws JsonProcessingException {
+    String partType;
+    String textContent = null;
+    String functionCallId = null;
+    String functionCallName = null;
+    String functionCallArgs = null;
+    String functionResponseId = null;
+    String functionResponseName = null;
+    String functionResponseData = null;
+
+    if (part.text().isPresent()) {
+      partType = "text";
+      textContent = part.text().get();
+    } else if (part.functionCall().isPresent()) {
+      partType = "functionCall";
+      com.google.genai.types.FunctionCall fc = part.functionCall().get();
+      functionCallId = fc.id().isPresent() ? fc.id().get() : null;
+      functionCallName = fc.name().isPresent() ? fc.name().get() : null;
+      functionCallArgs =
+          fc.args().isPresent() ? objectMapper.writeValueAsString(fc.args().get()) : null;
+    } else if (part.functionResponse().isPresent()) {
+      partType = "functionResponse";
+      com.google.genai.types.FunctionResponse fr = part.functionResponse().get();
+      functionResponseId = fr.id().isPresent() ? fr.id().get() : null;
+      functionResponseName = fr.name().isPresent() ? fr.name().get() : null;
+      functionResponseData =
+          fr.response().isPresent() ? objectMapper.writeValueAsString(fr.response().get()) : null;
+    } else {
+      partType = "unknown";
+    }
+
+    this.session.execute(
+        "INSERT INTO event_content_parts (event_id, session_id, part_type, text_content, "
+            + "function_call_id, function_call_name, function_call_args, function_response_id, "
+            + "function_response_name, function_response_data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        eventId,
+        sessionId,
+        partType,
+        textContent,
+        functionCallId,
+        functionCallName,
+        functionCallArgs,
+        functionResponseId,
+        functionResponseName,
+        functionResponseData,
+        Instant.now().toEpochMilli());
+  }
+
   private Instant getInstantFromEvent(Event event) {
     return Instant.ofEpochMilli(event.timestamp());
-  }
-
-  private Session mergeWithGlobalState(String appName, String userId, Session session)
-      throws IOException {
-    Map<String, Object> sessionState = session.state();
-
-    ResultSet appStateRs =
-        this.session.execute(
-            "SELECT state_key, state_value FROM app_state WHERE app_name = ?", appName);
-    for (Row row : appStateRs) {
-      sessionState.put(
-          State.APP_PREFIX + row.getString("state_key"),
-          objectMapper.readValue(row.getString("state_value"), Object.class));
-    }
-
-    ResultSet userStateRs =
-        this.session.execute(
-            "SELECT state_key, state_value FROM user_state WHERE app_name = ? AND user_id = ?",
-            appName,
-            userId);
-    for (Row row : userStateRs) {
-      sessionState.put(
-          State.USER_PREFIX + row.getString("state_key"),
-          objectMapper.readValue(row.getString("state_value"), Object.class));
-    }
-
-    return session;
-  }
-
-  public static class CassandraSessionServiceExample {
-    public static void main(String[] args) {
-      CqlSessionBuilder sessionBuilder =
-          CqlSession.builder()
-              .addContactPoint(new java.net.InetSocketAddress("127.0.0.1", 9042))
-              .withLocalDatacenter("datacenter1");
-      CassandraHelper.initialize(sessionBuilder);
-
-      CassandraSessionService sessionService = new CassandraSessionService();
-
-      String appName = "myApp";
-      String userId = "user123";
-
-      // Create a session
-      Session createdSession =
-          sessionService.createSession(appName, userId, null, null).blockingGet();
-      System.out.println("Created session: " + createdSession.id());
-
-      // Get the session
-      Session retrievedSession =
-          sessionService
-              .getSession(appName, userId, createdSession.id(), Optional.empty())
-              .blockingGet();
-      System.out.println("Retrieved session: " + retrievedSession.id());
-
-      CassandraHelper.close();
-    }
   }
 }

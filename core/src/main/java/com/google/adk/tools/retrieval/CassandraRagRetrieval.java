@@ -100,7 +100,7 @@ public class CassandraRagRetrieval extends BaseRetrievalTool {
         () -> {
           String cql =
               String.format(
-                  "SELECT client_id, similarity_cosine(embedding, ?) as score, data FROM %s.%s ORDER BY"
+                  "SELECT agent_name, similarity_cosine(embedding, ?) as score, data FROM %s.%s ORDER BY"
                       + " %s ANN OF ? LIMIT ?",
                   keyspace, table, embeddingColumn);
           var prepared = session.prepare(cql);
@@ -111,8 +111,8 @@ public class CassandraRagRetrieval extends BaseRetrievalTool {
                   .map(
                       row ->
                           ImmutableMap.of(
-                              "client_id",
-                              row.getString("client_id"),
+                              "agent_name",
+                              row.getString("agent_name"),
                               "score",
                               row.getFloat("score"),
                               "data",

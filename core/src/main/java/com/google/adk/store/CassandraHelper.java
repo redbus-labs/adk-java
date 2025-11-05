@@ -97,15 +97,77 @@ public class CassandraHelper {
   }
 
   private static void createTables() {
+    // Create sessions table - normalized structure matching PostgresRunner
+    System.out.println("Attempting to create the sessions table");
+    session.execute(
+        "CREATE TABLE IF NOT EXISTS sessions ("
+            + "id TEXT, "
+            + "app_name TEXT, "
+            + "user_id TEXT, "
+            + "state TEXT, "
+            + "event_data TEXT, "
+            + "last_update_time BIGINT, "
+            + "PRIMARY KEY ((app_name, user_id), id))");
+    System.out.println("Successfully created the sessions table");
+
+    // Create events table - normalized event storage
+    System.out.println("Attempting to create the events table");
+
+    session.execute(
+        "CREATE TABLE IF NOT EXISTS events ("
+            + "id TEXT, "
+            + "session_id TEXT, "
+            + "author TEXT, "
+            + "actions_state_delta TEXT, "
+            + "actions_artifact_delta TEXT, "
+            + "actions_requested_auth_configs TEXT, "
+            + "actions_transfer_to_agent TEXT, "
+            + "content_role TEXT, "
+            + "timestamp BIGINT, "
+            + "invocation_id TEXT, "
+            + "created_at BIGINT, "
+            + "PRIMARY KEY ((session_id), id))");
+    System.out.println("Successfully created the events table");
+    // Create event_content_parts table - normalized event content
+    System.out.println("Attempting to create the event_content_parts table");
+    session.execute(
+        "CREATE TABLE IF NOT EXISTS event_content_parts ("
+            + "event_id TEXT, "
+            + "session_id TEXT, "
+            + "part_type TEXT, "
+            + "text_content TEXT, "
+            + "function_call_id TEXT, "
+            + "function_call_name TEXT, "
+            + "function_call_args TEXT, "
+            + "function_response_id TEXT, "
+            + "function_response_name TEXT, "
+            + "function_response_data TEXT, "
+            + "created_at BIGINT, "
+            + "PRIMARY KEY ((session_id), event_id))");
+    System.out.println("Successfully created the event_content_parts table");
+    // Create artifacts table
+    System.out.println("Attempting to create the artifacts table");
+    session.execute(
+        "CREATE TABLE IF NOT EXISTS artifacts ("
+            + "app_name TEXT, "
+            + "user_id TEXT, "
+            + "session_id TEXT, "
+            + "filename TEXT, "
+            + "version INT, "
+            + "artifact_data BLOB, "
+            + "PRIMARY KEY ((app_name, user_id, session_id), filename, version))");
+    System.out.println("Successfully created the artifacts table");
+    // Create rae_data table for RAG/memory
+    System.out.println("Attempting to create the rae_data table");
     session.execute(
         "CREATE TABLE IF NOT EXISTS rae_data ("
-            + "client_id TEXT, "
-            + "session_id TEXT, "
+            + "agent_name TEXT, "
+            + "user_id TEXT, "
             + "turn_id TIMEUUID, "
             + "data TEXT, "
-            + "embedding VECTOR<FLOAT, 768>, "
-            + "PRIMARY KEY ((client_id, session_id), turn_id))");
-
+            + "embedding VECTOR<FLOAT, 3072>, "
+            + "PRIMARY KEY ((agent_name, user_id), turn_id))");
+    System.out.println("Successfully created the rae_data table");
     session.execute(
         "CREATE CUSTOM INDEX IF NOT EXISTS ON rae_data (embedding) USING"
             + " 'org.apache.cassandra.index.sai.StorageAttachedIndex' WITH OPTIONS = {'similarity_function': 'COSINE'}");

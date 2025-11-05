@@ -36,11 +36,6 @@ import java.util.List;
  */
 public class CassandraRunner extends Runner {
 
-  /**
-   * Initializes the runner with a connection to a local Cassandra instance.
-   *
-   * @param agent the agent to run
-   */
   public CassandraRunner(BaseAgent agent) {
     this(
         agent,
@@ -100,7 +95,12 @@ public class CassandraRunner extends Runner {
         initArtifactService(sessionBuilder),
         new CassandraSessionService(),
         new CassandraMemoryService(
-            CassandraHelper.getSession(), "rae", "rae_data", new RedbusEmbeddingService("", "")),
+            CassandraHelper.getSession(),
+            "rae",
+            "rae_data",
+            new RedbusEmbeddingService(
+                System.getenv("ADU") != null ? System.getenv("ADU") : "",
+                System.getenv("ADP") != null ? System.getenv("ADP") : "")),
         plugins);
   }
 
