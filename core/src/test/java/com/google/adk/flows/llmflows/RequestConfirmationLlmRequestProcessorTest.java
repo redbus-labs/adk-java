@@ -47,13 +47,6 @@ public class RequestConfirmationLlmRequestProcessorTest {
   private static final String REQUEST_CONFIRMATION_FUNCTION_CALL_ID = "fc1";
   private static final String ECHO_TOOL_NAME = "echo_tool";
 
-  private static final FunctionCall ORIGINAL_FUNCTION_CALL =
-      FunctionCall.builder()
-          .id("fc0")
-          .name(ECHO_TOOL_NAME)
-          .args(ImmutableMap.of("say", "hello"))
-          .build();
-
   private static final Event REQUEST_CONFIRMATION_EVENT =
       Event.builder()
           .author("model")
@@ -64,7 +57,16 @@ public class RequestConfirmationLlmRequestProcessorTest {
                           FunctionCall.builder()
                               .id(REQUEST_CONFIRMATION_FUNCTION_CALL_ID)
                               .name(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)
-                              .args(ImmutableMap.of("originalFunctionCall", ORIGINAL_FUNCTION_CALL))
+                              .args(
+                                  ImmutableMap.of(
+                                      "originalFunctionCall",
+                                      ImmutableMap.of(
+                                          "id",
+                                          "fc0",
+                                          "name",
+                                          ECHO_TOOL_NAME,
+                                          "args",
+                                          ImmutableMap.of("say", "hello"))))
                               .build())
                       .build()))
           .build();
