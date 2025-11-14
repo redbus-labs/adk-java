@@ -21,6 +21,7 @@ import static java.util.stream.Collectors.toList;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.ListSessionsResponse;
 import com.google.adk.sessions.Session;
+import com.google.adk.web.dto.SessionRequest;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.Collections;
@@ -167,13 +168,15 @@ public class SessionController {
       @PathVariable String appName,
       @PathVariable String userId,
       @PathVariable String sessionId,
-      @RequestBody(required = false) Map<String, Object> state) {
+      @RequestBody(required = false) SessionRequest body) {
     log.info(
-        "Request received for POST /apps/{}/users/{}/sessions/{} with state: {}",
+        "Request received for POST /apps/{}/users/{}/sessions/{} with request body: {}",
         appName,
         userId,
         sessionId,
-        state);
+        body);
+
+    Map<String, Object> initialState = (body != null) ? body.getState() : Collections.emptyMap();
 
     try {
       findSessionOrThrow(appName, userId, sessionId);
@@ -190,7 +193,6 @@ public class SessionController {
       log.info("Session {} not found, proceeding with creation.", sessionId);
     }
 
-    Map<String, Object> initialState = (state != null) ? state : Collections.emptyMap();
     try {
       Session createdSession =
           sessionService
@@ -228,18 +230,17 @@ public class SessionController {
   public Session createSession(
       @PathVariable String appName,
       @PathVariable String userId,
-      @RequestBody(required = false) Map<String, Object> state) {
+      @RequestBody(required = false) SessionRequest body) {
 
     log.info(
-        "Request received for POST /apps/{}/users/{}/sessions (service generates ID) with state:"
-            + " {}",
+        "Request received for POST /apps/{}/users/{}/sessions (service generates ID) with request"
+            + " body: {}",
         appName,
         userId,
-        state);
+        body);
 
-    Map<String, Object> initialState = (state != null) ? state : Collections.emptyMap();
     try {
-
+      Map<String, Object> initialState = (body != null) ? body.getState() : Collections.emptyMap();
       Session createdSession =
           sessionService
               .createSession(appName, userId, new ConcurrentHashMap<>(initialState), null)
