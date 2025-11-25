@@ -24,6 +24,7 @@ import com.google.adk.agents.Callbacks.BeforeAgentCallback;
 import com.google.adk.events.Event;
 import com.google.adk.plugins.PluginManager;
 import com.google.common.collect.ImmutableList;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.DoNotCall;
 import com.google.genai.types.Content;
 import io.opentelemetry.api.trace.Span;
@@ -388,5 +389,74 @@ public abstract class BaseAgent {
   public static BaseAgent fromConfig(BaseAgentConfig config, String configAbsPath) {
     throw new UnsupportedOperationException(
         "BaseAgent is abstract. Override fromConfig in concrete subclasses.");
+  }
+
+  /**
+   * Base Builder for all agents.
+   *
+   * @param <B> The concrete builder type.
+   */
+  public abstract static class Builder<B extends Builder<B>> {
+    protected String name;
+    protected String description;
+    protected ImmutableList<BaseAgent> subAgents;
+    protected ImmutableList<BeforeAgentCallback> beforeAgentCallback;
+    protected ImmutableList<AfterAgentCallback> afterAgentCallback;
+
+    /** This is a safe cast to the concrete builder type. */
+    @SuppressWarnings("unchecked")
+    protected B self() {
+      return (B) this;
+    }
+
+    @CanIgnoreReturnValue
+    public B name(String name) {
+      this.name = name;
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B description(String description) {
+      this.description = description;
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B subAgents(List<? extends BaseAgent> subAgents) {
+      this.subAgents = ImmutableList.copyOf(subAgents);
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B subAgents(BaseAgent... subAgents) {
+      this.subAgents = ImmutableList.copyOf(subAgents);
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B beforeAgentCallback(BeforeAgentCallback beforeAgentCallback) {
+      this.beforeAgentCallback = ImmutableList.of(beforeAgentCallback);
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B beforeAgentCallback(List<Callbacks.BeforeAgentCallbackBase> beforeAgentCallback) {
+      this.beforeAgentCallback = CallbackUtil.getBeforeAgentCallbacks(beforeAgentCallback);
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B afterAgentCallback(AfterAgentCallback afterAgentCallback) {
+      this.afterAgentCallback = ImmutableList.of(afterAgentCallback);
+      return self();
+    }
+
+    @CanIgnoreReturnValue
+    public B afterAgentCallback(List<Callbacks.AfterAgentCallbackBase> afterAgentCallback) {
+      this.afterAgentCallback = CallbackUtil.getAfterAgentCallbacks(afterAgentCallback);
+      return self();
+    }
+
+    public abstract BaseAgent build();
   }
 }

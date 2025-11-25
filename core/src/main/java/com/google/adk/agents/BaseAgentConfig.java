@@ -29,6 +29,29 @@ public class BaseAgentConfig {
   private String agentClass;
   private List<AgentRefConfig> subAgents;
 
+  // Callback configuration (names resolved via ComponentRegistry)
+  private List<CallbackRef> beforeAgentCallbacks;
+  private List<CallbackRef> afterAgentCallbacks;
+
+  /** Reference to a callback stored in the ComponentRegistry. */
+  public static class CallbackRef {
+    private String name;
+
+    public CallbackRef() {}
+
+    public CallbackRef(String name) {
+      this.name = name;
+    }
+
+    public String name() {
+      return name;
+    }
+
+    public void setName(String name) {
+      this.name = name;
+    }
+  }
+
   /**
    * Configuration for referencing other agents (subagents). Supports both config-based references
    * (YAML files) and programmatic references (via code registry).
@@ -67,6 +90,10 @@ public class BaseAgentConfig {
 
   public BaseAgentConfig() {}
 
+  public BaseAgentConfig(String agentClass) {
+    this.agentClass = agentClass;
+  }
+
   /**
    * Constructor with basic fields.
    *
@@ -96,12 +123,12 @@ public class BaseAgentConfig {
     this.description = description;
   }
 
-  public String agentClass() {
-    return agentClass;
-  }
-
   public void setAgentClass(String agentClass) {
     this.agentClass = agentClass;
+  }
+
+  public String agentClass() {
+    return agentClass;
   }
 
   public List<AgentRefConfig> subAgents() {
@@ -110,5 +137,21 @@ public class BaseAgentConfig {
 
   public void setSubAgents(List<AgentRefConfig> subAgents) {
     this.subAgents = subAgents;
+  }
+
+  public List<CallbackRef> beforeAgentCallbacks() {
+    return beforeAgentCallbacks;
+  }
+
+  public void setBeforeAgentCallbacks(List<CallbackRef> beforeAgentCallbacks) {
+    this.beforeAgentCallbacks = beforeAgentCallbacks;
+  }
+
+  public List<CallbackRef> afterAgentCallbacks() {
+    return afterAgentCallbacks;
+  }
+
+  public void setAfterAgentCallbacks(List<CallbackRef> afterAgentCallbacks) {
+    this.afterAgentCallbacks = afterAgentCallbacks;
   }
 }

@@ -16,14 +16,11 @@
 
 package com.google.adk.agents;
 
-import static com.google.common.base.Strings.nullToEmpty;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.stream.Collectors.joining;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.adk.SchemaUtils;
-import com.google.adk.agents.Callbacks.AfterAgentCallback;
-import com.google.adk.agents.Callbacks.AfterAgentCallbackBase;
 import com.google.adk.agents.Callbacks.AfterAgentCallbackSync;
 import com.google.adk.agents.Callbacks.AfterModelCallback;
 import com.google.adk.agents.Callbacks.AfterModelCallbackBase;
@@ -31,8 +28,6 @@ import com.google.adk.agents.Callbacks.AfterModelCallbackSync;
 import com.google.adk.agents.Callbacks.AfterToolCallback;
 import com.google.adk.agents.Callbacks.AfterToolCallbackBase;
 import com.google.adk.agents.Callbacks.AfterToolCallbackSync;
-import com.google.adk.agents.Callbacks.BeforeAgentCallback;
-import com.google.adk.agents.Callbacks.BeforeAgentCallbackBase;
 import com.google.adk.agents.Callbacks.BeforeAgentCallbackSync;
 import com.google.adk.agents.Callbacks.BeforeModelCallback;
 import com.google.adk.agents.Callbacks.BeforeModelCallbackBase;
@@ -53,7 +48,6 @@ import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.Model;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.BaseToolset;
-import com.google.adk.utils.ComponentRegistry;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -68,7 +62,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
-import java.util.function.Consumer;
 import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -166,15 +159,11 @@ public class LlmAgent extends BaseAgent {
   }
 
   /** Builder for {@link LlmAgent}. */
-  public static class Builder {
-    private String name;
-    private String description;
-
+  public static class Builder extends BaseAgent.Builder<Builder> {
     private Model model;
 
     private Instruction instruction;
     private Instruction globalInstruction;
-    private ImmutableList<BaseAgent> subAgents;
     private ImmutableList<Object> toolsUnion;
     private GenerateContentConfig generateContentConfig;
     private BaseExampleProvider exampleProvider;
@@ -185,8 +174,6 @@ public class LlmAgent extends BaseAgent {
     private Boolean disallowTransferToPeers;
     private ImmutableList<? extends BeforeModelCallback> beforeModelCallback;
     private ImmutableList<? extends AfterModelCallback> afterModelCallback;
-    private ImmutableList<? extends BeforeAgentCallback> beforeAgentCallback;
-    private ImmutableList<? extends AfterAgentCallback> afterAgentCallback;
     private ImmutableList<? extends BeforeToolCallback> beforeToolCallback;
     private ImmutableList<? extends AfterToolCallback> afterToolCallback;
     private Schema inputSchema;
@@ -194,18 +181,6 @@ public class LlmAgent extends BaseAgent {
     private Executor executor;
     private String outputKey;
     private BaseCodeExecutor codeExecutor;
-
-    @CanIgnoreReturnValue
-    public Builder name(String name) {
-      this.name = name;
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder description(String description) {
-      this.description = description;
-      return this;
-    }
 
     @CanIgnoreReturnValue
     public Builder model(String model) {
@@ -241,18 +216,6 @@ public class LlmAgent extends BaseAgent {
     public Builder globalInstruction(String globalInstruction) {
       this.globalInstruction =
           (globalInstruction == null) ? null : new Instruction.Static(globalInstruction);
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder subAgents(List<? extends BaseAgent> subAgents) {
-      this.subAgents = ImmutableList.copyOf(subAgents);
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder subAgents(BaseAgent... subAgents) {
-      this.subAgents = ImmutableList.copyOf(subAgents);
       return this;
     }
 
@@ -415,35 +378,11 @@ public class LlmAgent extends BaseAgent {
     }
 
     @CanIgnoreReturnValue
-    public Builder beforeAgentCallback(BeforeAgentCallback beforeAgentCallback) {
-      this.beforeAgentCallback = ImmutableList.of(beforeAgentCallback);
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder beforeAgentCallback(List<BeforeAgentCallbackBase> beforeAgentCallback) {
-      this.beforeAgentCallback = CallbackUtil.getBeforeAgentCallbacks(beforeAgentCallback);
-      return this;
-    }
-
-    @CanIgnoreReturnValue
     public Builder beforeAgentCallbackSync(BeforeAgentCallbackSync beforeAgentCallbackSync) {
       this.beforeAgentCallback =
           ImmutableList.of(
               (callbackContext) ->
                   Maybe.fromOptional(beforeAgentCallbackSync.call(callbackContext)));
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder afterAgentCallback(AfterAgentCallback afterAgentCallback) {
-      this.afterAgentCallback = ImmutableList.of(afterAgentCallback);
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder afterAgentCallback(List<AfterAgentCallbackBase> afterAgentCallback) {
-      this.afterAgentCallback = CallbackUtil.getAfterAgentCallbacks(afterAgentCallback);
       return this;
     }
 
@@ -611,6 +550,7 @@ public class LlmAgent extends BaseAgent {
       }
     }
 
+    @Override
     public LlmAgent build() {
       validate();
       return new LlmAgent(this);
@@ -896,21 +836,14 @@ public class LlmAgent extends BaseAgent {
       throws ConfigurationException {
     logger.debug("Creating LlmAgent from config: {}", config.name());
 
-    // Validate required fields
-    if (config.name() == null || config.name().trim().isEmpty()) {
-      throw new ConfigurationException("Agent name is required");
-    }
+    Builder builder = LlmAgent.builder();
+    ConfigAgentUtils.resolveAndSetCommonAgentFields(builder, config, configAbsPath);
 
     if (config.instruction() == null || config.instruction().trim().isEmpty()) {
       throw new ConfigurationException("Agent instruction is required");
     }
 
-    // Create builder with required fields
-    Builder builder =
-        LlmAgent.builder()
-            .name(config.name())
-            .description(nullToEmpty(config.description()))
-            .instruction(config.instruction());
+    builder.instruction(config.instruction());
 
     if (config.model() != null && !config.model().trim().isEmpty()) {
       builder.model(config.model());
@@ -922,12 +855,6 @@ public class LlmAgent extends BaseAgent {
       }
     } catch (ConfigurationException e) {
       throw new ConfigurationException("Error resolving tools for agent " + config.name(), e);
-    }
-    // Resolve and add subagents using the utility class
-    if (config.subAgents() != null && !config.subAgents().isEmpty()) {
-      ImmutableList<BaseAgent> subAgents =
-          ConfigAgentUtils.resolveSubAgents(config.subAgents(), configAbsPath);
-      builder.subAgents(subAgents);
     }
 
     // Set optional transfer configuration
@@ -969,56 +896,25 @@ public class LlmAgent extends BaseAgent {
 
   private static void setCallbacksFromConfig(LlmAgentConfig config, Builder builder)
       throws ConfigurationException {
-    setCallbackFromConfig(
-        config.beforeAgentCallbacks(),
-        Callbacks.BeforeAgentCallbackBase.class,
-        "before_agent_callback",
-        builder::beforeAgentCallback);
-    setCallbackFromConfig(
-        config.afterAgentCallbacks(),
-        Callbacks.AfterAgentCallbackBase.class,
-        "after_agent_callback",
-        builder::afterAgentCallback);
-    setCallbackFromConfig(
+    ConfigAgentUtils.resolveAndSetCallback(
         config.beforeModelCallbacks(),
         Callbacks.BeforeModelCallbackBase.class,
         "before_model_callback",
         builder::beforeModelCallback);
-    setCallbackFromConfig(
+    ConfigAgentUtils.resolveAndSetCallback(
         config.afterModelCallbacks(),
         Callbacks.AfterModelCallbackBase.class,
         "after_model_callback",
         builder::afterModelCallback);
-    setCallbackFromConfig(
+    ConfigAgentUtils.resolveAndSetCallback(
         config.beforeToolCallbacks(),
         Callbacks.BeforeToolCallbackBase.class,
         "before_tool_callback",
         builder::beforeToolCallback);
-    setCallbackFromConfig(
+    ConfigAgentUtils.resolveAndSetCallback(
         config.afterToolCallbacks(),
         Callbacks.AfterToolCallbackBase.class,
         "after_tool_callback",
         builder::afterToolCallback);
-  }
-
-  private static <T> void setCallbackFromConfig(
-      @Nullable List<LlmAgentConfig.CallbackRef> refs,
-      Class<T> callbackBaseClass,
-      String callbackTypeName,
-      Consumer<ImmutableList<T>> builderSetter)
-      throws ConfigurationException {
-    if (refs != null) {
-      ImmutableList.Builder<T> list = ImmutableList.builder();
-      for (LlmAgentConfig.CallbackRef ref : refs) {
-        list.add(
-            ComponentRegistry.getInstance()
-                .get(ref.name(), callbackBaseClass)
-                .orElseThrow(
-                    () ->
-                        new ConfigurationException(
-                            "Invalid " + callbackTypeName + ": " + ref.name())));
-      }
-      builderSetter.accept(list.build());
-    }
   }
 }

@@ -97,7 +97,7 @@ public final class Functions {
         if (functionCall.id().isEmpty() || functionCall.id().get().isEmpty()) {
           FunctionCall updatedFunctionCall =
               functionCall.toBuilder().id(generateClientFunctionCallId()).build();
-          newParts.add(Part.builder().functionCall(updatedFunctionCall).build());
+          newParts.add(part.toBuilder().functionCall(updatedFunctionCall).build());
           modified = true;
         } else {
           newParts.add(part); // Keep original part if ID exists

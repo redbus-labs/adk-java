@@ -37,35 +37,13 @@ public class LlmAgentConfig extends BaseAgentConfig {
   private GenerateContentConfig generateContentConfig;
 
   // Callback configuration (names resolved via ComponentRegistry)
-  private List<CallbackRef> beforeAgentCallbacks;
-  private List<CallbackRef> afterAgentCallbacks;
   private List<CallbackRef> beforeModelCallbacks;
   private List<CallbackRef> afterModelCallbacks;
   private List<CallbackRef> beforeToolCallbacks;
   private List<CallbackRef> afterToolCallbacks;
 
-  /** Reference to a callback stored in the ComponentRegistry. */
-  public static class CallbackRef {
-    private String name;
-
-    public CallbackRef() {}
-
-    public CallbackRef(String name) {
-      this.name = name;
-    }
-
-    public String name() {
-      return name;
-    }
-
-    public void setName(String name) {
-      this.name = name;
-    }
-  }
-
   public LlmAgentConfig() {
-    super();
-    setAgentClass("LlmAgent");
+    super("LlmAgent");
   }
 
   // Accessors
@@ -131,22 +109,6 @@ public class LlmAgentConfig extends BaseAgentConfig {
 
   public void setGenerateContentConfig(GenerateContentConfig generateContentConfig) {
     this.generateContentConfig = generateContentConfig;
-  }
-
-  public List<CallbackRef> beforeAgentCallbacks() {
-    return beforeAgentCallbacks;
-  }
-
-  public void setBeforeAgentCallbacks(List<CallbackRef> beforeAgentCallbacks) {
-    this.beforeAgentCallbacks = beforeAgentCallbacks;
-  }
-
-  public List<CallbackRef> afterAgentCallbacks() {
-    return afterAgentCallbacks;
-  }
-
-  public void setAfterAgentCallbacks(List<CallbackRef> afterAgentCallbacks) {
-    this.afterAgentCallbacks = afterAgentCallbacks;
   }
 
   public List<CallbackRef> beforeModelCallbacks() {
