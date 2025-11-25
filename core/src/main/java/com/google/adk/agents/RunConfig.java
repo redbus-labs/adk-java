@@ -38,6 +38,22 @@ public abstract class RunConfig {
     BIDI
   }
 
+  /**
+   * Tool execution mode for the runner, when they are multiple tools requested (by the models or
+   * callbacks).
+   *
+   * <p>NONE: default to PARALLEL.
+   *
+   * <p>SEQUENTIAL: Multiple tools are executed in the order they are requested.
+   *
+   * <p>PARALLEL: Multiple tools are executed in parallel.
+   */
+  public enum ToolExecutionMode {
+    NONE,
+    SEQUENTIAL,
+    PARALLEL
+  }
+
   public abstract @Nullable SpeechConfig speechConfig();
 
   public abstract ImmutableList<Modality> responseModalities();
@@ -45,6 +61,8 @@ public abstract class RunConfig {
   public abstract boolean saveInputBlobsAsArtifacts();
 
   public abstract StreamingMode streamingMode();
+
+  public abstract ToolExecutionMode toolExecutionMode();
 
   public abstract @Nullable AudioTranscriptionConfig outputAudioTranscription();
 
@@ -59,6 +77,7 @@ public abstract class RunConfig {
         .setSaveInputBlobsAsArtifacts(false)
         .setResponseModalities(ImmutableList.of())
         .setStreamingMode(StreamingMode.NONE)
+        .setToolExecutionMode(ToolExecutionMode.NONE)
         .setMaxLlmCalls(500);
   }
 
@@ -66,6 +85,7 @@ public abstract class RunConfig {
     return new AutoValue_RunConfig.Builder()
         .setSaveInputBlobsAsArtifacts(runConfig.saveInputBlobsAsArtifacts())
         .setStreamingMode(runConfig.streamingMode())
+        .setToolExecutionMode(runConfig.toolExecutionMode())
         .setMaxLlmCalls(runConfig.maxLlmCalls())
         .setResponseModalities(runConfig.responseModalities())
         .setSpeechConfig(runConfig.speechConfig())
@@ -88,6 +108,9 @@ public abstract class RunConfig {
 
     @CanIgnoreReturnValue
     public abstract Builder setStreamingMode(StreamingMode streamingMode);
+
+    @CanIgnoreReturnValue
+    public abstract Builder setToolExecutionMode(ToolExecutionMode toolExecutionMode);
 
     @CanIgnoreReturnValue
     public abstract Builder setOutputAudioTranscription(

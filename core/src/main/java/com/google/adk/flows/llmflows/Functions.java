@@ -25,6 +25,7 @@ import com.google.adk.agents.Callbacks.AfterToolCallback;
 import com.google.adk.agents.Callbacks.BeforeToolCallback;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.agents.RunConfig.ToolExecutionMode;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
 import com.google.adk.tools.BaseTool;
@@ -198,7 +199,13 @@ public final class Functions {
       functionResponseEvents.add(maybeFunctionResponseEvent);
     }
 
-    return Maybe.merge(functionResponseEvents)
+    Flowable<Event> functionResponseEventsFlowable;
+    if (invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.SEQUENTIAL) {
+      functionResponseEventsFlowable = Maybe.concat(functionResponseEvents);
+    } else {
+      functionResponseEventsFlowable = Maybe.merge(functionResponseEvents);
+    }
+    return functionResponseEventsFlowable
         .toList()
         .flatMapMaybe(
             events -> {
@@ -296,7 +303,13 @@ public final class Functions {
       responseEvents.add(maybeFunctionResponseEvent);
     }
 
-    return Maybe.merge(responseEvents)
+    Flowable<Event> responseEventsFlowable;
+    if (invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.SEQUENTIAL) {
+      responseEventsFlowable = Maybe.concat(responseEvents);
+    } else {
+      responseEventsFlowable = Maybe.merge(responseEvents);
+    }
+    return responseEventsFlowable
         .toList()
         .flatMapMaybe(
             events -> {
