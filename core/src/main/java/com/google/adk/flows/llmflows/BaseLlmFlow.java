@@ -40,9 +40,7 @@ import com.google.adk.models.LlmResponse;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.genai.types.Content;
 import com.google.genai.types.FunctionResponse;
-import com.google.genai.types.Part;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Context;
@@ -58,7 +56,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -141,8 +138,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
       InvocationContext context,
       Event baseEventForLlmResponse,
       LlmRequest llmRequest,
-      LlmResponse llmResponse,
-      AtomicReference<Optional<byte[]>> thoughtSignatureState) {
+      LlmResponse llmResponse) {
 
     List<Iterable<Event>> eventIterables = new ArrayList<>();
     Single<LlmResponse> currentLlmResponse = Single.just(llmResponse);
@@ -171,8 +167,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
           }
 
           Event modelResponseEvent =
-              buildModelResponseEvent(
-                  baseEventForLlmResponse, llmRequest, updatedResponse, thoughtSignatureState);
+              buildModelResponseEvent(baseEventForLlmResponse, llmRequest, updatedResponse);
 
           Flowable<Event> modelEventStream = Flowable.just(modelResponseEvent);
 
@@ -340,8 +335,6 @@ public abstract class BaseLlmFlow implements BaseFlow {
    */
   private Flowable<Event> runOneStep(InvocationContext context) {
     LlmRequest initialLlmRequest = LlmRequest.builder().build();
-    AtomicReference<Optional<byte[]>> thoughtSignatureState =
-        new AtomicReference<>(Optional.empty());
 
     return preprocess(context, initialLlmRequest)
         .flatMapPublisher(
@@ -380,8 +373,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                       context,
                                       mutableEventTemplate,
                                       llmRequestAfterPreprocess,
-                                      llmResponse,
-                                      thoughtSignatureState)
+                                      llmResponse)
                                   .doFinally(
                                       () -> {
                                         String oldId = mutableEventTemplate.id();
@@ -461,8 +453,6 @@ public abstract class BaseLlmFlow implements BaseFlow {
   @Override
   public Flowable<Event> runLive(InvocationContext invocationContext) {
     LlmRequest llmRequest = LlmRequest.builder().build();
-    AtomicReference<Optional<byte[]>> thoughtSignatureState =
-        new AtomicReference<>(Optional.empty());
 
     return preprocess(invocationContext, llmRequest)
         .flatMapPublisher(
@@ -578,8 +568,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                 invocationContext,
                                 baseEventForThisLlmResponse,
                                 llmRequestAfterPreprocess,
-                                llmResponse,
-                                thoughtSignatureState);
+                                llmResponse);
                           })
                       .flatMap(
                           event -> {
@@ -635,10 +624,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
    * @return A fully constructed {@link Event} representing the LLM response.
    */
   private Event buildModelResponseEvent(
-      Event baseEventForLlmResponse,
-      LlmRequest llmRequest,
-      LlmResponse llmResponse,
-      AtomicReference<Optional<byte[]>> thoughtSignatureState) {
+      Event baseEventForLlmResponse, LlmRequest llmRequest, LlmResponse llmResponse) {
     Event.Builder eventBuilder =
         baseEventForLlmResponse.toBuilder()
             .content(llmResponse.content())
@@ -651,33 +637,6 @@ public abstract class BaseLlmFlow implements BaseFlow {
             .avgLogprobs(llmResponse.avgLogprobs())
             .finishReason(llmResponse.finishReason())
             .usageMetadata(llmResponse.usageMetadata());
-
-    List<Part> parts = llmResponse.content().flatMap(Content::parts).orElse(ImmutableList.of());
-    if (!parts.isEmpty()) {
-      boolean signaturePresentInResponse = false;
-      for (Part part : parts) {
-        if (part.thoughtSignature().isPresent()) {
-          signaturePresentInResponse = true;
-          thoughtSignatureState.set(part.thoughtSignature());
-        }
-      }
-
-      if (!signaturePresentInResponse
-          && parts.stream().anyMatch(p -> p.functionCall().isPresent())) {
-        ArrayList<Part> updatedParts = new ArrayList<>();
-        for (Part part : parts) {
-          Part partToAdd = part;
-          if (part.functionCall().isPresent() && part.thoughtSignature().isEmpty()) {
-            Optional<byte[]> signatureToApply = thoughtSignatureState.get();
-            if (signatureToApply.isPresent()) {
-              partToAdd = part.toBuilder().thoughtSignature(signatureToApply.get()).build();
-            }
-          }
-          updatedParts.add(partToAdd);
-        }
-        eventBuilder.content(llmResponse.content().get().toBuilder().parts(updatedParts).build());
-      }
-    }
 
     Event event = eventBuilder.build();
 
