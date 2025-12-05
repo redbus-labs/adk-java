@@ -329,6 +329,15 @@ public final class FunctionToolTest {
   }
 
   @Test
+  public void call_withBooleanReturnValue_returnsMapWithResult() throws Exception {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsBoolean");
+
+    Map<String, Object> result = tool.runAsync(ImmutableMap.of(), null).blockingGet();
+
+    assertThat(result).containsExactly("result", true);
+  }
+
+  @Test
   public void call_withPojoParamWithGettersAndSetters() throws Exception {
     FunctionTool tool = FunctionTool.create(Functions.class, "pojoParamWithGettersAndSetters");
     PojoWithGettersAndSetters pojo = new PojoWithGettersAndSetters();
@@ -892,6 +901,10 @@ public final class FunctionToolTest {
 
     public static Single<Map<String, Object>> returnsSingleMap() {
       return Single.just(ImmutableMap.of("key", "value"));
+    }
+
+    public static Boolean returnsBoolean() {
+      return true;
     }
 
     public static PojoWithGettersAndSetters returnsPojo() {

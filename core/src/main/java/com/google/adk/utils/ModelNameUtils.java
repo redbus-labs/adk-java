@@ -7,6 +7,8 @@ public class ModelNameUtils {
   private static final Pattern GEMINI_2_PATTERN = Pattern.compile("^gemini-2\\..*");
   private static final Pattern PATH_PATTERN =
       Pattern.compile("^projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/(.+)$");
+  private static final Pattern APIGEE_PATTERN =
+      Pattern.compile("^apigee/(?:[^/]+/)?(?:[^/]+/)?(.+)$");
 
   public static boolean isGemini2Model(String modelString) {
     if (modelString == null) {
@@ -27,6 +29,10 @@ public class ModelNameUtils {
     Matcher matcher = PATH_PATTERN.matcher(modelString);
     if (matcher.matches()) {
       return matcher.group(1);
+    }
+    Matcher apigeeMatcher = APIGEE_PATTERN.matcher(modelString);
+    if (apigeeMatcher.matches()) {
+      return apigeeMatcher.group(1);
     }
     return modelString;
   }

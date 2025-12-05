@@ -53,7 +53,7 @@
     <google.genai.version>1.28.0</google.genai.version>
     <protobuf.version>4.32.0</protobuf.version>
     <junit.version>5.11.4</junit.version>
-    <mockito.version>5.17.0</mockito.version>
+    <mockito.version>5.20.0</mockito.version>
     <java-websocket.version>1.6.0</java-websocket.version>
     <jackson.version>2.19.0</jackson.version>
     <okhttp.version>4.12.0</okhttp.version>
@@ -213,6 +213,11 @@
         <groupId>org.mockito</groupId>
         <artifactId>mockito-core</artifactId>
         <version>${mockito.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.bytebuddy</groupId>
+        <artifactId>byte-buddy</artifactId>
+        <version>1.18.2</version>
       </dependency>
       <dependency>
         <groupId>org.jspecify</groupId>
