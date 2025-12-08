@@ -236,18 +236,18 @@ public class PluginManagerTest {
   @Test
   public void runBeforeModelCallback_singlePlugin() {
     CallbackContext mockCallbackContext = mock(CallbackContext.class);
-    LlmRequest.Builder llmRequestBuilder = LlmRequest.builder();
+    LlmRequest llmRequest = LlmRequest.builder().build();
     LlmResponse llmResponse = LlmResponse.builder().build();
 
     when(plugin1.beforeModelCallback(any(), any())).thenReturn(Maybe.just(llmResponse));
     pluginManager.registerPlugin(plugin1);
 
     pluginManager
-        .runBeforeModelCallback(mockCallbackContext, llmRequestBuilder)
+        .runBeforeModelCallback(mockCallbackContext, llmRequest)
         .test()
         .assertResult(llmResponse);
 
-    verify(plugin1).beforeModelCallback(mockCallbackContext, llmRequestBuilder);
+    verify(plugin1).beforeModelCallback(mockCallbackContext, llmRequest);
   }
 
   @Test
@@ -269,7 +269,7 @@ public class PluginManagerTest {
   @Test
   public void runOnModelErrorCallback_singlePlugin() {
     CallbackContext mockCallbackContext = mock(CallbackContext.class);
-    LlmRequest.Builder llmRequestBuilder = LlmRequest.builder();
+    LlmRequest llmRequest = LlmRequest.builder().build();
     Throwable mockThrowable = mock(Throwable.class);
     LlmResponse llmResponse = LlmResponse.builder().build();
 
@@ -277,11 +277,11 @@ public class PluginManagerTest {
     pluginManager.registerPlugin(plugin1);
 
     pluginManager
-        .runOnModelErrorCallback(mockCallbackContext, llmRequestBuilder, mockThrowable)
+        .runOnModelErrorCallback(mockCallbackContext, llmRequest, mockThrowable)
         .test()
         .assertResult(llmResponse);
 
-    verify(plugin1).onModelErrorCallback(mockCallbackContext, llmRequestBuilder, mockThrowable);
+    verify(plugin1).onModelErrorCallback(mockCallbackContext, llmRequest, mockThrowable);
   }
 
   @Test

@@ -69,8 +69,8 @@ public class LoggingPluginTest {
           .actions(EventActions.builder().build())
           .longRunningToolIds(Optional.empty())
           .build();
-  private final LlmRequest.Builder llmRequestBuilder =
-      LlmRequest.builder().model("default").contents(ImmutableList.of());
+  private final LlmRequest llmRequest =
+      LlmRequest.builder().model("default").contents(ImmutableList.of()).build();
   private final LlmResponse llmResponse = LlmResponse.builder().build();
   private final ImmutableMap<String, Object> toolArgs = ImmutableMap.of();
   private final ImmutableMap<String, Object> toolResult = ImmutableMap.of();
@@ -175,10 +175,7 @@ public class LoggingPluginTest {
 
   @Test
   public void beforeModelCallback_runsWithoutError() {
-    loggingPlugin
-        .beforeModelCallback(mockCallbackContext, llmRequestBuilder)
-        .test()
-        .assertComplete();
+    loggingPlugin.beforeModelCallback(mockCallbackContext, llmRequest).test().assertComplete();
   }
 
   @Test
@@ -187,7 +184,8 @@ public class LoggingPluginTest {
         .beforeModelCallback(
             mockCallbackContext,
             LlmRequest.builder()
-                .appendInstructions(ImmutableList.of("all work and no play".repeat(1000))))
+                .appendInstructions(ImmutableList.of("all work and no play".repeat(1000)))
+                .build())
         .test()
         .assertComplete();
   }
@@ -196,7 +194,8 @@ public class LoggingPluginTest {
   public void beforeModelCallback_tools() {
     loggingPlugin
         .beforeModelCallback(
-            mockCallbackContext, LlmRequest.builder().appendTools(ImmutableList.of(mockTool)))
+            mockCallbackContext,
+            LlmRequest.builder().appendTools(ImmutableList.of(mockTool)).build())
         .test()
         .assertComplete();
   }
@@ -232,7 +231,7 @@ public class LoggingPluginTest {
   @Test
   public void onModelErrorCallback_runsWithoutError() {
     loggingPlugin
-        .onModelErrorCallback(mockCallbackContext, llmRequestBuilder, throwable)
+        .onModelErrorCallback(mockCallbackContext, llmRequest, throwable)
         .test()
         .assertComplete();
   }

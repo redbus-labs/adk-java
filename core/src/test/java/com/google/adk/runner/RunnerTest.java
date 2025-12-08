@@ -33,9 +33,12 @@ import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
+import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
+import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
+import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils;
@@ -741,5 +744,45 @@ public final class RunnerTest {
 
     assertThat(invocationSpan).isPresent();
     assertThat(invocationSpan.get().hasEnded()).isTrue();
+  }
+
+  @Test
+  public void resumabilityConfig_isResumable_isTrueInInvocationContext() {
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    when(plugin.beforeRunCallback(contextCaptor.capture())).thenReturn(Maybe.empty());
+    Runner runner =
+        new Runner(
+            agent,
+            "test",
+            new InMemoryArtifactService(),
+            new InMemorySessionService(),
+            /* memoryService= */ null,
+            ImmutableList.of(plugin),
+            new ResumabilityConfig(true));
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+    var unused =
+        runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
+    assertThat(contextCaptor.getValue().isResumable()).isTrue();
+  }
+
+  @Test
+  public void resumabilityConfig_isNotResumable_isFalseInInvocationContext() {
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    when(plugin.beforeRunCallback(contextCaptor.capture())).thenReturn(Maybe.empty());
+    Runner runner =
+        new Runner(
+            agent,
+            "test",
+            new InMemoryArtifactService(),
+            new InMemorySessionService(),
+            /* memoryService= */ null,
+            ImmutableList.of(plugin),
+            new ResumabilityConfig(false));
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+    var unused =
+        runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
+    assertThat(contextCaptor.getValue().isResumable()).isFalse();
   }
 }

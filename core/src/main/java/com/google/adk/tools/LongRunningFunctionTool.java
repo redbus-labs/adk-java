@@ -17,18 +17,28 @@
 package com.google.adk.tools;
 
 import java.lang.reflect.Method;
+import javax.annotation.Nullable;
 
 /** A function tool that returns the result asynchronously. */
 public class LongRunningFunctionTool extends FunctionTool {
 
   public static LongRunningFunctionTool create(Method func) {
-    return new LongRunningFunctionTool(func);
+    return create(func, /* requireConfirmation= */ false);
+  }
+
+  public static LongRunningFunctionTool create(Method func, boolean requireConfirmation) {
+    return new LongRunningFunctionTool(func, requireConfirmation);
   }
 
   public static LongRunningFunctionTool create(Class<?> cls, String methodName) {
+    return create(cls, methodName, /* requireConfirmation= */ false);
+  }
+
+  public static LongRunningFunctionTool create(
+      Class<?> cls, String methodName, boolean requireConfirmation) {
     for (Method method : cls.getMethods()) {
       if (method.getName().equals(methodName)) {
-        return create(method);
+        return create(method, requireConfirmation);
       }
     }
     throw new IllegalArgumentException(
@@ -36,21 +46,36 @@ public class LongRunningFunctionTool extends FunctionTool {
   }
 
   public static LongRunningFunctionTool create(Object instance, String methodName) {
+    return create(instance, methodName, /* requireConfirmation= */ false);
+  }
+
+  public static LongRunningFunctionTool create(
+      Object instance, String methodName, boolean requireConfirmation) {
     Class<?> cls = instance.getClass();
     for (Method method : cls.getMethods()) {
       if (method.getName().equals(methodName)) {
-        return new LongRunningFunctionTool(instance, method);
+        return create(instance, method, requireConfirmation);
       }
     }
     throw new IllegalArgumentException(
         String.format("Method %s not found in class %s.", methodName, cls.getName()));
   }
 
-  private LongRunningFunctionTool(Method func) {
-    super(null, func, /* isLongRunning= */ true, /* requireConfirmation= */ false);
+  public static LongRunningFunctionTool create(@Nullable Object instance, Method method) {
+    return create(instance, method, false);
   }
 
-  private LongRunningFunctionTool(Object instance, Method func) {
-    super(instance, func, /* isLongRunning= */ true, /* requireConfirmation= */ false);
+  public static LongRunningFunctionTool create(
+      @Nullable Object instance, Method method, boolean requireConfirmation) {
+    return new LongRunningFunctionTool(instance, method, requireConfirmation);
+  }
+
+  private LongRunningFunctionTool(Method func, boolean requireConfirmation) {
+    super(null, func, /* isLongRunning= */ true, requireConfirmation);
+  }
+
+  private LongRunningFunctionTool(
+      @Nullable Object instance, Method func, boolean requireConfirmation) {
+    super(instance, func, /* isLongRunning= */ true, requireConfirmation);
   }
 }

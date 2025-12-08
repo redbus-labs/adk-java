@@ -43,7 +43,7 @@ public final class BasePluginTest {
   private final CallbackContext callbackContext = Mockito.mock(CallbackContext.class);
   private final Content content = Content.builder().build();
   private final Event event = Mockito.mock(Event.class);
-  private final LlmRequest.Builder llmRequestBuilder = LlmRequest.builder();
+  private final LlmRequest llmRequest = LlmRequest.builder().build();
   private final LlmResponse llmResponse = LlmResponse.builder().build();
   private final ToolContext toolContext = Mockito.mock(ToolContext.class);
 
@@ -79,7 +79,7 @@ public final class BasePluginTest {
 
   @Test
   public void beforeModelCallback_returnsEmptyMaybe() {
-    plugin.beforeModelCallback(callbackContext, llmRequestBuilder).test().assertResult();
+    plugin.beforeModelCallback(callbackContext, llmRequest).test().assertResult();
   }
 
   @Test
@@ -90,7 +90,7 @@ public final class BasePluginTest {
   @Test
   public void onModelErrorCallback_returnsEmptyMaybe() {
     plugin
-        .onModelErrorCallback(callbackContext, llmRequestBuilder, new RuntimeException())
+        .onModelErrorCallback(callbackContext, llmRequest, new RuntimeException())
         .test()
         .assertResult();
   }

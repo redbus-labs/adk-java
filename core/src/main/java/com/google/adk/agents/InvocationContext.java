@@ -17,14 +17,18 @@
 package com.google.adk.agents;
 
 import com.google.adk.artifacts.BaseArtifactService;
+import com.google.adk.events.Event;
+import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
+import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.InlineMe;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionCall;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -45,6 +49,7 @@ public class InvocationContext {
   private final Session session;
   private final Optional<Content> userContent;
   private final RunConfig runConfig;
+  private final ResumabilityConfig resumabilityConfig;
   private final InvocationCostManager invocationCostManager = new InvocationCostManager();
 
   private Optional<String> branch;
@@ -64,6 +69,7 @@ public class InvocationContext {
     this.userContent = builder.userContent;
     this.runConfig = builder.runConfig;
     this.endInvocation = builder.endInvocation;
+    this.resumabilityConfig = builder.resumabilityConfig;
   }
 
   /**
@@ -207,6 +213,7 @@ public class InvocationContext {
             .userContent(other.userContent)
             .runConfig(other.runConfig)
             .endInvocation(other.endInvocation)
+            .resumabilityConfig(other.resumabilityConfig)
             .build();
     newContext.activeStreamingTools.putAll(other.activeStreamingTools);
     return newContext;
@@ -248,10 +255,8 @@ public class InvocationContext {
   }
 
   /**
-   * Sets the branch ID for the current invocation. A branch represents a fork in the conversation
+   * Sets the [branch] ID for the current invocation. A branch represents a fork in the conversation
    * history.
-   *
-   * @param branch the branch ID, or null to clear it
    */
   public void branch(@Nullable String branch) {
     this.branch = Optional.ofNullable(branch);
@@ -270,11 +275,7 @@ public class InvocationContext {
     return agent;
   }
 
-  /**
-   * Sets the agent being invoked. This is useful when delegating to a sub-agent.
-   *
-   * @param agent the agent to set
-   */
+  /** Sets the [agent] being invoked. This is useful when delegating to a sub-agent. */
   public void agent(BaseAgent agent) {
     this.agent = agent;
   }
@@ -302,11 +303,7 @@ public class InvocationContext {
     return endInvocation;
   }
 
-  /**
-   * Sets whether this invocation should be ended.
-   *
-   * @param endInvocation true if the invocation should end, false otherwise
-   */
+  /** Sets whether this invocation should be ended. */
   public void setEndInvocation(boolean endInvocation) {
     this.endInvocation = endInvocation;
   }
@@ -334,6 +331,28 @@ public class InvocationContext {
    */
   public void incrementLlmCallsCount() throws LlmCallsLimitExceededException {
     this.invocationCostManager.incrementAndEnforceLlmCallsLimit(this.runConfig);
+  }
+
+  /** Returns whether the current invocation is resumable. */
+  public boolean isResumable() {
+    return resumabilityConfig.isResumable();
+  }
+
+  /** Returns whether to pause the invocation right after this [event]. */
+  public boolean shouldPauseInvocation(Event event) {
+    if (!isResumable()) {
+      return false;
+    }
+
+    var longRunningToolIds = event.longRunningToolIds().orElse(ImmutableSet.of());
+    if (longRunningToolIds.isEmpty()) {
+      return false;
+    }
+
+    return event.functionCalls().stream()
+        .map(FunctionCall::id)
+        .flatMap(Optional::stream)
+        .anyMatch(functionCallId -> longRunningToolIds.contains(functionCallId));
   }
 
   private static class InvocationCostManager {
@@ -366,6 +385,7 @@ public class InvocationContext {
     private Optional<Content> userContent = Optional.empty();
     private RunConfig runConfig = RunConfig.builder().build();
     private boolean endInvocation = false;
+    private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
 
     /**
      * Sets the session service for managing session state.
@@ -554,6 +574,18 @@ public class InvocationContext {
     }
 
     /**
+     * Sets the resumability configuration for the current agent run.
+     *
+     * @param resumabilityConfig the resumability configuration.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder resumabilityConfig(ResumabilityConfig resumabilityConfig) {
+      this.resumabilityConfig = resumabilityConfig;
+      return this;
+    }
+
+    /**
      * Builds the {@link InvocationContext} instance.
      *
      * @throws IllegalStateException if any required parameters are missing.
@@ -584,7 +616,8 @@ public class InvocationContext {
         && Objects.equals(agent, that.agent)
         && Objects.equals(session, that.session)
         && Objects.equals(userContent, that.userContent)
-        && Objects.equals(runConfig, that.runConfig);
+        && Objects.equals(runConfig, that.runConfig)
+        && Objects.equals(resumabilityConfig, that.resumabilityConfig);
   }
 
   @Override
@@ -602,6 +635,7 @@ public class InvocationContext {
         session,
         userContent,
         runConfig,
-        endInvocation);
+        endInvocation,
+        resumabilityConfig);
   }
 }

@@ -107,7 +107,7 @@ class ReplayPluginTest {
     when(callbackContext.invocationId()).thenReturn("test-invocation");
     when(callbackContext.agentName()).thenReturn("test_agent");
 
-    var request =
+    LlmRequest request =
         LlmRequest.builder()
             .model("gemini-2.0-flash")
             .contents(
@@ -115,7 +115,8 @@ class ReplayPluginTest {
                     Content.builder()
                         .role("user")
                         .parts(Part.builder().text("Hello").build())
-                        .build()));
+                        .build()))
+            .build();
 
     // Step 4: Verify expected response is returned
     var result = plugin.beforeModelCallback(callbackContext, request).blockingGet();
@@ -161,7 +162,7 @@ class ReplayPluginTest {
     when(callbackContext.invocationId()).thenReturn("test-invocation");
     when(callbackContext.agentName()).thenReturn("test_agent");
 
-    var request =
+    LlmRequest request =
         LlmRequest.builder()
             .model("gemini-2.0-flash") // Different model
             .contents(
@@ -169,7 +170,8 @@ class ReplayPluginTest {
                     Content.builder()
                         .role("user")
                         .parts(Part.builder().text("Hello").build())
-                        .build()));
+                        .build()))
+            .build();
 
     // Step 4: Verify result is empty
     var result = plugin.beforeModelCallback(callbackContext, request).blockingGet();
