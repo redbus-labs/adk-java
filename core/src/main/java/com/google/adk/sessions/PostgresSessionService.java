@@ -3,6 +3,7 @@ package com.google.adk.sessions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
 import com.google.adk.redis.RedisConnection;
 import com.google.adk.utils.PostgresDBHelper;
 import com.google.adk.utils.PropertiesHelper;
@@ -227,6 +228,11 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     String sessionId = session.id();
     logger.debug("Attempting to append event to session: {}", sessionId);
 
+    // If the event indicates it's partial or incomplete, don't process it yet.
+    if (event.partial().orElse(false)) {
+      return Single.just(event);
+    }
+
     try {
       JSONObject sessionJson = getSessionFromRedisOrPostgres(sessionId);
       // Get the latest session state from DB to append event correctly
@@ -244,13 +250,37 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
           List<Event> updatedEvents = new ArrayList<>(storedSession.events());
           updatedEvents.add(event);
 
-          // Create a new session with updated events and timestamp
+          // Apply state delta from the event to the stored session's state
+          ConcurrentMap<String, Object> updatedState = new ConcurrentHashMap<>();
+          if (storedSession.state() != null) {
+            updatedState.putAll(storedSession.state());
+          }
+
+          // Apply state delta from event actions
+          EventActions actions = event.actions();
+          if (actions != null) {
+            ConcurrentMap<String, Object> stateDelta = actions.stateDelta();
+            if (stateDelta != null && !stateDelta.isEmpty()) {
+              stateDelta.forEach(
+                  (key, value) -> {
+                    if (!key.startsWith(State.TEMP_PREFIX)) {
+                      if (value == State.REMOVED) {
+                        updatedState.remove(key);
+                      } else {
+                        updatedState.put(key, value);
+                      }
+                    }
+                  });
+            }
+          }
+
+          // Create a new session with updated events, updated state, and timestamp
           Instant now = Instant.now();
           Session updatedSession =
               Session.builder(storedSession.id())
                   .appName(storedSession.appName())
                   .userId(storedSession.userId())
-                  .state(storedSession.state())
+                  .state(updatedState)
                   .events(updatedEvents)
                   .lastUpdateTime(now)
                   .build();
@@ -262,8 +292,8 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
 
           PostgresDBHelper.getInstance().saveSession(sessionId, updatedSession);
 
-          logger.debug("Event appended successfully to session {}.", sessionId);
-          // Call super implementation if there are additional side effects
+          logger.debug("Event appended successfully to session {} with state updates.", sessionId);
+          // Call super implementation to update the in-memory session object as well
           BaseSessionService.super.appendEvent(session, event);
           return Single.just(event);
         } else {
