@@ -1,53 +1,289 @@
+// package com.google.adk.artifacts;
+
+// import com.google.common.collect.ImmutableList;
+// import com.google.genai.types.Part;
+// import io.reactivex.rxjava3.core.Completable;
+// import io.reactivex.rxjava3.core.Maybe;
+// import io.reactivex.rxjava3.core.Single;
+// import java.util.Optional;
+
+// public class PostegresArtifactService implements BaseArtifactService {
+//   private final String appName;
+//   private final String artifactTableName;
+
+//   public PostegresArtifactService(String appName, String artifactTableName) {
+//     this.appName = appName;
+//     this.artifactTableName = artifactTableName;
+//   }
+
+//   @Override
+//   public Completable deleteArtifact(
+//       String appName, String userId, String sessionId, String filename) {
+//     // TODO Auto-generated method stub
+//     throw new UnsupportedOperationException("Unimplemented method 'deleteArtifact'");
+//   }
+
+//   @Override
+//   public Single<ListArtifactsResponse> listArtifactKeys(
+//       String appName, String userId, String sessionId) {
+//     // TODO Auto-generated method stub
+//     throw new UnsupportedOperationException("Unimplemented method 'listArtifactKeys'");
+//   }
+
+//   @Override
+//   public Single<ImmutableList<Integer>> listVersions(
+//       String appName, String userId, String sessionId, String filename) {
+//     // TODO Auto-generated method stub
+//     throw new UnsupportedOperationException("Unimplemented method 'listVersions'");
+//   }
+
+//   @Override
+//   public Maybe<Part> loadArtifact(
+//       String appName, String userId, String sessionId, String filename, Optional<Integer>
+// version) {
+//     // TODO Auto-generated method stub
+//     throw new UnsupportedOperationException("Unimplemented method 'loadArtifact'");
+//   }
+
+//   @Override
+//   public Single<Integer> saveArtifact(
+//       String appName, String userId, String sessionId, String filename, Part artifact) {
+//     // TODO Auto-generated method stub
+//     throw new UnsupportedOperationException("Unimplemented method 'saveArtifact'");
+//   }
+// }
+/*
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.google.adk.artifacts;
 
+import com.google.adk.store.PostgresHelper;
+import com.google.adk.store.PostgresHelper.ArtifactData;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import java.sql.SQLException;
+import java.util.List;
 import java.util.Optional;
 
-public class PostegresArtifactService implements BaseArtifactService {
-  private final String appName;
-  private final String artifactTableName;
+/**
+ * A PostgreSQL-backed implementation of the {@link BaseArtifactService}.
+ *
+ * <p>Stores artifacts persistently in PostgreSQL database with BYTEA storage. Uses reactive RxJava3
+ * types wrapping JDBC operations. Supports environment variable configuration or explicit
+ * constructor parameters.
+ *
+ * <p>Example usage with environment variables:
+ *
+ * <pre>{@code
+ * PostegresArtifactService artifactService = new PostegresArtifactService();
+ * // Uses DBURL, DBUSER, DBPASSWORD environment variables
+ * }</pre>
+ *
+ * <p>Example usage with custom table name:
+ *
+ * <pre>{@code
+ * PostegresArtifactService artifactService = new PostegresArtifactService("my_artifacts");
+ * }</pre>
+ *
+ * <p>Example usage with explicit connection parameters:
+ *
+ * <pre>{@code
+ * PostegresArtifactService artifactService = new PostegresArtifactService(
+ *     "jdbc:postgresql://localhost:5432/mydb",
+ *     "username",
+ *     "password",
+ *     "artifacts"
+ * );
+ * }</pre>
+ *
+ * @author Yashas S
+ * @since 2025-12-08
+ */
+public final class PostegresArtifactService implements BaseArtifactService {
 
+  private final PostgresHelper dbHelper;
+
+  /**
+   * Creates a new PostegresArtifactService using environment variables for database connection.
+   * Uses default table name "artifacts".
+   *
+   * <p>Required environment variables:
+   *
+   * <ul>
+   *   <li>DBURL - PostgreSQL database URL (e.g., jdbc:postgresql://localhost:5432/mydb)
+   *   <li>DBUSER - Database username
+   *   <li>DBPASSWORD - Database password
+   * </ul>
+   */
+  public PostegresArtifactService() {
+    this.dbHelper = PostgresHelper.getInstance();
+  }
+
+  /**
+   * Creates a new PostegresArtifactService with custom table name. Uses environment variables for
+   * database connection.
+   *
+   * @param tableName the table name to use for artifacts
+   */
+  public PostegresArtifactService(String tableName) {
+    this.dbHelper = PostgresHelper.getInstance(tableName);
+  }
+
+  /**
+   * Creates a new PostegresArtifactService with app name and table name. Uses environment variables
+   * for database connection. Note: appName parameter is kept for backward compatibility but is not
+   * stored; it should be passed to each method call instead.
+   *
+   * @param appName the application name (for backward compatibility, not stored)
+   * @param artifactTableName the table name to use for artifacts
+   */
   public PostegresArtifactService(String appName, String artifactTableName) {
-    this.appName = appName;
-    this.artifactTableName = artifactTableName;
+    // appName is ignored as it's passed to each method call, not stored in the service
+    this.dbHelper = PostgresHelper.getInstance(artifactTableName);
   }
 
-  @Override
-  public Completable deleteArtifact(
-      String appName, String userId, String sessionId, String filename) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'deleteArtifact'");
-  }
-
-  @Override
-  public Single<ListArtifactsResponse> listArtifactKeys(
-      String appName, String userId, String sessionId) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'listArtifactKeys'");
-  }
-
-  @Override
-  public Single<ImmutableList<Integer>> listVersions(
-      String appName, String userId, String sessionId, String filename) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'listVersions'");
-  }
-
-  @Override
-  public Maybe<Part> loadArtifact(
-      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'loadArtifact'");
+  /**
+   * Creates a new PostegresArtifactService with explicit connection parameters.
+   *
+   * @param dbUrl the database URL
+   * @param dbUser the database username
+   * @param dbPassword the database password
+   * @param tableName the table name to use for artifacts
+   */
+  public PostegresArtifactService(
+      String dbUrl, String dbUser, String dbPassword, String tableName) {
+    this.dbHelper = PostgresHelper.createInstance(dbUrl, dbUser, dbPassword, tableName);
   }
 
   @Override
   public Single<Integer> saveArtifact(
       String appName, String userId, String sessionId, String filename, Part artifact) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'saveArtifact'");
+    return Single.fromCallable(
+        () -> {
+          try {
+            // Extract data from Part
+            byte[] data = extractBytesFromPart(artifact);
+            String mimeType = extractMimeTypeFromPart(artifact);
+
+            // Save to database
+            return dbHelper.saveArtifact(appName, userId, sessionId, filename, data, mimeType);
+          } catch (SQLException e) {
+            throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  @Override
+  public Maybe<Part> loadArtifact(
+      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
+    return Maybe.fromCallable(
+        () -> {
+          try {
+            // Load from database
+            ArtifactData artifactData =
+                dbHelper.loadArtifact(appName, userId, sessionId, filename, version.orElse(null));
+
+            if (artifactData == null) {
+              return null;
+            }
+
+            // Reconstruct Part from binary data
+            return Part.fromBytes(artifactData.data, artifactData.mimeType);
+          } catch (SQLException e) {
+            throw new RuntimeException("Failed to load artifact: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  @Override
+  public Single<ListArtifactsResponse> listArtifactKeys(
+      String appName, String userId, String sessionId) {
+    return Single.fromCallable(
+        () -> {
+          try {
+            List<String> filenames = dbHelper.listFilenames(appName, userId, sessionId);
+            return ListArtifactsResponse.builder().filenames(filenames).build();
+          } catch (SQLException e) {
+            throw new RuntimeException("Failed to list artifacts: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  @Override
+  public Completable deleteArtifact(
+      String appName, String userId, String sessionId, String filename) {
+    return Completable.fromAction(
+        () -> {
+          try {
+            dbHelper.deleteArtifact(appName, userId, sessionId, filename);
+          } catch (SQLException e) {
+            throw new RuntimeException("Failed to delete artifact: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  @Override
+  public Single<ImmutableList<Integer>> listVersions(
+      String appName, String userId, String sessionId, String filename) {
+    return Single.fromCallable(
+        () -> {
+          try {
+            List<Integer> versions = dbHelper.listVersions(appName, userId, sessionId, filename);
+            return ImmutableList.copyOf(versions);
+          } catch (SQLException e) {
+            throw new RuntimeException("Failed to list versions: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  /**
+   * Extract bytes from Part object. Handles the nested Optional structure of Part.inlineData().
+   *
+   * @param part the Part object to extract bytes from
+   * @return the byte array
+   * @throws IllegalStateException if Part does not contain inline data
+   */
+  private byte[] extractBytesFromPart(Part part) {
+    if (part.inlineData() != null && part.inlineData().isPresent()) {
+      return part.inlineData()
+          .get()
+          .data()
+          .orElseThrow(() -> new IllegalStateException("Part does not contain data"));
+    }
+    throw new IllegalStateException("Part does not contain inline data");
+  }
+
+  /**
+   * Extract MIME type from Part object.
+   *
+   * @param part the Part object to extract MIME type from
+   * @return the MIME type, or "application/octet-stream" as default
+   */
+  private String extractMimeTypeFromPart(Part part) {
+    if (part.inlineData() != null && part.inlineData().isPresent()) {
+      return part.inlineData().get().mimeType().orElse("application/octet-stream");
+    }
+    return "application/octet-stream"; // Default fallback
+  }
+
+  /** Closes the database connection pool. Call this when shutting down the application. */
+  public void close() {
+    dbHelper.close();
   }
 }
