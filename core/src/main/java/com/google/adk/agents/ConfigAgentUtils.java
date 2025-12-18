@@ -16,6 +16,8 @@
 
 package com.google.adk.agents;
 
+import static com.google.common.base.Strings.nullToEmpty;
+
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,6 +33,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
+import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,6 +50,86 @@ public final class ConfigAgentUtils {
   private ConfigAgentUtils() {}
 
   /**
+   * Configures the common properties of an agent builder from the configuration.
+   *
+   * @param builder The agent builder.
+   * @param config The agent configuration.
+   * @param configAbsPath The absolute path to the config file (for resolving relative paths).
+   * @throws ConfigurationException if the configuration is invalid.
+   */
+  public static void resolveAndSetCommonAgentFields(
+      BaseAgent.Builder<?> builder, BaseAgentConfig config, String configAbsPath)
+      throws ConfigurationException {
+    if (config.name() == null || config.name().trim().isEmpty()) {
+      throw new ConfigurationException("Agent name is required");
+    }
+    builder.name(config.name());
+    builder.description(nullToEmpty(config.description()));
+
+    if (config.subAgents() != null && !config.subAgents().isEmpty()) {
+      builder.subAgents(resolveSubAgents(config.subAgents(), configAbsPath));
+    }
+
+    setBaseAgentCallbacks(config, builder::beforeAgentCallback, builder::afterAgentCallback);
+  }
+
+  /**
+   * Resolves and sets callbacks from configuration.
+   *
+   * @param refs The list of callback references from config.
+   * @param callbackBaseClass The base class of the callback.
+   * @param callbackTypeName The name of the callback type for error messages.
+   * @param builderSetter The setter method on the builder to apply the resolved callbacks.
+   * @param <T> The type of the callback.
+   * @throws ConfigurationException if a callback cannot be resolved.
+   */
+  public static <T> void resolveAndSetCallback(
+      @Nullable List<BaseAgentConfig.CallbackRef> refs,
+      Class<T> callbackBaseClass,
+      String callbackTypeName,
+      Consumer<ImmutableList<T>> builderSetter)
+      throws ConfigurationException {
+    if (refs != null) {
+      ImmutableList.Builder<T> list = ImmutableList.builder();
+      for (BaseAgentConfig.CallbackRef ref : refs) {
+        list.add(
+            ComponentRegistry.getInstance()
+                .get(ref.name(), callbackBaseClass)
+                .orElseThrow(
+                    () ->
+                        new ConfigurationException(
+                            "Invalid " + callbackTypeName + ": " + ref.name())));
+      }
+      builderSetter.accept(list.build());
+    }
+  }
+
+  /**
+   * Sets the common agent callbacks (before/after agent) from the config to the builder setters.
+   *
+   * @param config The agent configuration.
+   * @param beforeSetter The setter for before-agent callbacks.
+   * @param afterSetter The setter for after-agent callbacks.
+   * @throws ConfigurationException if a callback cannot be resolved.
+   */
+  public static void setBaseAgentCallbacks(
+      BaseAgentConfig config,
+      Consumer<ImmutableList<Callbacks.BeforeAgentCallbackBase>> beforeSetter,
+      Consumer<ImmutableList<Callbacks.AfterAgentCallbackBase>> afterSetter)
+      throws ConfigurationException {
+    resolveAndSetCallback(
+        config.beforeAgentCallbacks(),
+        Callbacks.BeforeAgentCallbackBase.class,
+        "before_agent_callback",
+        beforeSetter);
+    resolveAndSetCallback(
+        config.afterAgentCallbacks(),
+        Callbacks.AfterAgentCallbackBase.class,
+        "after_agent_callback",
+        afterSetter);
+  }
+
+  /**
    * Load agent from a YAML config file path.
    *
    * @param configPath the path to a YAML config file
@@ -53,7 +137,6 @@ public final class ConfigAgentUtils {
    * @throws ConfigurationException if loading fails
    */
   public static BaseAgent fromConfig(String configPath) throws ConfigurationException {
-
     File configFile = new File(configPath);
     if (!configFile.exists()) {
       logger.error("Config file not found: {}", configPath);
@@ -72,6 +155,7 @@ public final class ConfigAgentUtils {
       Class<? extends BaseAgentConfig> configClass = getConfigClassForAgent(agentClass);
       BaseAgentConfig config = loadConfigAsType(absolutePath, configClass);
       logger.info("agentClass value = '{}'", config.agentClass());
+      logger.info("configClass value = '{}'", configClass.getName());
 
       // Use reflection to call the fromConfig method with the correct types
       java.lang.reflect.Method fromConfigMethod =
@@ -213,6 +297,14 @@ public final class ConfigAgentUtils {
 
     if (agentClass == LlmAgent.class) {
       return LlmAgentConfig.class;
+    }
+
+    if (agentClass == SequentialAgent.class) {
+      return SequentialAgentConfig.class;
+    }
+
+    if (agentClass == ParallelAgent.class) {
+      return ParallelAgentConfig.class;
     }
 
     // TODO: Add more agent class to config class mappings as needed

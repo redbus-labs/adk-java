@@ -102,6 +102,10 @@ public abstract class LlmResponse extends JsonBaseModel {
   @JsonProperty("usageMetadata")
   public abstract Optional<GenerateContentResponseUsageMetadata> usageMetadata();
 
+  /** The model version used to generate the response. */
+  @JsonProperty("modelVersion")
+  public abstract Optional<String> modelVersion();
+
   public abstract Builder toBuilder();
 
   /** Builder for constructing {@link LlmResponse} instances. */
@@ -166,6 +170,11 @@ public abstract class LlmResponse extends JsonBaseModel {
     public abstract Builder usageMetadata(
         Optional<GenerateContentResponseUsageMetadata> usageMetadata);
 
+    @JsonProperty("modelVersion")
+    public abstract Builder modelVersion(@Nullable String modelVersion);
+
+    public abstract Builder modelVersion(Optional<String> modelVersion);
+
     @CanIgnoreReturnValue
     public final Builder response(GenerateContentResponse response) {
       Optional<List<Candidate>> candidatesOpt = response.candidates();
@@ -193,6 +202,7 @@ public abstract class LlmResponse extends JsonBaseModel {
         }
       }
       this.usageMetadata(response.usageMetadata());
+      this.modelVersion(response.modelVersion());
       return this;
     }
 

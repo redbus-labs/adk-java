@@ -223,9 +223,24 @@ public class Gemini extends BaseLlm {
               effectiveModelName, llmRequest.contents(), config);
 
       return Flowable.defer(
-          () ->
-              processRawResponses(
-                  Flowable.fromFuture(streamFuture).flatMapIterable(iterable -> iterable)));
+              () ->
+                  processRawResponses(
+                      Flowable.fromFuture(streamFuture).flatMapIterable(iterable -> iterable)))
+          .filter(
+              llmResponse ->
+                  llmResponse
+                      .content()
+                      .flatMap(Content::parts)
+                      .map(
+                          parts ->
+                              !parts.isEmpty()
+                                  && parts.stream()
+                                      .anyMatch(
+                                          p ->
+                                              p.functionCall().isPresent()
+                                                  || p.functionResponse().isPresent()
+                                                  || p.text().map(t -> !t.isBlank()).orElse(false)))
+                      .orElse(false));
     } else {
       logger.debug("Sending generateContent request to model {}", effectiveModelName);
       return Flowable.fromFuture(
@@ -253,15 +268,16 @@ public class Gemini extends BaseLlm {
               Optional<Part> part = GeminiUtil.getPart0FromLlmResponse(currentProcessedLlmResponse);
               String currentTextChunk = part.flatMap(Part::text).orElse("");
 
-              if (!currentTextChunk.isEmpty()) {
+              if (!currentTextChunk.isBlank()) {
                 if (part.get().thought().orElse(false)) {
                   accumulatedThoughtText.append(currentTextChunk);
+                  responsesToEmit.add(
+                      thinkingResponseFromText(currentTextChunk).toBuilder().partial(true).build());
                 } else {
                   accumulatedText.append(currentTextChunk);
+                  responsesToEmit.add(
+                      responseFromText(currentTextChunk).toBuilder().partial(true).build());
                 }
-                LlmResponse partialResponse =
-                    currentProcessedLlmResponse.toBuilder().partial(true).build();
-                responsesToEmit.add(partialResponse);
               } else {
                 if (accumulatedThoughtText.length() > 0
                     && GeminiUtil.shouldEmitAccumulatedText(currentProcessedLlmResponse)) {
@@ -284,22 +300,28 @@ public class Gemini extends BaseLlm {
         .concatWith(
             Flowable.defer(
                 () -> {
-                  if (accumulatedText.length() > 0 && lastRawResponseHolder[0] != null) {
-                    GenerateContentResponse finalRawResp = lastRawResponseHolder[0];
-                    boolean isStop =
-                        finalRawResp
-                            .candidates()
-                            .flatMap(candidates -> candidates.stream().findFirst())
-                            .flatMap(Candidate::finishReason)
-                            .map(
-                                finishReason -> finishReason.knownEnum() == FinishReason.Known.STOP)
-                            .orElse(false);
+                  GenerateContentResponse finalRawResp = lastRawResponseHolder[0];
+                  if (finalRawResp == null) {
+                    return Flowable.empty();
+                  }
+                  boolean isStop =
+                      finalRawResp
+                          .candidates()
+                          .flatMap(candidates -> candidates.stream().findFirst())
+                          .flatMap(Candidate::finishReason)
+                          .map(finishReason -> finishReason.knownEnum() == FinishReason.Known.STOP)
+                          .orElse(false);
 
-                    if (isStop) {
-                      LlmResponse finalAggregatedTextResponse =
-                          responseFromText(accumulatedText.toString());
-                      return Flowable.just(finalAggregatedTextResponse);
+                  if (isStop) {
+                    List<LlmResponse> finalResponses = new ArrayList<>();
+                    if (accumulatedThoughtText.length() > 0) {
+                      finalResponses.add(
+                          thinkingResponseFromText(accumulatedThoughtText.toString()));
                     }
+                    if (accumulatedText.length() > 0) {
+                      finalResponses.add(responseFromText(accumulatedText.toString()));
+                    }
+                    return Flowable.fromIterable(finalResponses);
                   }
                   return Flowable.empty();
                 }));

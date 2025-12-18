@@ -34,6 +34,7 @@ import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
+import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.Session;
@@ -73,7 +74,8 @@ public final class RunnerTest {
   private final Content pluginContent = createContent("from plugin");
   private final TestLlm testLlm = createTestLlm(createLlmResponse(createContent("from llm")));
   private final LlmAgent agent = createTestAgentBuilder(testLlm).build();
-  private final Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+  private final Runner runner =
+      Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
   private final Session session =
       runner.sessionService().createSession("test", "user").blockingGet();
   private Tracer originalTracer;
@@ -156,7 +158,12 @@ public final class RunnerTest {
     BasePlugin plugin2 = mockPlugin("test2");
     when(plugin2.beforeRunCallback(any())).thenReturn(Maybe.empty());
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin1, plugin2));
+    Runner runner =
+        Runner.builder()
+            .agent(agent)
+            .appName("test")
+            .plugins(ImmutableList.of(plugin1, plugin2))
+            .build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     var events =
         runner
@@ -268,7 +275,8 @@ public final class RunnerTest {
     TestLlm failingTestLlm = createTestLlm(Flowable.error(exception));
     LlmAgent agent = createTestAgentBuilder(failingTestLlm).build();
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+    Runner runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     var events =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
@@ -286,7 +294,8 @@ public final class RunnerTest {
     TestLlm failingTestLlm = createTestLlm(Flowable.error(exception));
     LlmAgent agent = createTestAgentBuilder(failingTestLlm).build();
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+    Runner runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     runner.runAsync("user", session.id(), createContent("from user")).test().assertError(exception);
 
@@ -304,7 +313,8 @@ public final class RunnerTest {
             .tools(ImmutableList.of(failingEchoTool))
             .build();
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+    Runner runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     var events =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
@@ -327,7 +337,8 @@ public final class RunnerTest {
     LlmAgent agent =
         createTestAgentBuilder(testLlmWithFunctionCall).tools(ImmutableList.of(echoTool)).build();
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+    Runner runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     var events =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
@@ -352,7 +363,8 @@ public final class RunnerTest {
             .tools(ImmutableList.of(failingEchoTool))
             .build();
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+    Runner runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     var events =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
@@ -374,7 +386,8 @@ public final class RunnerTest {
             .tools(ImmutableList.of(failingEchoTool))
             .build();
 
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of(plugin));
+    Runner runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     runner
         .runAsync("user", session.id(), createContent("from user"))
@@ -663,7 +676,7 @@ public final class RunnerTest {
   public void runLive_withToolExecution() throws Exception {
     LlmAgent agentWithTool =
         createTestAgentBuilder(testLlmWithFunctionCall).tools(ImmutableList.of(echoTool)).build();
-    Runner runnerWithTool = new InMemoryRunner(agentWithTool, "test", ImmutableList.of());
+    Runner runnerWithTool = Runner.builder().agent(agentWithTool).appName("test").build();
     Session sessionWithTool =
         runnerWithTool.sessionService().createSession("test", "user").blockingGet();
     LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
@@ -690,7 +703,7 @@ public final class RunnerTest {
     Exception exception = new Exception("LLM test error");
     TestLlm failingTestLlm = createTestLlm(Flowable.error(exception));
     LlmAgent agent = createTestAgentBuilder(failingTestLlm).build();
-    Runner runner = new InMemoryRunner(agent, "test", ImmutableList.of());
+    Runner runner = Runner.builder().agent(agent).appName("test").build();
     Session session = runner.sessionService().createSession("test", "user").blockingGet();
     LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
     TestSubscriber<Event> testSubscriber =
@@ -710,7 +723,7 @@ public final class RunnerTest {
             .tools(ImmutableList.of(failingEchoTool))
             .build();
     Runner runnerWithFailingTool =
-        new InMemoryRunner(agentWithFailingTool, "test", ImmutableList.of());
+        Runner.builder().agent(agentWithFailingTool).appName("test").build();
     Session sessionWithFailingTool =
         runnerWithFailingTool.sessionService().createSession("test", "user").blockingGet();
     LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
@@ -741,5 +754,41 @@ public final class RunnerTest {
 
     assertThat(invocationSpan).isPresent();
     assertThat(invocationSpan.get().hasEnded()).isTrue();
+  }
+
+  @Test
+  public void resumabilityConfig_isResumable_isTrueInInvocationContext() {
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    when(plugin.beforeRunCallback(contextCaptor.capture())).thenReturn(Maybe.empty());
+    Runner runner =
+        Runner.builder()
+            .agent(agent)
+            .appName("test")
+            .plugins(ImmutableList.of(plugin))
+            .resumabilityConfig(new ResumabilityConfig(true))
+            .build();
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+    var unused =
+        runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
+    assertThat(contextCaptor.getValue().isResumable()).isTrue();
+  }
+
+  @Test
+  public void resumabilityConfig_isNotResumable_isFalseInInvocationContext() {
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    when(plugin.beforeRunCallback(contextCaptor.capture())).thenReturn(Maybe.empty());
+    Runner runner =
+        Runner.builder()
+            .agent(agent)
+            .appName("test")
+            .plugins(ImmutableList.of(plugin))
+            .resumabilityConfig(new ResumabilityConfig(false))
+            .build();
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+    var unused =
+        runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
+    assertThat(contextCaptor.getValue().isResumable()).isFalse();
   }
 }

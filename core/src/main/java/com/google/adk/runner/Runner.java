@@ -24,18 +24,21 @@ import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.artifacts.BaseArtifactService;
+import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
+import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
 import com.google.common.collect.ImmutableList;
-import com.google.errorprone.annotations.InlineMe;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.AudioTranscriptionConfig;
 import com.google.genai.types.Content;
 import com.google.genai.types.Modality;
@@ -62,20 +65,118 @@ public class Runner {
   private final String appName;
   private final BaseArtifactService artifactService;
   private final BaseSessionService sessionService;
-  private final @Nullable BaseMemoryService memoryService;
+  @Nullable private final BaseMemoryService memoryService;
   private final PluginManager pluginManager;
+  private final ResumabilityConfig resumabilityConfig;
 
-  /** Creates a new {@code Runner}. */
+  /** Builder for {@link Runner}. */
+  public static class Builder {
+    private BaseAgent agent;
+    private String appName;
+    private BaseArtifactService artifactService = new InMemoryArtifactService();
+    private BaseSessionService sessionService = new InMemorySessionService();
+    @Nullable private BaseMemoryService memoryService = null;
+    private List<BasePlugin> plugins = ImmutableList.of();
+    private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
+
+    @CanIgnoreReturnValue
+    public Builder agent(BaseAgent agent) {
+      this.agent = agent;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder appName(String appName) {
+      this.appName = appName;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder artifactService(BaseArtifactService artifactService) {
+      this.artifactService = artifactService;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder sessionService(BaseSessionService sessionService) {
+      this.sessionService = sessionService;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder memoryService(BaseMemoryService memoryService) {
+      this.memoryService = memoryService;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder plugins(List<BasePlugin> plugins) {
+      this.plugins = plugins;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder resumabilityConfig(ResumabilityConfig resumabilityConfig) {
+      this.resumabilityConfig = resumabilityConfig;
+      return this;
+    }
+
+    public Runner build() {
+      if (agent == null) {
+        throw new IllegalStateException("Agent must be provided.");
+      }
+      if (appName == null) {
+        throw new IllegalStateException("App name must be provided.");
+      }
+      if (artifactService == null) {
+        throw new IllegalStateException("Artifact service must be provided.");
+      }
+      if (sessionService == null) {
+        throw new IllegalStateException("Session service must be provided.");
+      }
+      return new Runner(
+          agent,
+          appName,
+          artifactService,
+          sessionService,
+          memoryService,
+          plugins,
+          resumabilityConfig);
+    }
+  }
+
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  /**
+   * Creates a new {@code Runner}.
+   *
+   * @deprecated Use {@link Runner.Builder} instead.
+   */
+  @Deprecated
   public Runner(
       BaseAgent agent,
       String appName,
       BaseArtifactService artifactService,
       BaseSessionService sessionService,
       @Nullable BaseMemoryService memoryService) {
-    this(agent, appName, artifactService, sessionService, memoryService, ImmutableList.of());
+    this(
+        agent,
+        appName,
+        artifactService,
+        sessionService,
+        memoryService,
+        ImmutableList.of(),
+        new ResumabilityConfig());
   }
 
-  /** Creates a new {@code Runner} with a list of plugins. */
+  /**
+   * Creates a new {@code Runner} with a list of plugins.
+   *
+   * @deprecated Use {@link Runner.Builder} instead.
+   */
+  @Deprecated
   public Runner(
       BaseAgent agent,
       String appName,
@@ -83,21 +184,44 @@ public class Runner {
       BaseSessionService sessionService,
       @Nullable BaseMemoryService memoryService,
       List<BasePlugin> plugins) {
+    this(
+        agent,
+        appName,
+        artifactService,
+        sessionService,
+        memoryService,
+        plugins,
+        new ResumabilityConfig());
+  }
+
+  /**
+   * Creates a new {@code Runner} with a list of plugins and resumability config.
+   *
+   * @deprecated Use {@link Runner.Builder} instead.
+   */
+  @Deprecated
+  public Runner(
+      BaseAgent agent,
+      String appName,
+      BaseArtifactService artifactService,
+      BaseSessionService sessionService,
+      @Nullable BaseMemoryService memoryService,
+      List<BasePlugin> plugins,
+      ResumabilityConfig resumabilityConfig) {
     this.agent = agent;
     this.appName = appName;
     this.artifactService = artifactService;
     this.sessionService = sessionService;
     this.memoryService = memoryService;
     this.pluginManager = new PluginManager(plugins);
+    this.resumabilityConfig = resumabilityConfig;
   }
 
   /**
    * Creates a new {@code Runner}.
    *
-   * @deprecated Use the constructor with {@code BaseMemoryService} instead even if with a null if
-   *     you don't need the memory service.
+   * @deprecated Use {@link Runner.Builder} instead.
    */
-  @InlineMe(replacement = "this(agent, appName, artifactService, sessionService, null)")
   @Deprecated
   public Runner(
       BaseAgent agent,
@@ -123,7 +247,8 @@ public class Runner {
     return this.sessionService;
   }
 
-  public @Nullable BaseMemoryService memoryService() {
+  @Nullable
+  public BaseMemoryService memoryService() {
     return this.memoryService;
   }
 
@@ -305,7 +430,7 @@ public class Runner {
                                                   newInvocationContextWithId(
                                                       updatedSession,
                                                       event.content(),
-                                                      Optional.empty(),
+                                                      /* liveRequestQueue= */ Optional.empty(),
                                                       runConfig,
                                                       invocationId);
                                               contextWithUpdatedSession.agent(
@@ -430,20 +555,19 @@ public class Runner {
       Optional<LiveRequestQueue> liveRequestQueue,
       RunConfig runConfig) {
     BaseAgent rootAgent = this.agent;
-    InvocationContext invocationContext =
-        new InvocationContext(
-            this.sessionService,
-            this.artifactService,
-            this.memoryService,
-            this.pluginManager,
-            liveRequestQueue,
-            /* branch= */ Optional.empty(),
-            InvocationContext.newInvocationContextId(),
-            rootAgent,
-            session,
-            newMessage,
-            runConfig,
-            /* endInvocation= */ false);
+    var invocationContextBuilder =
+        InvocationContext.builder()
+            .sessionService(this.sessionService)
+            .artifactService(this.artifactService)
+            .memoryService(this.memoryService)
+            .pluginManager(this.pluginManager)
+            .agent(rootAgent)
+            .session(session)
+            .userContent(newMessage)
+            .runConfig(runConfig)
+            .resumabilityConfig(this.resumabilityConfig);
+    liveRequestQueue.ifPresent(invocationContextBuilder::liveRequestQueue);
+    var invocationContext = invocationContextBuilder.build();
     invocationContext.agent(this.findAgentToRun(session, rootAgent));
     return invocationContext;
   }
@@ -460,20 +584,20 @@ public class Runner {
       RunConfig runConfig,
       String invocationId) {
     BaseAgent rootAgent = this.agent;
-    InvocationContext invocationContext =
-        new InvocationContext(
-            this.sessionService,
-            this.artifactService,
-            this.memoryService,
-            this.pluginManager,
-            liveRequestQueue,
-            /* branch= */ Optional.empty(),
-            invocationId,
-            rootAgent,
-            session,
-            newMessage,
-            runConfig,
-            /* endInvocation= */ false);
+    var invocationContextBuilder =
+        InvocationContext.builder()
+            .sessionService(this.sessionService)
+            .artifactService(this.artifactService)
+            .memoryService(this.memoryService)
+            .pluginManager(this.pluginManager)
+            .invocationId(invocationId)
+            .agent(rootAgent)
+            .session(session)
+            .userContent(newMessage)
+            .runConfig(runConfig)
+            .resumabilityConfig(this.resumabilityConfig);
+    liveRequestQueue.ifPresent(invocationContextBuilder::liveRequestQueue);
+    var invocationContext = invocationContextBuilder.build();
     invocationContext.agent(this.findAgentToRun(session, rootAgent));
     return invocationContext;
   }
@@ -514,10 +638,12 @@ public class Runner {
                   .agent()
                   .runLive(invocationContext)
                   .doOnNext(event -> this.sessionService.appendEvent(session, event))
-                  .doOnError(
+                  .onErrorResumeNext(
                       throwable -> {
                         span.setStatus(StatusCode.ERROR, "Error in runLive Flowable execution");
                         span.recordException(throwable);
+                        span.end();
+                        return Flowable.error(throwable);
                       }));
     } catch (Throwable t) {
       span.setStatus(StatusCode.ERROR, "Error during runLive synchronous setup");

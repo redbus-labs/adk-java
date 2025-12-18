@@ -53,19 +53,30 @@ public final class Contents implements RequestProcessor {
     }
     LlmAgent llmAgent = (LlmAgent) context.agent();
 
+    String modelName;
+    try {
+      modelName = llmAgent.resolvedModel().modelName().orElse("");
+    } catch (IllegalStateException e) {
+      modelName = "";
+    }
+
     if (llmAgent.includeContents() == LlmAgent.IncludeContents.NONE) {
       return Single.just(
           RequestProcessor.RequestProcessingResult.create(
               request.toBuilder()
                   .contents(
                       getCurrentTurnContents(
-                          context.branch(), context.session().events(), context.agent().name()))
+                          context.branch(),
+                          context.session().events(),
+                          context.agent().name(),
+                          modelName))
                   .build(),
               ImmutableList.of()));
     }
 
     ImmutableList<Content> contents =
-        getContents(context.branch(), context.session().events(), context.agent().name());
+        getContents(
+            context.branch(), context.session().events(), context.agent().name(), modelName);
 
     return Single.just(
         RequestProcessor.RequestProcessingResult.create(
@@ -74,19 +85,19 @@ public final class Contents implements RequestProcessor {
 
   /** Gets contents for the current turn only (no conversation history). */
   private ImmutableList<Content> getCurrentTurnContents(
-      Optional<String> currentBranch, List<Event> events, String agentName) {
+      Optional<String> currentBranch, List<Event> events, String agentName, String modelName) {
     // Find the latest event that starts the current turn and process from there.
     for (int i = events.size() - 1; i >= 0; i--) {
       Event event = events.get(i);
       if (event.author().equals("user") || isOtherAgentReply(agentName, event)) {
-        return getContents(currentBranch, events.subList(i, events.size()), agentName);
+        return getContents(currentBranch, events.subList(i, events.size()), agentName, modelName);
       }
     }
     return ImmutableList.of();
   }
 
   private ImmutableList<Content> getContents(
-      Optional<String> currentBranch, List<Event> events, String agentName) {
+      Optional<String> currentBranch, List<Event> events, String agentName, String modelName) {
     List<Event> filteredEvents = new ArrayList<>();
 
     // Filter the events, leaving the contents and the function calls and responses from the current
@@ -123,7 +134,7 @@ public final class Contents implements RequestProcessor {
     }
 
     List<Event> resultEvents = rearrangeEventsForLatestFunctionResponse(filteredEvents);
-    resultEvents = rearrangeEventsForAsyncFunctionResponsesInHistory(resultEvents);
+    resultEvents = rearrangeEventsForAsyncFunctionResponsesInHistory(resultEvents, modelName);
 
     return resultEvents.stream()
         .map(Event::content)
@@ -333,7 +344,8 @@ public final class Contents implements RequestProcessor {
     return resultEvents;
   }
 
-  private static List<Event> rearrangeEventsForAsyncFunctionResponsesInHistory(List<Event> events) {
+  private static List<Event> rearrangeEventsForAsyncFunctionResponsesInHistory(
+      List<Event> events, String modelName) {
     Map<String, Integer> functionCallIdToResponseEventIndex = new HashMap<>();
     for (int i = 0; i < events.size(); i++) {
       final int index = i;
@@ -360,11 +372,16 @@ public final class Contents implements RequestProcessor {
     List<Event> resultEvents = new ArrayList<>();
     // Keep track of response events already added to avoid duplicates when merging
     Set<Integer> processedResponseIndices = new HashSet<>();
+    List<Event> responseEventsBuffer = new ArrayList<>();
+
+    // Gemini 3 requires function calls to be grouped first and only then function responses:
+    // FC1 FC2 FR1 FR2
+    boolean shouldBufferResponseEvents = modelName.startsWith("gemini-3-");
 
     for (int i = 0; i < events.size(); i++) {
       Event event = events.get(i);
 
-      // Skip response events that have already been processed and added alongside their call event
+      // Skip response events that will be processed via responseEventsBuffer
       if (processedResponseIndices.contains(i)) {
         continue;
       }
@@ -405,18 +422,44 @@ public final class Contents implements RequestProcessor {
 
           for (int index : sortedIndices) {
             if (processedResponseIndices.add(index)) { // Add index and check if it was newly added
+              responseEventsBuffer.add(events.get(index));
               responseEventsToAdd.add(events.get(index));
             }
           }
 
-          if (responseEventsToAdd.size() == 1) {
-            resultEvents.add(responseEventsToAdd.get(0));
-          } else if (responseEventsToAdd.size() > 1) {
-            resultEvents.add(mergeFunctionResponseEvents(responseEventsToAdd));
+          if (!shouldBufferResponseEvents) {
+            if (responseEventsToAdd.size() == 1) {
+              resultEvents.add(responseEventsToAdd.get(0));
+            } else if (responseEventsToAdd.size() > 1) {
+              resultEvents.add(mergeFunctionResponseEvents(responseEventsToAdd));
+            }
           }
         }
       } else {
+        // gemini-3 specific part: buffer response events
+        if (shouldBufferResponseEvents) {
+          if (!responseEventsBuffer.isEmpty()) {
+            if (responseEventsBuffer.size() == 1) {
+              resultEvents.add(responseEventsBuffer.get(0));
+            } else {
+              resultEvents.add(mergeFunctionResponseEvents(responseEventsBuffer));
+            }
+            responseEventsBuffer.clear();
+          }
+        }
         resultEvents.add(event);
+      }
+    }
+
+    // gemini-3 specific part: buffer response events
+    if (shouldBufferResponseEvents) {
+      if (!responseEventsBuffer.isEmpty()) {
+        if (responseEventsBuffer.size() == 1) {
+          resultEvents.add(responseEventsBuffer.get(0));
+        } else {
+          resultEvents.add(mergeFunctionResponseEvents(responseEventsBuffer));
+        }
+        responseEventsBuffer.clear();
       }
     }
 

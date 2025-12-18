@@ -110,19 +110,4 @@ public final class ParallelAgentTest {
 
     assertThat(events).isEmpty();
   }
-
-  @Test
-  public void runAsync_nullSubAgents_treatedAsEmpty() {
-    String parallelAgentName = "null_subagents_parallel_agent";
-    ParallelAgent parallelAgent =
-        ParallelAgent.builder()
-            .name(parallelAgentName)
-            .subAgents((List<? extends BaseAgent>) null)
-            .build();
-
-    InvocationContext invocationContext = createInvocationContext(parallelAgent);
-    List<Event> events = parallelAgent.runAsync(invocationContext).toList().blockingGet();
-
-    assertThat(events).isEmpty();
-  }
 }

@@ -238,8 +238,15 @@ public class FunctionTool extends BaseTool {
               data -> OBJECT_MAPPER.convertValue(data, new TypeReference<Map<String, Object>>() {}))
           .toMaybe();
     } else {
-      return Maybe.just(
-          OBJECT_MAPPER.convertValue(result, new TypeReference<Map<String, Object>>() {}));
+      try {
+        return Maybe.just(
+            OBJECT_MAPPER.convertValue(result, new TypeReference<Map<String, Object>>() {}));
+      } catch (IllegalArgumentException e) {
+        // Conversion to map failed, in this case we follow
+        // https://google.github.io/adk-docs/tools-custom/function-tools/#return-type and return
+        // the { "result": $result }
+        return Maybe.just(ImmutableMap.of("result", result));
+      }
     }
   }
 

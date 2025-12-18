@@ -3,14 +3,19 @@ package com.google.adk.tools;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
+import com.google.adk.flows.llmflows.ResumabilityConfig;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
-import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.runner.Runner;
+import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.testing.TestLlm;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.errorprone.annotations.Keep;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
@@ -27,26 +32,31 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
+// TODO: Add test for raw string return style. FunctionTool currently only supports a map. We need
+// to add functionality of returning raw string.
 public final class LongRunningFunctionToolTest {
-  // TODO: Add test for raw string return style.
-  // FunctionTool currently only supports a map. We need to add functionality of returning raw
-  // string.
 
   private TestLlm testLlm;
   private LlmAgent agent;
-  private InMemoryRunner runner;
+  private Runner runner;
   private Session session;
+  private InMemorySessionService sessionService;
+  private InMemoryArtifactService artifactService;
+  private InMemoryMemoryService memoryService;
 
   @Before
   public void setUp() {
     TestFunctions.reset();
+    sessionService = new InMemorySessionService();
+    artifactService = new InMemoryArtifactService();
+    memoryService = new InMemoryMemoryService();
   }
 
   @Test
   public void asyncFunction_handlesPendingAndResults() throws Exception {
     FunctionTool longRunningTool =
         LongRunningFunctionTool.create(
-            TestFunctions.class.getMethod("increaseByOne", int.class, ToolContext.class));
+            null, TestFunctions.class.getMethod("increaseByOne", int.class, ToolContext.class));
 
     FunctionCall modelRequestForFunctionCall =
         FunctionCall.builder().name("increase_by_one").args(ImmutableMap.of("x", 1)).build();
@@ -66,11 +76,11 @@ public final class LongRunningFunctionToolTest {
 
     Content firstUserContent = Content.fromParts(Part.fromText("test1"));
 
-    ImmutableMap<String, Object> expectedInitialToolResponseMap;
-    expectedInitialToolResponseMap = ImmutableMap.of("status", "pending");
-
     assertInitialInteractionAndEvents(
-        firstUserContent, modelRequestForFunctionCall, expectedInitialToolResponseMap, "response1");
+        firstUserContent,
+        modelRequestForFunctionCall,
+        ImmutableMap.of("status", "pending"),
+        "response1");
 
     assertSubsequentInteraction(
         "increase_by_one", ImmutableMap.of("status", "still waiting"), "response2", 3);
@@ -83,12 +93,14 @@ public final class LongRunningFunctionToolTest {
   }
 
   private static class TestFunctions {
-    static AtomicInteger functionCalledCount = new AtomicInteger(0);
+    static final AtomicInteger functionCalledCount = new AtomicInteger(0);
 
     static void reset() {
       functionCalledCount.set(0);
     }
 
+    @Keep // Keep this function to avoid unused function warning.
+    @SuppressWarnings("unused") // Suppress unused warning for test parameters.
     @Annotations.Schema(name = "increase_by_one", description = "Test func: increases by one")
     public static Maybe<Map<String, Object>> increaseByOne(int x, ToolContext toolContext) {
       functionCalledCount.incrementAndGet();
@@ -126,7 +138,15 @@ public final class LongRunningFunctionToolTest {
             .tools(ImmutableList.of(tool))
             .description(description)
             .build();
-    runner = new InMemoryRunner(agent, "test-user");
+    runner =
+        new Runner(
+            agent,
+            "test_app",
+            artifactService,
+            sessionService,
+            memoryService,
+            null,
+            new ResumabilityConfig(false));
     session =
         runner
             .sessionService()

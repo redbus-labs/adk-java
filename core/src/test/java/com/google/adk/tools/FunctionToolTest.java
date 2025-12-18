@@ -68,6 +68,7 @@ public final class FunctionToolTest {
                         .properties(ImmutableMap.of())
                         .required(ImmutableList.of())
                         .build())
+                .response(Schema.builder().type("NULL").build())
                 .build());
   }
 
@@ -100,6 +101,7 @@ public final class FunctionToolTest {
                                     .build()))
                         .required(ImmutableList.of("first_param", "second_param"))
                         .build())
+                .response(Schema.builder().type("NULL").build())
                 .build());
   }
 
@@ -137,6 +139,7 @@ public final class FunctionToolTest {
                         .properties(ImmutableMap.of())
                         .required(ImmutableList.of())
                         .build())
+                .response(Schema.builder().type("NULL").build())
                 .build());
   }
 
@@ -323,6 +326,15 @@ public final class FunctionToolTest {
     Map<String, Object> result = tool.runAsync(ImmutableMap.of("pojo", pojo), null).blockingGet();
 
     assertThat(result).containsExactly("field1", "abc", "field2", 123);
+  }
+
+  @Test
+  public void call_withBooleanReturnValue_returnsMapWithResult() throws Exception {
+    FunctionTool tool = FunctionTool.create(Functions.class, "returnsBoolean");
+
+    Map<String, Object> result = tool.runAsync(ImmutableMap.of(), null).blockingGet();
+
+    assertThat(result).containsExactly("result", true);
   }
 
   @Test
@@ -889,6 +901,10 @@ public final class FunctionToolTest {
 
     public static Single<Map<String, Object>> returnsSingleMap() {
       return Single.just(ImmutableMap.of("key", "value"));
+    }
+
+    public static Boolean returnsBoolean() {
+      return true;
     }
 
     public static PojoWithGettersAndSetters returnsPojo() {

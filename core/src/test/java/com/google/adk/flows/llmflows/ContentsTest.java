@@ -26,6 +26,7 @@ import com.google.adk.agents.RunConfig;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmRequest;
+import com.google.adk.models.Model;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.common.collect.ImmutableList;
@@ -39,10 +40,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.Mockito;
 
 /** Unit tests for {@link Contents}. */
 @RunWith(JUnit4.class)
@@ -226,7 +227,6 @@ public final class ContentsTest {
   }
 
   @Test
-  @Ignore("TODO: b/412663475 - Handle parallel function calls within the same event.")
   public void rearrangeHistory_parallelFCsSequentialFRs_returnsMergedFR() {
     Event fcEvent = createParallelFunctionCallEvent("fc1", "tool1", "call1", "tool2", "call2");
     Event frEvent1 = createFunctionResponseEvent("fr1", "tool1", "call1");
@@ -248,7 +248,6 @@ public final class ContentsTest {
   }
 
   @Test
-  @Ignore("TODO: b/412663475 - Handle parallel function calls within the same event.")
   public void rearrangeHistory_parallelFCsAsyncFRs_returnsMergedFR() {
     Event fcEvent = createParallelFunctionCallEvent("fc1", "tool1", "call1", "tool2", "call2");
     Event userEvent1 = createUserEvent("u2", "Wait");
@@ -445,6 +444,52 @@ public final class ContentsTest {
         .inOrder();
   }
 
+  @Test
+  public void processRequest_sequentialFCFR_returnsOriginalList() {
+    Event e1 = createUserEvent("e1", "Not important");
+    Event e2 =
+        createAgentEventWithTextAndFunctionCall(
+            AGENT, "e2", "some text", "tool1", "call1", ImmutableMap.of("request", "foo"));
+    Event e3 =
+        createFunctionResponseEvent(
+            AGENT, "e3", "tool1", "call1", ImmutableMap.of("response", "bar"));
+    Event e4 =
+        createAgentEventWithTextAndFunctionCall(
+            AGENT, "e4", "some other text", "tool2", "call2", ImmutableMap.of("request", "X"));
+    Event e5 =
+        createFunctionResponseEvent(
+            AGENT, "e5", "tool2", "call2", ImmutableMap.of("response", "Y"));
+    ImmutableList<Event> inputEvents = ImmutableList.of(e1, e2, e3, e4, e5);
+
+    List<Content> result = runContentsProcessor(inputEvents);
+
+    assertThat(result).isEqualTo(eventsToContents(inputEvents));
+  }
+
+  @Test
+  public void rearrangeHistory_gemini3interleavedFCFR_groupsFcAndFr() {
+    Event u1 = createUserEvent("u1", "Query");
+    Event fc1 = createFunctionCallEvent("fc1", "tool1", "call1");
+    Event fr1 = createFunctionResponseEvent("fr1", "tool1", "call1");
+    Event fc2 = createFunctionCallEvent("fc2", "tool2", "call2");
+    Event fr2 = createFunctionResponseEvent("fr2", "tool2", "call2");
+
+    ImmutableList<Event> inputEvents = ImmutableList.of(u1, fc1, fr1, fc2, fr2);
+
+    List<Content> result = runContentsProcessorWithModelName(inputEvents, "gemini-3-flash-exp");
+
+    assertThat(result).hasSize(4);
+    assertThat(result.get(0)).isEqualTo(u1.content().get());
+    assertThat(result.get(1)).isEqualTo(fc1.content().get());
+    assertThat(result.get(2)).isEqualTo(fc2.content().get());
+    Content mergedContent = result.get(3);
+    assertThat(mergedContent.parts().get()).hasSize(2);
+    assertThat(mergedContent.parts().get().get(0).functionResponse().get().name())
+        .hasValue("tool1");
+    assertThat(mergedContent.parts().get().get(1).functionResponse().get().name())
+        .hasValue("tool2");
+  }
+
   private static Event createUserEvent(String id, String text) {
     return Event.builder()
         .id(id)
@@ -587,6 +632,38 @@ public final class ContentsTest {
   private List<Content> runContentsProcessorWithIncludeContents(
       List<Event> events, LlmAgent.IncludeContents includeContents) {
     LlmAgent agent = LlmAgent.builder().name(AGENT).includeContents(includeContents).build();
+    Session session =
+        Session.builder("test-session")
+            .appName("test-app")
+            .userId("test-user")
+            .events(new ArrayList<>(events))
+            .build();
+    InvocationContext context =
+        InvocationContext.create(
+            new InMemorySessionService(),
+            new InMemoryArtifactService(),
+            "test-invocation",
+            agent,
+            session,
+            /* userContent= */ null,
+            RunConfig.builder().build());
+
+    LlmRequest initialRequest = LlmRequest.builder().build();
+    RequestProcessor.RequestProcessingResult result =
+        contentsProcessor.processRequest(context, initialRequest).blockingGet();
+    return result.updatedRequest().contents();
+  }
+
+  private List<Content> runContentsProcessorWithModelName(List<Event> events, String modelName) {
+    LlmAgent agent =
+        Mockito.spy(
+            LlmAgent.builder()
+                .name(AGENT)
+                .includeContents(LlmAgent.IncludeContents.DEFAULT)
+                .build());
+    Model model = Model.builder().modelName(modelName).build();
+    Mockito.doReturn(model).when(agent).resolvedModel();
+
     Session session =
         Session.builder("test-session")
             .appName("test-app")

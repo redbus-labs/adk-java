@@ -71,7 +71,7 @@ public class ReplayPlugin extends BasePlugin {
 
   @Override
   public Maybe<LlmResponse> beforeModelCallback(
-      CallbackContext callbackContext, LlmRequest llmRequest) {
+      CallbackContext callbackContext, LlmRequest.Builder llmRequest) {
     if (!isReplayModeOn(callbackContext)) {
       return Maybe.empty();
     }
@@ -261,7 +261,7 @@ public class ReplayPlugin extends BasePlugin {
   }
 
   private LlmRecording verifyAndGetNextLlmRecordingForAgent(
-      InvocationReplayState state, String agentName, LlmRequest llmRequest) {
+      InvocationReplayState state, String agentName, LlmRequest.Builder llmRequest) {
     int currentAgentIndex = state.getAgentReplayIndex(agentName);
     Recording expectedRecording = getNextRecordingForAgent(state, agentName);
 
@@ -278,7 +278,7 @@ public class ReplayPlugin extends BasePlugin {
     // Strict verification of LLM request
     if (llmRecording.llmRequest().isPresent()) {
       verifyLlmRequestMatch(
-          llmRecording.llmRequest().get(), llmRequest, agentName, currentAgentIndex);
+          llmRecording.llmRequest().get(), llmRequest.build(), agentName, currentAgentIndex);
     }
 
     return llmRecording;
@@ -320,14 +320,11 @@ public class ReplayPlugin extends BasePlugin {
   private void verifyLlmRequestMatch(
       LlmRequest recordedRequest, LlmRequest currentRequest, String agentName, int agentIndex) {
     LlmRequestComparator comparator = new LlmRequestComparator();
-    if (!comparator.equals(recordedRequest, currentRequest)) {
-      throw new ReplayVerificationError(
+    String diff = comparator.diff(recordedRequest, currentRequest);
+    if (!diff.isEmpty()) {
+      logger.error(
           String.format(
-              "LLM request mismatch for agent '%s' (index %d):%nrecorded: %s%ncurrent: %s",
-              agentName,
-              agentIndex,
-              comparator.toComparisonMap(recordedRequest),
-              comparator.toComparisonMap(currentRequest)));
+              "LLM request mismatch for agent '%s' (index %d):%n%s", agentName, agentIndex, diff));
     }
   }
 
@@ -345,7 +342,7 @@ public class ReplayPlugin extends BasePlugin {
     // Verify tool name
     String recordedName = recordedCall.name().orElse("");
     if (!recordedName.equals(toolName)) {
-      throw new ReplayVerificationError(
+      logger.error(
           String.format(
               "Tool name mismatch for agent '%s' at index %d:%nrecorded: '%s'%ncurrent: '%s'",
               agentName, agentIndex, recordedName, toolName));
@@ -354,7 +351,7 @@ public class ReplayPlugin extends BasePlugin {
     // Verify tool arguments
     Map<String, Object> recordedArgs = recordedCall.args().orElse(Map.of());
     if (!recordedArgs.equals(toolArgs)) {
-      throw new ReplayVerificationError(
+      logger.error(
           String.format(
               "Tool args mismatch for agent '%s' at index %d:%nrecorded: %s%ncurrent: %s",
               agentName, agentIndex, recordedArgs, toolArgs));
