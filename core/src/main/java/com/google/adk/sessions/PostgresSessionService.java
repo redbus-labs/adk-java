@@ -228,9 +228,6 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     String sessionId = session.id();
     logger.debug("Attempting to append event to session: {}", sessionId);
 
-    // If the event indicates it's partial or incomplete, don't process it yet.
- 
-
     try {
       JSONObject sessionJson = getSessionFromRedisOrPostgres(sessionId);
       // Get the latest session state from DB to append event correctly
@@ -262,8 +259,11 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
             if (stateDelta != null && !stateDelta.isEmpty()) {
               stateDelta.forEach(
                   (key, value) -> {
-                    updatedState.put(key, value);
-                  });
+                    if (value == State.REMOVED) {
+                      updatedState.remove(key);
+                    } else {
+                      updatedState.put(key, value);
+                    }                  });
             }
           }
 
