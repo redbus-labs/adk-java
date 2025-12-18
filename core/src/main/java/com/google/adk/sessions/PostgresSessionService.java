@@ -229,9 +229,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     logger.debug("Attempting to append event to session: {}", sessionId);
 
     // If the event indicates it's partial or incomplete, don't process it yet.
-    if (event.partial().orElse(false)) {
-      return Single.just(event);
-    }
+ 
 
     try {
       JSONObject sessionJson = getSessionFromRedisOrPostgres(sessionId);
@@ -248,6 +246,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
         if (storedSession.events() != null) {
           // Create a new list with the appended event to avoid mutating the original
           List<Event> updatedEvents = new ArrayList<>(storedSession.events());
+          trimTempDeltaState(event);
           updatedEvents.add(event);
 
           // Apply state delta from the event to the stored session's state
@@ -263,13 +262,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
             if (stateDelta != null && !stateDelta.isEmpty()) {
               stateDelta.forEach(
                   (key, value) -> {
-                    if (!key.startsWith(State.TEMP_PREFIX)) {
-                      if (value == State.REMOVED) {
-                        updatedState.remove(key);
-                      } else {
-                        updatedState.put(key, value);
-                      }
-                    }
+                    updatedState.put(key, value);
                   });
             }
           }
@@ -332,6 +325,21 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     // For DriverManager, there's no explicit global close.
     // Individual connections are closed by try-with-resources.
     logger.info("PostgresSessionService closing.");
+  }
+
+  /**
+   * Removes temporary state delta keys from the event. Filters out all keys that start with
+   * State.TEMP_PREFIX from the event's actions state delta.
+   *
+   * @param event The event to trim.
+   * @return The event with temporary state delta keys removed.
+   */
+  private void trimTempDeltaState(Event event) {
+    if (event == null || event.actions() == null || event.actions().stateDelta() == null) {
+      return;
+    }
+    ConcurrentMap<String, Object> stateDelta = event.actions().stateDelta();
+    stateDelta.entrySet().removeIf(entry -> entry.getKey().startsWith(State.TEMP_PREFIX));
   }
 
   public JSONObject getSessionFromRedisOrPostgres(String sessionId) throws Exception {
