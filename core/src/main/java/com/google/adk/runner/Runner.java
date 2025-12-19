@@ -50,8 +50,8 @@ import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -616,35 +616,39 @@ public class Runner {
     try {
       InvocationContext invocationContext =
           newInvocationContextForLive(session, Optional.of(liveRequestQueue), runConfig);
-      if (invocationContext.agent() instanceof LlmAgent) {
-        LlmAgent agent = (LlmAgent) invocationContext.agent();
-        for (BaseTool tool : agent.tools()) {
-          if (tool instanceof FunctionTool functionTool) {
-            for (Parameter parameter : functionTool.func().getParameters()) {
-              if (parameter.getType().equals(LiveRequestQueue.class)) {
-                invocationContext
-                    .activeStreamingTools()
-                    .put(functionTool.name(), new ActiveStreamingTool(new LiveRequestQueue()));
-              }
-            }
-          }
-        }
+
+      Single<InvocationContext> invocationContextSingle;
+      if (invocationContext.agent() instanceof LlmAgent agent) {
+        invocationContextSingle =
+            agent
+                .tools()
+                .map(
+                    tools -> {
+                      this.addActiveStreamingTools(invocationContext, tools);
+                      return invocationContext;
+                    });
+      } else {
+        invocationContextSingle = Single.just(invocationContext);
       }
-      return Telemetry.traceFlowable(
-          spanContext,
-          span,
-          () ->
-              invocationContext
-                  .agent()
-                  .runLive(invocationContext)
-                  .doOnNext(event -> this.sessionService.appendEvent(session, event))
-                  .onErrorResumeNext(
-                      throwable -> {
-                        span.setStatus(StatusCode.ERROR, "Error in runLive Flowable execution");
-                        span.recordException(throwable);
-                        span.end();
-                        return Flowable.error(throwable);
-                      }));
+
+      return invocationContextSingle.flatMapPublisher(
+          updatedInvocationContext ->
+              Telemetry.traceFlowable(
+                  spanContext,
+                  span,
+                  () ->
+                      updatedInvocationContext
+                          .agent()
+                          .runLive(updatedInvocationContext)
+                          .doOnNext(event -> this.sessionService.appendEvent(session, event))
+                          .onErrorResumeNext(
+                              throwable -> {
+                                span.setStatus(
+                                    StatusCode.ERROR, "Error in runLive Flowable execution");
+                                span.recordException(throwable);
+                                span.end();
+                                return Flowable.error(throwable);
+                              })));
     } catch (Throwable t) {
       span.setStatus(StatusCode.ERROR, "Error during runLive synchronous setup");
       span.recordException(t);
@@ -738,6 +742,23 @@ public class Runner {
     }
 
     return rootAgent;
+  }
+
+  private void addActiveStreamingTools(InvocationContext invocationContext, List<BaseTool> tools) {
+    tools.stream()
+        .filter(FunctionTool.class::isInstance)
+        .map(FunctionTool.class::cast)
+        .filter(this::hasLiveRequestQueueParameter)
+        .forEach(
+            tool ->
+                invocationContext
+                    .activeStreamingTools()
+                    .put(tool.name(), new ActiveStreamingTool(new LiveRequestQueue())));
+  }
+
+  private boolean hasLiveRequestQueueParameter(FunctionTool functionTool) {
+    return Arrays.stream(functionTool.func().getParameters())
+        .anyMatch(parameter -> parameter.getType().equals(LiveRequestQueue.class));
   }
 
   // TODO: run statelessly

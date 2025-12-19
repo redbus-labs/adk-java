@@ -1,4 +1,4 @@
-package com.google.adk.a2a;
+package com.google.adk.a2a.converters;
 
 import static com.google.common.truth.Truth.assertThat;
 
