@@ -2,6 +2,7 @@ package com.google.adk.runner;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.artifacts.PostegresArtifactService;
+import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.sessions.PostgresSessionService;
 import java.io.IOException;
@@ -23,5 +24,15 @@ public class PostgresRunner extends Runner {
         new PostegresArtifactService(appName + "_ART", "" + appName + "_ART"),
         new PostgresSessionService(),
         new InMemoryMemoryService());
+  }
+
+  public PostgresRunner(BaseAgent agent, String appName, BaseMemoryService memoryService)
+      throws IOException, SQLException {
+    super(
+        agent,
+        appName,
+        new PostegresArtifactService(appName + "_ART", "" + appName + "_ART"),
+        new PostgresSessionService(),
+        memoryService);
   }
 }
