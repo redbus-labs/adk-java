@@ -3,6 +3,7 @@ package com.google.adk.sessions;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
 import com.google.adk.redis.RedisConnection;
 import com.google.adk.utils.PostgresDBHelper;
 import com.google.adk.utils.PropertiesHelper;
@@ -242,15 +243,37 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
         if (storedSession.events() != null) {
           // Create a new list with the appended event to avoid mutating the original
           List<Event> updatedEvents = new ArrayList<>(storedSession.events());
+          trimTempDeltaState(event);
           updatedEvents.add(event);
 
-          // Create a new session with updated events and timestamp
+          // Apply state delta from the event to the stored session's state
+          ConcurrentMap<String, Object> updatedState = new ConcurrentHashMap<>();
+          if (storedSession.state() != null) {
+            updatedState.putAll(storedSession.state());
+          }
+
+          // Apply state delta from event actions
+          EventActions actions = event.actions();
+          if (actions != null) {
+            ConcurrentMap<String, Object> stateDelta = actions.stateDelta();
+            if (stateDelta != null && !stateDelta.isEmpty()) {
+              stateDelta.forEach(
+                  (key, value) -> {
+                    if (value == State.REMOVED) {
+                      updatedState.remove(key);
+                    } else {
+                      updatedState.put(key, value);
+                    }                  });
+            }
+          }
+
+          // Create a new session with updated events, updated state, and timestamp
           Instant now = Instant.now();
           Session updatedSession =
               Session.builder(storedSession.id())
                   .appName(storedSession.appName())
                   .userId(storedSession.userId())
-                  .state(storedSession.state())
+                  .state(updatedState)
                   .events(updatedEvents)
                   .lastUpdateTime(now)
                   .build();
@@ -262,8 +285,8 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
 
           PostgresDBHelper.getInstance().saveSession(sessionId, updatedSession);
 
-          logger.debug("Event appended successfully to session {}.", sessionId);
-          // Call super implementation if there are additional side effects
+          logger.debug("Event appended successfully to session {} with state updates.", sessionId);
+          // Call super implementation to update the in-memory session object as well
           BaseSessionService.super.appendEvent(session, event);
           return Single.just(event);
         } else {
@@ -302,6 +325,21 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     // For DriverManager, there's no explicit global close.
     // Individual connections are closed by try-with-resources.
     logger.info("PostgresSessionService closing.");
+  }
+
+  /**
+   * Removes temporary state delta keys from the event. Filters out all keys that start with
+   * State.TEMP_PREFIX from the event's actions state delta.
+   *
+   * @param event The event to trim.
+   * @return The event with temporary state delta keys removed.
+   */
+  private void trimTempDeltaState(Event event) {
+    if (event == null || event.actions() == null || event.actions().stateDelta() == null) {
+      return;
+    }
+    ConcurrentMap<String, Object> stateDelta = event.actions().stateDelta();
+    stateDelta.entrySet().removeIf(entry -> entry.getKey().startsWith(State.TEMP_PREFIX));
   }
 
   public JSONObject getSessionFromRedisOrPostgres(String sessionId) throws Exception {

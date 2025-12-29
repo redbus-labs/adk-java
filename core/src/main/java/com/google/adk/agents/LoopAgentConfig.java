@@ -14,15 +14,21 @@
  * limitations under the License.
  */
 
-package com.google.adk;
+package com.google.adk.agents;
 
-/**
- * Tracks the current ADK version. Useful for tracking headers. Kept as a string literal to avoid
- * coupling with the build system.
- */
-public final class Version {
-  // Don't touch this, release-please should keep it up to date.
-  public static final String JAVA_ADK_VERSION = "0.5.0";
+/** Configuration for LoopAgent. */
+public class LoopAgentConfig extends BaseAgentConfig {
+  private Integer maxIterations;
 
-  private Version() {}
+  public LoopAgentConfig() {
+    super("LoopAgent");
+  }
+
+  public Integer maxIterations() {
+    return maxIterations;
+  }
+
+  public void setMaxIterations(Integer maxIterations) {
+    this.maxIterations = maxIterations;
+  }
 }
