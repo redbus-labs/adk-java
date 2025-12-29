@@ -170,7 +170,8 @@ public class PostgresHelper {
     config.setConnectionTimeout(30000);
     config.setIdleTimeout(600000);
     config.setMaxLifetime(1800000);
-    config.setLeakDetectionThreshold(60000);
+    // Leak detection threshold increased to 2 minutes for large file handling (videos, PDFs)
+    config.setLeakDetectionThreshold(120000);  // 120 seconds (2 minutes)
 
     // Performance settings
     config.addDataSourceProperty("cachePrepStmts", "true");
