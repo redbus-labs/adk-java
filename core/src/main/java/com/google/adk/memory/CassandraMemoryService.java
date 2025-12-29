@@ -16,20 +16,19 @@
 
 package com.google.adk.memory;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
-import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.CqlSession;
-import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.data.CqlVector;
 import com.google.adk.sessions.Session;
 import com.google.adk.tools.retrieval.CassandraRagRetrieval;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -75,90 +74,93 @@ public class CassandraMemoryService implements BaseMemoryService {
 
   @Override
   public Completable addSessionToMemory(Session session) {
-    // This method is handled by a separate pipeline
-    // No implementation needed here
-    return Completable.complete();
+    return Completable.defer(
+        () -> {
+          List<Completable> insertOps = new ArrayList<>();
+
+          for (var event : session.events()) {
+            if (event.content().isEmpty() || event.content().get().parts().isEmpty()) {
+              continue;
+            }
+
+            String text = event.content().get().parts().get().get(0).text().orElse(null);
+            if (text == null || text.trim().isEmpty()) {
+              continue;
+            }
+
+            // Create a completable for each event insertion
+            Completable insertOp =
+                embeddingService
+                    .generateEmbedding(text)
+                    .flatMapCompletable(
+                        embedding ->
+                            Completable.fromAction(
+                                () -> {
+                                  // Convert double[] to CqlVector<Float> for Cassandra VECTOR type
+                                  List<Float> floatList =
+                                      Arrays.stream(embedding)
+                                          .mapToObj(d -> (float) d)
+                                          .collect(Collectors.toList());
+                                  CqlVector<Float> embeddingVector =
+                                      CqlVector.newInstance(floatList);
+
+                                  cassandraRagRetrieval
+                                      .getSession()
+                                      .execute(
+                                          "INSERT INTO "
+                                              + cassandraRagRetrieval.getKeyspace()
+                                              + "."
+                                              + cassandraRagRetrieval.getTable()
+                                              + " (agent_name, user_id, turn_id, data, embedding) VALUES (?, ?, now(), ?, ?)",
+                                          session.appName(),
+                                          session.id(),
+                                          text,
+                                          embeddingVector);
+                                }));
+
+            insertOps.add(insertOp);
+          }
+
+          // Execute all insertions sequentially
+          return Completable.concat(insertOps);
+        });
   }
 
   @Override
-  @SuppressWarnings("nullness")
   public Single<SearchMemoryResponse> searchMemory(String appName, String userId, String query) {
     return embeddingService
         .generateEmbedding(query)
         .flatMap(
-            queryEmbedding ->
-                Single.fromCallable(
-                    () -> {
-                      System.out.println(
-                          "CassandraMemoryService.searchMemory called with query Pawan LOG");
-                      // Convert query embedding to list of floats for Cassandra vector search
-                      // Cassandra vector search requires vector<float> type, not list<double>
-                      List<Float> embeddingList =
-                          Arrays.stream(queryEmbedding)
-                              .mapToObj(d -> (float) d)
-                              .collect(Collectors.toList());
-                      // IMPORTANT: Cassandra's `vector<float, N>` is not the same as `list<float>`.
-                      // Bind a native vector value, otherwise Cassandra reports "extraneous bytes".
-                      CqlVector<Float> embeddingVector = CqlVector.newInstance(embeddingList);
+            embedding ->
+                cassandraRagRetrieval.runAsync(
+                    ImmutableMap.of(
+                        "embedding",
+                        Arrays.stream(embedding)
+                            .mapToObj(d -> (float) d)
+                            .collect(Collectors.toList())),
+                    null))
+        .map(
+            result -> {
+              // The response is a List of Maps, each containing client_id, score, and data
+              @SuppressWarnings("unchecked")
+              List<ImmutableMap<String, Object>> contexts =
+                  (List<ImmutableMap<String, Object>>) result.get("response");
 
-                      // Query longterm_recall_memo table with vector similarity search
-                      // Note: This uses ORDER BY with ANN (Approximate Nearest Neighbor) for
-                      // vector search
-                      String cql =
-                          "SELECT app_id, user_id, conversation_id, created_at, helpfulness_reason, "
-                              + "session_id, summary, embedding "
-                              + "FROM "
-                              + cassandraRagRetrieval.getKeyspace()
-                              + "."
-                              + cassandraRagRetrieval.getTable()
-                              + " WHERE app_id = ? AND user_id = ? "
-                              + "ORDER BY embedding ANN OF ? LIMIT 10";
-
-                      var resultSet =
-                          cassandraRagRetrieval
-                              .getSession()
-                              .execute(
-                                  SimpleStatement.builder(cql)
-                                      // SAI ANN is experimental and only supports ONE/LOCAL_ONE.
-                                      .setConsistencyLevel(ConsistencyLevel.LOCAL_ONE)
-                                      // Avoid paging (ANN doesn't support paging); LIMIT 10 fits in
-                                      // one page.
-                                      .setPageSize(10)
-                                      .addPositionalValues(appName, userId, embeddingVector)
-                                      .build());
-
-                      // Build memory entries from results
-                      ImmutableList<MemoryEntry> memories =
-                          resultSet.all().stream()
-                              .map(
-                                  row -> {
-                                    String summary = row.getString("summary");
-                                    String helpfulnessReason = row.getString("helpfulness_reason");
-                                    String sessionId = row.getString("session_id");
-
-                                    // Combine summary and helpfulness reason for context
-                                    String memoryText = summary;
-                                    if (helpfulnessReason != null
-                                        && !helpfulnessReason.trim().isEmpty()) {
-                                      memoryText += "\nReason: " + helpfulnessReason;
-                                    }
-                                    if (sessionId != null && !sessionId.trim().isEmpty()) {
-                                      memoryText += "\nSession ID: " + sessionId;
-                                    }
-
-                                    @Nonnull
-                                    Part memoryPart = checkNotNull(Part.fromText(memoryText));
-
-                                    return MemoryEntry.builder()
-                                        .content(
-                                            Content.builder()
-                                                .parts(ImmutableList.of(memoryPart))
-                                                .build())
-                                        .build();
-                                  })
-                              .collect(toImmutableList());
-
-                      return SearchMemoryResponse.builder().setMemories(memories).build();
-                    }));
+              ImmutableList<MemoryEntry> memories =
+                  contexts.stream()
+                      .map(
+                          contextMap -> {
+                            // Extract the "data" field which contains the actual text
+                            String data = (String) contextMap.get("data");
+                            return MemoryEntry.builder()
+                                .content(
+                                    Content.builder()
+                                        .parts(ImmutableList.of(Part.fromText(data)))
+                                        .build())
+                                .build();
+                          })
+                      .collect(toImmutableList());
+              return SearchMemoryResponse.builder().setMemories(memories).build();
+            });
   }
 }
