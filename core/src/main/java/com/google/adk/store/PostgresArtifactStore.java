@@ -34,7 +34,7 @@ import java.util.List;
  * @author Yashas S
  * @since 2025-12-08
  */
-public class PostgresHelper {
+public class PostgresArtifactStore {
 
   // Environment variable keys
   private static final String DB_URL_ENV = "DBURL";
@@ -44,7 +44,7 @@ public class PostgresHelper {
   // Default table name
   private static final String DEFAULT_TABLE_NAME = "artifacts";
 
-  private static volatile PostgresHelper instance;
+  private static volatile PostgresArtifactStore instance;
   private final HikariDataSource dataSource;
   private final String tableName;
 
@@ -52,7 +52,7 @@ public class PostgresHelper {
    * Private constructor for singleton pattern. Initializes HikariCP connection pool from
    * environment variables.
    */
-  private PostgresHelper() {
+  private PostgresArtifactStore() {
     this(DEFAULT_TABLE_NAME);
   }
 
@@ -62,7 +62,7 @@ public class PostgresHelper {
    *
    * @param tableName the table name to use for artifacts
    */
-  private PostgresHelper(String tableName) {
+  private PostgresArtifactStore(String tableName) {
     this.tableName = tableName;
     this.dataSource = initializeDataSource();
     initializeTable();
@@ -76,7 +76,7 @@ public class PostgresHelper {
    * @param dbPassword the database password
    * @param tableName the table name to use for artifacts
    */
-  private PostgresHelper(String dbUrl, String dbUser, String dbPassword, String tableName) {
+  private PostgresArtifactStore(String dbUrl, String dbUser, String dbPassword, String tableName) {
     this.tableName = tableName;
     this.dataSource = initializeDataSource(dbUrl, dbUser, dbPassword);
     initializeTable();
@@ -86,13 +86,13 @@ public class PostgresHelper {
    * Get singleton instance with default table name. Uses environment variables for database
    * connection.
    *
-   * @return the PostgresHelper instance
+   * @return the PostgresArtifactStore instance
    */
-  public static PostgresHelper getInstance() {
+  public static PostgresArtifactStore getInstance() {
     if (instance == null) {
-      synchronized (PostgresHelper.class) {
+      synchronized (PostgresArtifactStore.class) {
         if (instance == null) {
-          instance = new PostgresHelper();
+          instance = new PostgresArtifactStore();
         }
       }
     }
@@ -104,13 +104,13 @@ public class PostgresHelper {
    * connection.
    *
    * @param tableName the table name to use for artifacts
-   * @return the PostgresHelper instance
+   * @return the PostgresArtifactStore instance
    */
-  public static PostgresHelper getInstance(String tableName) {
+  public static PostgresArtifactStore getInstance(String tableName) {
     if (instance == null) {
-      synchronized (PostgresHelper.class) {
+      synchronized (PostgresArtifactStore.class) {
         if (instance == null) {
-          instance = new PostgresHelper(tableName);
+          instance = new PostgresArtifactStore(tableName);
         }
       }
     }
@@ -125,11 +125,11 @@ public class PostgresHelper {
    * @param dbUser the database username
    * @param dbPassword the database password
    * @param tableName the table name to use for artifacts
-   * @return a new PostgresHelper instance
+   * @return a new PostgresArtifactStore instance
    */
-  public static PostgresHelper createInstance(
+  public static PostgresArtifactStore createInstance(
       String dbUrl, String dbUser, String dbPassword, String tableName) {
-    return new PostgresHelper(dbUrl, dbUser, dbPassword, tableName);
+    return new PostgresArtifactStore(dbUrl, dbUser, dbPassword, tableName);
   }
 
   /**
@@ -171,7 +171,7 @@ public class PostgresHelper {
     config.setIdleTimeout(600000);
     config.setMaxLifetime(1800000);
     // Leak detection threshold increased to 2 minutes for large file handling (videos, PDFs)
-    config.setLeakDetectionThreshold(120000);  // 120 seconds (2 minutes)
+    config.setLeakDetectionThreshold(120000); // 120 seconds (2 minutes)
 
     // Performance settings
     config.addDataSourceProperty("cachePrepStmts", "true");
@@ -204,6 +204,7 @@ public class PostgresHelper {
                 + "version INT NOT NULL DEFAULT 0, "
                 + "mime_type VARCHAR(100), "
                 + "data BYTEA NOT NULL, "
+                + "metadata JSONB, "
                 + "created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, "
                 + "CONSTRAINT %s_unique_version UNIQUE(app_name, user_id, session_id, filename, version)"
                 + ")",
@@ -249,13 +250,38 @@ public class PostgresHelper {
       byte[] data,
       String mimeType)
       throws SQLException {
+    return saveArtifact(appName, userId, sessionId, filename, data, mimeType, null);
+  }
+
+  /**
+   * Save artifact to database with metadata. Returns the assigned version number.
+   *
+   * @param appName the application name
+   * @param userId the user ID
+   * @param sessionId the session ID
+   * @param filename the artifact filename
+   * @param data the artifact binary data
+   * @param mimeType the MIME type
+   * @param metadata the metadata JSON string (can be null)
+   * @return the version number assigned to this artifact
+   * @throws SQLException if save operation fails
+   */
+  public int saveArtifact(
+      String appName,
+      String userId,
+      String sessionId,
+      String filename,
+      byte[] data,
+      String mimeType,
+      String metadata)
+      throws SQLException {
     // First, get the next version number
     int nextVersion = getNextVersion(appName, userId, sessionId, filename);
 
     String sql =
         String.format(
-            "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
             tableName);
 
     try (Connection conn = getConnection();
@@ -267,6 +293,7 @@ public class PostgresHelper {
       pstmt.setInt(5, nextVersion);
       pstmt.setString(6, mimeType);
       pstmt.setBytes(7, data);
+      pstmt.setString(8, metadata);
 
       int rowsAffected = pstmt.executeUpdate();
 
@@ -331,14 +358,14 @@ public class PostgresHelper {
       // Load specific version
       sql =
           String.format(
-              "SELECT data, mime_type, version, created_at FROM %s "
+              "SELECT data, mime_type, version, created_at, metadata FROM %s "
                   + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? AND version = ?",
               tableName);
     } else {
       // Load latest version
       sql =
           String.format(
-              "SELECT data, mime_type, version, created_at FROM %s "
+              "SELECT data, mime_type, version, created_at, metadata FROM %s "
                   + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? "
                   + "ORDER BY version DESC LIMIT 1",
               tableName);
@@ -360,8 +387,9 @@ public class PostgresHelper {
           String mimeType = rs.getString("mime_type");
           int loadedVersion = rs.getInt("version");
           Timestamp createdAt = rs.getTimestamp("created_at");
+          String metadata = rs.getString("metadata");
 
-          return new ArtifactData(data, mimeType, loadedVersion, createdAt);
+          return new ArtifactData(data, mimeType, loadedVersion, createdAt, metadata);
         }
       }
     }
@@ -483,12 +511,15 @@ public class PostgresHelper {
     public final String mimeType;
     public final int version;
     public final Timestamp createdAt;
+    public final String metadata;
 
-    public ArtifactData(byte[] data, String mimeType, int version, Timestamp createdAt) {
+    public ArtifactData(
+        byte[] data, String mimeType, int version, Timestamp createdAt, String metadata) {
       this.data = data;
       this.mimeType = mimeType;
       this.version = version;
       this.createdAt = createdAt;
+      this.metadata = metadata;
     }
   }
 }

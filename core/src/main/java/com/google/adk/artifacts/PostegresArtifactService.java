@@ -16,8 +16,8 @@
 
 package com.google.adk.artifacts;
 
-import com.google.adk.store.PostgresHelper;
-import com.google.adk.store.PostgresHelper.ArtifactData;
+import com.google.adk.store.PostgresArtifactStore;
+import com.google.adk.store.PostgresArtifactStore.ArtifactData;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
@@ -63,7 +63,7 @@ import java.util.Optional;
  */
 public final class PostegresArtifactService implements BaseArtifactService {
 
-  private final PostgresHelper dbHelper;
+  private final PostgresArtifactStore dbHelper;
 
   /**
    * Creates a new PostegresArtifactService using environment variables for database connection.
@@ -78,7 +78,7 @@ public final class PostegresArtifactService implements BaseArtifactService {
    * </ul>
    */
   public PostegresArtifactService() {
-    this.dbHelper = PostgresHelper.getInstance();
+    this.dbHelper = PostgresArtifactStore.getInstance();
   }
 
   /**
@@ -88,7 +88,7 @@ public final class PostegresArtifactService implements BaseArtifactService {
    * @param tableName the table name to use for artifacts
    */
   public PostegresArtifactService(String tableName) {
-    this.dbHelper = PostgresHelper.getInstance(tableName);
+    this.dbHelper = PostgresArtifactStore.getInstance(tableName);
   }
 
   /**
@@ -101,7 +101,7 @@ public final class PostegresArtifactService implements BaseArtifactService {
    */
   public PostegresArtifactService(String appName, String artifactTableName) {
     // appName is ignored as it's passed to each method call, not stored in the service
-    this.dbHelper = PostgresHelper.getInstance(artifactTableName);
+    this.dbHelper = PostgresArtifactStore.getInstance(artifactTableName);
   }
 
   /**
@@ -114,7 +114,7 @@ public final class PostegresArtifactService implements BaseArtifactService {
    */
   public PostegresArtifactService(
       String dbUrl, String dbUser, String dbPassword, String tableName) {
-    this.dbHelper = PostgresHelper.createInstance(dbUrl, dbUser, dbPassword, tableName);
+    this.dbHelper = PostgresArtifactStore.createInstance(dbUrl, dbUser, dbPassword, tableName);
   }
 
   @Override
@@ -127,8 +127,55 @@ public final class PostegresArtifactService implements BaseArtifactService {
             byte[] data = extractBytesFromPart(artifact);
             String mimeType = extractMimeTypeFromPart(artifact);
 
-            // Save to database
-            return dbHelper.saveArtifact(appName, userId, sessionId, filename, data, mimeType);
+            // Save to database without metadata (metadata = null)
+            // Applications should use saveArtifact(..., metadata) if they need custom metadata
+            return dbHelper.saveArtifact(
+                appName, userId, sessionId, filename, data, mimeType, null);
+          } catch (SQLException e) {
+            throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  /**
+   * Save an artifact with custom metadata.
+   *
+   * <p>This overloaded method allows the caller to provide custom metadata as a JSON string.
+   * Metadata can contain any application-specific information (e.g., cost tracking, business
+   * context, processing results).
+   *
+   * <p>Example usage:
+   *
+   * <pre>{@code
+   * String metadata = "{\"projectId\":\"ABC\",\"uploadedBy\":\"user123\",\"cost\":0.005}";
+   * artifactService.saveArtifact(appName, userId, sessionId, filename, part, metadata);
+   * }</pre>
+   *
+   * @param appName the application name
+   * @param userId the user ID
+   * @param sessionId the session ID
+   * @param filename the artifact filename
+   * @param artifact the artifact as a Part object
+   * @param metadata custom metadata JSON string (can be null)
+   * @return a Single emitting the version number of the saved artifact
+   */
+  public Single<Integer> saveArtifact(
+      String appName,
+      String userId,
+      String sessionId,
+      String filename,
+      Part artifact,
+      String metadata) {
+    return Single.fromCallable(
+        () -> {
+          try {
+            // Extract data from Part
+            byte[] data = extractBytesFromPart(artifact);
+            String mimeType = extractMimeTypeFromPart(artifact);
+
+            // Save to database with caller-provided metadata
+            return dbHelper.saveArtifact(
+                appName, userId, sessionId, filename, data, mimeType, metadata);
           } catch (SQLException e) {
             throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
           }

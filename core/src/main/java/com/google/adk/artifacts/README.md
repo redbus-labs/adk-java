@@ -21,7 +21,7 @@ The `PostegresArtifactService` stores agent artifacts (images, documents, binary
 ```
 PostegresArtifactService (implements BaseArtifactService)
     ↓
-PostgresHelper (manages connection pool & DB operations)
+PostgresArtifactStore (manages connection pool & DB operations)
     ↓
 HikariCP (connection pooling)
     ↓
@@ -293,7 +293,7 @@ leakDetectionThreshold = 60000 ms (1 minute)
 
 ### Custom Pool Settings
 
-To customize, modify `PostgresHelper.initializeDataSource()`:
+To customize, modify `PostgresArtifactStore.initializeDataSource()`:
 
 ```java
 config.setMaximumPoolSize(20);
