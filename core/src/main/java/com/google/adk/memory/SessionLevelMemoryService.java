@@ -16,8 +16,11 @@
 
 package com.google.adk.memory;
 
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.collect.ImmutableList.toImmutableList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nonnull;
 
 import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.CqlSession;
@@ -25,21 +28,20 @@ import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.data.CqlVector;
 import com.google.adk.sessions.Session;
 import com.google.adk.tools.retrieval.CassandraRagRetrieval;
+import static com.google.common.base.Preconditions.checkNotNull;
 import com.google.common.collect.ImmutableList;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
-import javax.annotation.Nonnull;
 
 /**
  * An implementation of {@link BaseMemoryService} that uses Cassandra for storage and retrieval.
  *
- * @author Sandeep Belgavi
- * @since 2025-10-19
+ * @author Pawan Kumar
+ * @since 2026-01-05
  */
 public class SessionLevelMemoryService implements BaseMemoryService {
 
@@ -73,6 +75,12 @@ public class SessionLevelMemoryService implements BaseMemoryService {
     this(session, "rae", "rae_data");
   }
 
+  /**
+   * Add session to memory is happening asynchronously in a 
+   * separate kafka pipeline which is much more context aware.
+   * @param session The session to add to memory.
+   * @return A completable that emits when the session is added to memory.
+   */
   @Override
   public Completable addSessionToMemory(Session session) {
     // This method is handled by a separate pipeline
