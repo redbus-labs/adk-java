@@ -1,5 +1,6 @@
 package com.google.adk.models;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.Map;
@@ -11,8 +12,8 @@ public class GemmaFunctionCallModel {
 
   @JsonCreator
   public GemmaFunctionCallModel(
-      @JsonProperty("name") String name,
-      @JsonProperty("parameters") Map<String, Object> parameters) {
+      @JsonProperty("name") @JsonAlias("function") String name,
+      @JsonProperty("parameters") @JsonAlias("args") Map<String, Object> parameters) {
     this.name = name;
     this.parameters = parameters;
   }
