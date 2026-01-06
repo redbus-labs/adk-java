@@ -16,9 +16,8 @@
 
 package com.google.adk.memory;
 
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 
@@ -97,14 +96,12 @@ public class SessionLevelMemoryService implements BaseMemoryService {
             queryEmbedding ->
                 Single.fromCallable(
                     () -> {
-                      System.out.println(
-                          "SessionLevelMemoryService.searchMemory called with query Pawan LOG");
                       // Convert query embedding to list of floats for Cassandra vector search
                       // Cassandra vector search requires vector<float> type, not list<double>
-                      List<Float> embeddingList =
-                          Arrays.stream(queryEmbedding)
-                              .mapToObj(d -> (float) d)
-                              .collect(Collectors.toList());
+                      List<Float> embeddingList = new ArrayList<>(queryEmbedding.length);
+                      for (double d : queryEmbedding) {
+                        embeddingList.add((float) d);
+                      }
                       // IMPORTANT: Cassandra's `vector<float, N>` is not the same as `list<float>`.
                       // Bind a native vector value, otherwise Cassandra reports "extraneous bytes".
                       CqlVector<Float> embeddingVector = CqlVector.newInstance(embeddingList);
@@ -120,7 +117,7 @@ public class SessionLevelMemoryService implements BaseMemoryService {
                               + "."
                               + cassandraRagRetrieval.getTable()
                               + " WHERE app_id = ? AND user_id = ? "
-                              + "ORDER BY embedding ANN OF ? LIMIT 10";
+                              + "ORDER BY embedding ANN OF ? LIMIT 2";
 
                       var resultSet =
                           cassandraRagRetrieval
@@ -131,7 +128,7 @@ public class SessionLevelMemoryService implements BaseMemoryService {
                                       .setConsistencyLevel(ConsistencyLevel.LOCAL_ONE)
                                       // Avoid paging (ANN doesn't support paging); LIMIT 10 fits in
                                       // one page.
-                                      .setPageSize(10)
+                                      .setPageSize(2)
                                       .addPositionalValues(appName, userId, embeddingVector)
                                       .build());
 
