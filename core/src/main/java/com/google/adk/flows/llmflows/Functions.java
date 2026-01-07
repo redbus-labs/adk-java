@@ -46,6 +46,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.functions.Function;
@@ -152,15 +153,16 @@ public final class Functions {
     Function<FunctionCall, Maybe<Event>> functionCallMapper =
         getFunctionCallMapper(invocationContext, tools, toolConfirmations, false);
 
-    Flowable<Event> functionResponseEventsFlowable;
+    Observable<Event> functionResponseEventsObservable;
     if (invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.SEQUENTIAL) {
-      functionResponseEventsFlowable =
-          Flowable.fromIterable(functionCalls).concatMapMaybe(functionCallMapper);
+      functionResponseEventsObservable =
+          Observable.fromIterable(functionCalls).concatMapMaybe(functionCallMapper);
     } else {
-      functionResponseEventsFlowable =
-          Flowable.fromIterable(functionCalls).flatMapMaybe(functionCallMapper);
+      functionResponseEventsObservable =
+          Observable.fromIterable(functionCalls)
+              .concatMapEager(call -> functionCallMapper.apply(call).toObservable());
     }
-    return functionResponseEventsFlowable
+    return functionResponseEventsObservable
         .toList()
         .flatMapMaybe(
             events -> {
@@ -217,16 +219,17 @@ public final class Functions {
     Function<FunctionCall, Maybe<Event>> functionCallMapper =
         getFunctionCallMapper(invocationContext, tools, toolConfirmations, true);
 
-    Flowable<Event> responseEventsFlowable;
+    Observable<Event> responseEventsObservable;
     if (invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.SEQUENTIAL) {
-      responseEventsFlowable =
-          Flowable.fromIterable(functionCalls).concatMapMaybe(functionCallMapper);
+      responseEventsObservable =
+          Observable.fromIterable(functionCalls).concatMapMaybe(functionCallMapper);
     } else {
-      responseEventsFlowable =
-          Flowable.fromIterable(functionCalls).flatMapMaybe(functionCallMapper);
+      responseEventsObservable =
+          Observable.fromIterable(functionCalls)
+              .concatMapEager(call -> functionCallMapper.apply(call).toObservable());
     }
 
-    return responseEventsFlowable
+    return responseEventsObservable
         .toList()
         .flatMapMaybe(
             events -> {
