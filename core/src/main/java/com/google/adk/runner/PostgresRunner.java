@@ -1,7 +1,7 @@
 package com.google.adk.runner;
 
 import com.google.adk.agents.BaseAgent;
-import com.google.adk.artifacts.PostegresArtifactService;
+import com.google.adk.artifacts.PostgresArtifactService;
 import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.sessions.PostgresSessionService;
 import java.io.IOException;
@@ -31,7 +31,7 @@ public class PostgresRunner extends Runner {
     super(
         agent,
         appName,
-        new PostegresArtifactService("artifacts"),
+        new PostgresArtifactService(), // Uses default "artifacts" table
         new PostgresSessionService(),
         new InMemoryMemoryService());
   }

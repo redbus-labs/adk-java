@@ -23,6 +23,7 @@ import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
@@ -34,40 +35,40 @@ import java.util.Optional;
  * types wrapping JDBC operations. Supports environment variable configuration or explicit
  * constructor parameters.
  *
+ * <p><b>Single Table Per JVM:</b> This service uses a single "artifacts" table per JVM for all
+ * artifact storage. Multi-tenancy is achieved through (appName, userId, sessionId) isolation,
+ * eliminating the need for separate physical tables.
+ *
  * <p>Example usage with environment variables:
  *
  * <pre>{@code
- * PostegresArtifactService artifactService = new PostegresArtifactService();
+ * PostgresArtifactService artifactService = new PostgresArtifactService();
  * // Uses DBURL, DBUSER, DBPASSWORD environment variables
- * }</pre>
- *
- * <p>Example usage with custom table name:
- *
- * <pre>{@code
- * PostegresArtifactService artifactService = new PostegresArtifactService("my_artifacts");
+ * // Stores in "artifacts" table with appName/userId/sessionId isolation
  * }</pre>
  *
  * <p>Example usage with explicit connection parameters:
  *
  * <pre>{@code
- * PostegresArtifactService artifactService = new PostegresArtifactService(
+ * PostgresArtifactService artifactService = new PostgresArtifactService(
  *     "jdbc:postgresql://localhost:5432/mydb",
  *     "username",
- *     "password",
- *     "artifacts"
+ *     "password"
  * );
  * }</pre>
  *
  * @author Yashas S
  * @since 2025-12-08
  */
-public final class PostegresArtifactService implements BaseArtifactService {
+public final class PostgresArtifactService implements BaseArtifactService {
 
+  private static final String DEFAULT_TABLE_NAME = "artifacts";
   private final PostgresArtifactStore dbHelper;
 
   /**
-   * Creates a new PostegresArtifactService using environment variables for database connection.
-   * Uses default table name "artifacts".
+   * Creates a new PostgresArtifactService using environment variables for database connection. Uses
+   * the default "artifacts" table. Per JVM, only one table is used for all artifact operations,
+   * with multi-tenancy achieved through (appName, userId, sessionId) isolation.
    *
    * <p>Required environment variables:
    *
@@ -77,64 +78,44 @@ public final class PostegresArtifactService implements BaseArtifactService {
    *   <li>DBPASSWORD - Database password
    * </ul>
    */
-  public PostegresArtifactService() {
-    this.dbHelper = PostgresArtifactStore.getInstance();
+  public PostgresArtifactService() {
+    this.dbHelper = PostgresArtifactStore.getInstance(DEFAULT_TABLE_NAME);
   }
 
   /**
-   * Creates a new PostegresArtifactService with custom table name. Uses environment variables for
-   * database connection.
+   * Creates a new PostgresArtifactService with explicit connection parameters. Uses the default
+   * "artifacts" table.
    *
-   * @param tableName the table name to use for artifacts
-   */
-  public PostegresArtifactService(String tableName) {
-    this.dbHelper = PostgresArtifactStore.getInstance(tableName);
-  }
-
-  /**
-   * Creates a new PostegresArtifactService with app name and table name. Uses environment variables
-   * for database connection. Note: appName parameter is kept for backward compatibility but is not
-   * stored; it should be passed to each method call instead.
-   *
-   * @param appName the application name (for backward compatibility, not stored)
-   * @param artifactTableName the table name to use for artifacts
-   */
-  public PostegresArtifactService(String appName, String artifactTableName) {
-    // appName is ignored as it's passed to each method call, not stored in the service
-    this.dbHelper = PostgresArtifactStore.getInstance(artifactTableName);
-  }
-
-  /**
-   * Creates a new PostegresArtifactService with explicit connection parameters.
+   * <p>This constructor is useful for testing or when environment variables are not available.
    *
    * @param dbUrl the database URL
    * @param dbUser the database username
    * @param dbPassword the database password
-   * @param tableName the table name to use for artifacts
    */
-  public PostegresArtifactService(
-      String dbUrl, String dbUser, String dbPassword, String tableName) {
-    this.dbHelper = PostgresArtifactStore.createInstance(dbUrl, dbUser, dbPassword, tableName);
+  public PostgresArtifactService(String dbUrl, String dbUser, String dbPassword) {
+    this.dbHelper =
+        PostgresArtifactStore.createInstance(dbUrl, dbUser, dbPassword, DEFAULT_TABLE_NAME);
   }
 
   @Override
   public Single<Integer> saveArtifact(
       String appName, String userId, String sessionId, String filename, Part artifact) {
     return Single.fromCallable(
-        () -> {
-          try {
-            // Extract data from Part
-            byte[] data = extractBytesFromPart(artifact);
-            String mimeType = extractMimeTypeFromPart(artifact);
+            () -> {
+              try {
+                // Extract data from Part
+                byte[] data = extractBytesFromPart(artifact);
+                String mimeType = extractMimeTypeFromPart(artifact);
 
-            // Save to database without metadata (metadata = null)
-            // Applications should use saveArtifact(..., metadata) if they need custom metadata
-            return dbHelper.saveArtifact(
-                appName, userId, sessionId, filename, data, mimeType, null);
-          } catch (SQLException e) {
-            throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
-          }
-        });
+                // Save to database without metadata (metadata = null)
+                // Applications should use saveArtifact(..., metadata) if they need custom metadata
+                return dbHelper.saveArtifact(
+                    appName, userId, sessionId, filename, data, mimeType, null);
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   /**
@@ -167,82 +148,89 @@ public final class PostegresArtifactService implements BaseArtifactService {
       Part artifact,
       String metadata) {
     return Single.fromCallable(
-        () -> {
-          try {
-            // Extract data from Part
-            byte[] data = extractBytesFromPart(artifact);
-            String mimeType = extractMimeTypeFromPart(artifact);
+            () -> {
+              try {
+                // Extract data from Part
+                byte[] data = extractBytesFromPart(artifact);
+                String mimeType = extractMimeTypeFromPart(artifact);
 
-            // Save to database with caller-provided metadata
-            return dbHelper.saveArtifact(
-                appName, userId, sessionId, filename, data, mimeType, metadata);
-          } catch (SQLException e) {
-            throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
-          }
-        });
+                // Save to database with caller-provided metadata
+                return dbHelper.saveArtifact(
+                    appName, userId, sessionId, filename, data, mimeType, metadata);
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   @Override
   public Maybe<Part> loadArtifact(
       String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
     return Maybe.fromCallable(
-        () -> {
-          try {
-            // Load from database
-            ArtifactData artifactData =
-                dbHelper.loadArtifact(appName, userId, sessionId, filename, version.orElse(null));
+            () -> {
+              try {
+                // Load from database
+                ArtifactData artifactData =
+                    dbHelper.loadArtifact(
+                        appName, userId, sessionId, filename, version.orElse(null));
 
-            if (artifactData == null) {
-              return null;
-            }
+                if (artifactData == null) {
+                  return null;
+                }
 
-            // Reconstruct Part from binary data
-            return Part.fromBytes(artifactData.data, artifactData.mimeType);
-          } catch (SQLException e) {
-            throw new RuntimeException("Failed to load artifact: " + e.getMessage(), e);
-          }
-        });
+                // Reconstruct Part from binary data
+                return Part.fromBytes(artifactData.data, artifactData.mimeType);
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to load artifact: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   @Override
   public Single<ListArtifactsResponse> listArtifactKeys(
       String appName, String userId, String sessionId) {
     return Single.fromCallable(
-        () -> {
-          try {
-            List<String> filenames = dbHelper.listFilenames(appName, userId, sessionId);
-            return ListArtifactsResponse.builder().filenames(filenames).build();
-          } catch (SQLException e) {
-            throw new RuntimeException("Failed to list artifacts: " + e.getMessage(), e);
-          }
-        });
+            () -> {
+              try {
+                List<String> filenames = dbHelper.listFilenames(appName, userId, sessionId);
+                return ListArtifactsResponse.builder().filenames(filenames).build();
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to list artifacts: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   @Override
   public Completable deleteArtifact(
       String appName, String userId, String sessionId, String filename) {
     return Completable.fromAction(
-        () -> {
-          try {
-            dbHelper.deleteArtifact(appName, userId, sessionId, filename);
-          } catch (SQLException e) {
-            throw new RuntimeException("Failed to delete artifact: " + e.getMessage(), e);
-          }
-        });
+            () -> {
+              try {
+                dbHelper.deleteArtifact(appName, userId, sessionId, filename);
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to delete artifact: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   @Override
   public Single<ImmutableList<Integer>> listVersions(
       String appName, String userId, String sessionId, String filename) {
     return Single.fromCallable(
-        () -> {
-          try {
-            List<Integer> versions = dbHelper.listVersions(appName, userId, sessionId, filename);
-            return ImmutableList.copyOf(versions);
-          } catch (SQLException e) {
-            throw new RuntimeException("Failed to list versions: " + e.getMessage(), e);
-          }
-        });
+            () -> {
+              try {
+                List<Integer> versions =
+                    dbHelper.listVersions(appName, userId, sessionId, filename);
+                return ImmutableList.copyOf(versions);
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to list versions: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   /**

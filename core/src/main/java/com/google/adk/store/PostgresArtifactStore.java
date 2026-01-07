@@ -26,6 +26,8 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Manages PostgreSQL connection pool and provides database operations for artifact storage. Uses
@@ -35,6 +37,8 @@ import java.util.List;
  * @since 2025-12-08
  */
 public class PostgresArtifactStore {
+
+  private static final Logger logger = LoggerFactory.getLogger(PostgresArtifactStore.class);
 
   // Environment variable keys
   private static final String DB_URL_ENV = "DBURL";
@@ -275,39 +279,101 @@ public class PostgresArtifactStore {
       String mimeType,
       String metadata)
       throws SQLException {
-    // First, get the next version number
-    int nextVersion = getNextVersion(appName, userId, sessionId, filename);
+    logger.debug(
+        "Saving artifact: app={}, user={}, session={}, file={}, size={}KB, mime={}",
+        appName,
+        userId,
+        sessionId,
+        filename,
+        data.length / 1024,
+        mimeType);
 
-    String sql =
-        String.format(
-            "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
-            tableName);
+    Connection conn = null;
+    try {
+      conn = getConnection();
+      // Start transaction
+      conn.setAutoCommit(false);
 
-    try (Connection conn = getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql)) {
-      pstmt.setString(1, appName);
-      pstmt.setString(2, userId);
-      pstmt.setString(3, sessionId);
-      pstmt.setString(4, filename);
-      pstmt.setInt(5, nextVersion);
-      pstmt.setString(6, mimeType);
-      pstmt.setBytes(7, data);
-      pstmt.setString(8, metadata);
+      // Get next version with row-level lock (prevents race conditions)
+      int nextVersion = getNextVersion(conn, appName, userId, sessionId, filename);
 
-      int rowsAffected = pstmt.executeUpdate();
+      String sql =
+          String.format(
+              "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
+              tableName);
 
-      if (rowsAffected > 0) {
-        return nextVersion;
-      } else {
-        throw new SQLException("Failed to save artifact, no rows affected");
+      try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        pstmt.setString(1, appName);
+        pstmt.setString(2, userId);
+        pstmt.setString(3, sessionId);
+        pstmt.setString(4, filename);
+        pstmt.setInt(5, nextVersion);
+        pstmt.setString(6, mimeType);
+        pstmt.setBytes(7, data);
+        pstmt.setString(8, metadata);
+
+        int rowsAffected = pstmt.executeUpdate();
+
+        if (rowsAffected > 0) {
+          // Commit transaction
+          conn.commit();
+
+          logger.info(
+              "✅ Artifact saved: app={}, user={}, session={}, file={}, version={}, size={}KB",
+              appName,
+              userId,
+              sessionId,
+              filename,
+              nextVersion,
+              data.length / 1024);
+          return nextVersion;
+        } else {
+          conn.rollback();
+          logger.error(
+              "❌ Failed to save artifact (no rows affected): app={}, user={}, session={}, file={}",
+              appName,
+              userId,
+              sessionId,
+              filename);
+          throw new SQLException("Failed to save artifact, no rows affected");
+        }
+      }
+    } catch (SQLException e) {
+      if (conn != null) {
+        try {
+          conn.rollback();
+        } catch (SQLException rollbackEx) {
+          logger.error("Error rolling back transaction: {}", rollbackEx.getMessage());
+        }
+      }
+      logger.error(
+          "❌ Error saving artifact: app={}, user={}, session={}, file={}, error={}",
+          appName,
+          userId,
+          sessionId,
+          filename,
+          e.getMessage());
+      throw e;
+    } finally {
+      if (conn != null) {
+        try {
+          conn.setAutoCommit(true); // Restore default
+          conn.close();
+        } catch (SQLException closeEx) {
+          logger.error("Error closing connection: {}", closeEx.getMessage());
+        }
       }
     }
   }
 
   /**
-   * Get next version number for an artifact.
+   * Get next version number for an artifact with row-level locking to prevent race conditions.
    *
+   * <p>Uses SELECT ... FOR UPDATE to ensure atomic version increment when multiple
+   * threads/processes attempt to save the same artifact simultaneously.
+   *
+   * @param conn the database connection (must be within a transaction)
    * @param appName the application name
    * @param userId the user ID
    * @param sessionId the session ID
@@ -315,22 +381,43 @@ public class PostgresArtifactStore {
    * @return the next version number
    * @throws SQLException if query fails
    */
-  private int getNextVersion(String appName, String userId, String sessionId, String filename)
+  private int getNextVersion(
+      Connection conn, String appName, String userId, String sessionId, String filename)
       throws SQLException {
-    String sql =
+    // Lock all existing rows for this artifact to prevent concurrent version generation
+    // We first lock the rows, then compute MAX in a separate query
+    // This prevents race conditions without using FOR UPDATE with aggregate functions
+
+    // Step 1: Lock all rows for this artifact (if any exist)
+    String lockSql =
+        String.format(
+            "SELECT version FROM %s "
+                + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? "
+                + "FOR UPDATE",
+            tableName);
+
+    try (PreparedStatement lockStmt = conn.prepareStatement(lockSql)) {
+      lockStmt.setString(1, appName);
+      lockStmt.setString(2, userId);
+      lockStmt.setString(3, sessionId);
+      lockStmt.setString(4, filename);
+      lockStmt.executeQuery(); // Lock rows (result not needed, just the lock)
+    }
+
+    // Step 2: Now compute the next version (rows are locked)
+    String maxSql =
         String.format(
             "SELECT COALESCE(MAX(version), -1) + 1 as next_version FROM %s "
                 + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ?",
             tableName);
 
-    try (Connection conn = getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql)) {
-      pstmt.setString(1, appName);
-      pstmt.setString(2, userId);
-      pstmt.setString(3, sessionId);
-      pstmt.setString(4, filename);
+    try (PreparedStatement maxStmt = conn.prepareStatement(maxSql)) {
+      maxStmt.setString(1, appName);
+      maxStmt.setString(2, userId);
+      maxStmt.setString(3, sessionId);
+      maxStmt.setString(4, filename);
 
-      try (ResultSet rs = pstmt.executeQuery()) {
+      try (ResultSet rs = maxStmt.executeQuery()) {
         if (rs.next()) {
           return rs.getInt("next_version");
         }
@@ -353,6 +440,14 @@ public class PostgresArtifactStore {
   public ArtifactData loadArtifact(
       String appName, String userId, String sessionId, String filename, Integer version)
       throws SQLException {
+    logger.debug(
+        "Loading artifact: app={}, user={}, session={}, file={}, version={}",
+        appName,
+        userId,
+        sessionId,
+        filename,
+        version != null ? version : "latest");
+
     String sql;
     if (version != null) {
       // Load specific version
@@ -389,9 +484,35 @@ public class PostgresArtifactStore {
           Timestamp createdAt = rs.getTimestamp("created_at");
           String metadata = rs.getString("metadata");
 
+          logger.info(
+              "✅ Artifact loaded: app={}, user={}, session={}, file={}, version={}, size={}KB",
+              appName,
+              userId,
+              sessionId,
+              filename,
+              loadedVersion,
+              data.length / 1024);
+
           return new ArtifactData(data, mimeType, loadedVersion, createdAt, metadata);
+        } else {
+          logger.warn(
+              "⚠️  Artifact not found: app={}, user={}, session={}, file={}, version={}",
+              appName,
+              userId,
+              sessionId,
+              filename,
+              version != null ? version : "latest");
         }
       }
+    } catch (SQLException e) {
+      logger.error(
+          "❌ Error loading artifact: app={}, user={}, session={}, file={}, error={}",
+          appName,
+          userId,
+          sessionId,
+          filename,
+          e.getMessage());
+      throw e;
     }
 
     return null; // Not found
@@ -408,6 +529,8 @@ public class PostgresArtifactStore {
    */
   public List<String> listFilenames(String appName, String userId, String sessionId)
       throws SQLException {
+    logger.debug("Listing artifacts: app={}, user={}, session={}", appName, userId, sessionId);
+
     String sql =
         String.format(
             "SELECT DISTINCT filename FROM %s "
@@ -428,9 +551,25 @@ public class PostgresArtifactStore {
           filenames.add(rs.getString("filename"));
         }
       }
-    }
 
-    return filenames;
+      logger.info(
+          "✅ Listed {} artifacts: app={}, user={}, session={}, files={}",
+          filenames.size(),
+          appName,
+          userId,
+          sessionId,
+          filenames);
+
+      return filenames;
+    } catch (SQLException e) {
+      logger.error(
+          "❌ Error listing artifacts: app={}, user={}, session={}, error={}",
+          appName,
+          userId,
+          sessionId,
+          e.getMessage());
+      throw e;
+    }
   }
 
   /**
@@ -444,6 +583,13 @@ public class PostgresArtifactStore {
    */
   public void deleteArtifact(String appName, String userId, String sessionId, String filename)
       throws SQLException {
+    logger.debug(
+        "Deleting artifact: app={}, user={}, session={}, file={}",
+        appName,
+        userId,
+        sessionId,
+        filename);
+
     String sql =
         String.format(
             "DELETE FROM %s WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ?",
@@ -456,7 +602,24 @@ public class PostgresArtifactStore {
       pstmt.setString(3, sessionId);
       pstmt.setString(4, filename);
 
-      pstmt.executeUpdate();
+      int rowsDeleted = pstmt.executeUpdate();
+
+      logger.info(
+          "✅ Artifact deleted: app={}, user={}, session={}, file={}, versionsDeleted={}",
+          appName,
+          userId,
+          sessionId,
+          filename,
+          rowsDeleted);
+    } catch (SQLException e) {
+      logger.error(
+          "❌ Error deleting artifact: app={}, user={}, session={}, file={}, error={}",
+          appName,
+          userId,
+          sessionId,
+          filename,
+          e.getMessage());
+      throw e;
     }
   }
 
@@ -472,6 +635,13 @@ public class PostgresArtifactStore {
    */
   public List<Integer> listVersions(
       String appName, String userId, String sessionId, String filename) throws SQLException {
+    logger.debug(
+        "Listing versions: app={}, user={}, session={}, file={}",
+        appName,
+        userId,
+        sessionId,
+        filename);
+
     String sql =
         String.format(
             "SELECT version FROM %s "
@@ -493,9 +663,27 @@ public class PostgresArtifactStore {
           versions.add(rs.getInt("version"));
         }
       }
-    }
 
-    return versions;
+      logger.info(
+          "✅ Listed {} versions: app={}, user={}, session={}, file={}, versions={}",
+          versions.size(),
+          appName,
+          userId,
+          sessionId,
+          filename,
+          versions);
+
+      return versions;
+    } catch (SQLException e) {
+      logger.error(
+          "❌ Error listing versions: app={}, user={}, session={}, file={}, error={}",
+          appName,
+          userId,
+          sessionId,
+          filename,
+          e.getMessage());
+      throw e;
+    }
   }
 
   /** Close the connection pool. */
