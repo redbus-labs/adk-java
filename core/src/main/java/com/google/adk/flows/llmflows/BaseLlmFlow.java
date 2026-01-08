@@ -200,7 +200,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                   exception ->
                                       context
                                           .pluginManager()
-                                          .runOnModelErrorCallback(
+                                          .onModelErrorCallback(
                                               new CallbackContext(
                                                   context, eventForCallbackUsage.actions()),
                                               llmRequestBuilder,
@@ -244,7 +244,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
     CallbackContext callbackContext = new CallbackContext(context, callbackEvent.actions());
 
     Maybe<LlmResponse> pluginResult =
-        context.pluginManager().runBeforeModelCallback(callbackContext, llmRequestBuilder);
+        context.pluginManager().beforeModelCallback(callbackContext, llmRequestBuilder);
 
     LlmAgent agent = (LlmAgent) context.agent();
 
@@ -280,7 +280,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
     CallbackContext callbackContext = new CallbackContext(context, callbackEvent.actions());
 
     Maybe<LlmResponse> pluginResult =
-        context.pluginManager().runAfterModelCallback(callbackContext, llmResponse);
+        context.pluginManager().afterModelCallback(callbackContext, llmResponse);
 
     LlmAgent agent = (LlmAgent) context.agent();
     Optional<List<? extends AfterModelCallback>> callbacksOpt = agent.afterModelCallback();

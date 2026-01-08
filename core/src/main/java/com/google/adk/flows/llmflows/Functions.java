@@ -29,9 +29,9 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig.ToolExecutionMode;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.events.ToolConfirmation;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
-import com.google.adk.tools.ToolConfirmation;
 import com.google.adk.tools.ToolContext;
 import com.google.common.base.VerifyException;
 import com.google.common.collect.ImmutableList;
@@ -390,7 +390,7 @@ public final class Functions {
             t ->
                 invocationContext
                     .pluginManager()
-                    .runOnToolErrorCallback(tool, functionArgs, toolContext, t)
+                    .onToolErrorCallback(tool, functionArgs, toolContext, t)
                     .map(isLive ? Optional::ofNullable : Optional::of)
                     .switchIfEmpty(Single.error(t)))
         .flatMapMaybe(
@@ -462,7 +462,7 @@ public final class Functions {
       LlmAgent agent = (LlmAgent) invocationContext.agent();
 
       Maybe<Map<String, Object>> pluginResult =
-          invocationContext.pluginManager().runBeforeToolCallback(tool, functionArgs, toolContext);
+          invocationContext.pluginManager().beforeToolCallback(tool, functionArgs, toolContext);
 
       Optional<List<? extends BeforeToolCallback>> callbacksOpt = agent.beforeToolCallback();
       if (callbacksOpt.isEmpty() || callbacksOpt.get().isEmpty()) {
@@ -496,7 +496,7 @@ public final class Functions {
       Maybe<Map<String, Object>> pluginResult =
           invocationContext
               .pluginManager()
-              .runAfterToolCallback(tool, functionArgs, toolContext, functionResult);
+              .afterToolCallback(tool, functionArgs, toolContext, functionResult);
 
       Optional<List<? extends AfterToolCallback>> callbacksOpt = agent.afterToolCallback();
       if (callbacksOpt.isEmpty() || callbacksOpt.get().isEmpty()) {
