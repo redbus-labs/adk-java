@@ -16,6 +16,7 @@
 
 package com.google.adk.store;
 
+import com.google.adk.utils.PropertiesHelper;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
@@ -39,11 +40,6 @@ import org.slf4j.LoggerFactory;
 public class PostgresArtifactStore {
 
   private static final Logger logger = LoggerFactory.getLogger(PostgresArtifactStore.class);
-
-  // Environment variable keys
-  private static final String DB_URL_ENV = "DBURL";
-  private static final String DB_USER_ENV = "DBUSER";
-  private static final String DB_PASSWORD_ENV = "DBPASSWORD";
 
   // Default table name
   private static final String DEFAULT_TABLE_NAME = "artifacts";
@@ -142,15 +138,30 @@ public class PostgresArtifactStore {
    * @return the configured HikariDataSource
    */
   private HikariDataSource initializeDataSource() {
-    String dbUrl = System.getenv(DB_URL_ENV);
-    String dbUser = System.getenv(DB_USER_ENV);
-    String dbPassword = System.getenv(DB_PASSWORD_ENV);
+    logger.info("Reading database configuration from environment variables...");
+    String dbUrl = System.getenv("DBURL");
+    String dbUser = System.getenv("DBUSER");
+    String dbPassword = System.getenv("DBPASSWORD");
 
+    // Fallback to PropertiesHelper if environment variables are not set
+    if (dbUrl == null) {
+      logger.debug("DBURL not in environment, checking PropertiesHelper");
+      dbUrl = PropertiesHelper.getInstance().getValue("db_url");
+    }
+    if (dbUser == null) {
+      logger.debug("DBUSER not in environment, checking PropertiesHelper");
+      dbUser = PropertiesHelper.getInstance().getValue("db_user");
+    }
+    if (dbPassword == null) {
+      logger.debug("DBPASSWORD not in environment, checking PropertiesHelper");
+      dbPassword = PropertiesHelper.getInstance().getValue("db_password");
+    }
     if (dbUrl == null || dbUrl.isEmpty()) {
       throw new IllegalStateException(
-          "Database URL not configured. Set " + DB_URL_ENV + " environment variable.");
+          "Database URL not configured. Set DBURL environment variable or db_url property.");
     }
 
+    logger.info("Database configuration loaded successfully for URL: {}", dbUrl);
     return initializeDataSource(dbUrl, dbUser, dbPassword);
   }
 
@@ -171,11 +182,10 @@ public class PostgresArtifactStore {
     // Connection pool settings
     config.setMaximumPoolSize(10);
     config.setMinimumIdle(2);
-    config.setConnectionTimeout(30000);
+    config.setConnectionTimeout(10000);
     config.setIdleTimeout(600000);
     config.setMaxLifetime(1800000);
-    // Leak detection threshold increased to 2 minutes for large file handling (videos, PDFs)
-    config.setLeakDetectionThreshold(120000); // 120 seconds (2 minutes)
+    config.setLeakDetectionThreshold(120000);
 
     // Performance settings
     config.addDataSourceProperty("cachePrepStmts", "true");
