@@ -26,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.google.adk.store.PostgresArtifactStore;
 import com.google.adk.store.PostgresArtifactStore.ArtifactData;
 import com.google.genai.types.Part;
@@ -60,6 +61,7 @@ public class PostgresArtifactServiceTest {
   public void setUp() {
     mockStore = mock(PostgresArtifactStore.class);
     objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new Jdk8Module());
 
     // Mock the static getInstance method
     mockedStaticStore = Mockito.mockStatic(PostgresArtifactStore.class);
@@ -82,8 +84,8 @@ public class PostgresArtifactServiceTest {
     String userId = "user123";
     String sessionId = "session456";
     String filename = "test.txt";
-    Part artifact = Part.fromText("Hello, World!");
-    byte[] serializedData = objectMapper.writeValueAsBytes(artifact);
+    byte[] contentBytes = "Hello, World!".getBytes();
+    Part artifact = Part.fromBytes(contentBytes, "text/plain");
     int expectedVersion = 1;
 
     when(mockStore.saveArtifact(
@@ -120,7 +122,8 @@ public class PostgresArtifactServiceTest {
     String userId = "user123";
     String sessionId = "session456";
     String filename = "report.pdf";
-    Part artifact = Part.fromText("Report content");
+    byte[] contentBytes = "Report content".getBytes();
+    Part artifact = Part.fromBytes(contentBytes, "text/plain");
     String metadata = "{\"author\":\"John\",\"tags\":[\"important\"]}";
     int expectedVersion = 2;
 
@@ -160,12 +163,13 @@ public class PostgresArtifactServiceTest {
     String userId = "user123";
     String sessionId = "session456";
     String filename = "test.txt";
-    Part expectedArtifact = Part.fromText("Hello, World!");
-    byte[] serializedData = objectMapper.writeValueAsBytes(expectedArtifact);
+    String content = "Hello, World!";
+    byte[] contentBytes = content.getBytes();
+    Part expectedArtifact = Part.fromBytes(contentBytes, "text/plain");
 
     ArtifactData artifactData =
         new ArtifactData(
-            serializedData, "application/json", 1, new Timestamp(System.currentTimeMillis()), null);
+            contentBytes, "text/plain", 1, new Timestamp(System.currentTimeMillis()), null);
 
     when(mockStore.loadArtifact(eq(appName), eq(userId), eq(sessionId), eq(filename), isNull()))
         .thenReturn(artifactData);
@@ -190,16 +194,13 @@ public class PostgresArtifactServiceTest {
     String sessionId = "session456";
     String filename = "test.txt";
     int version = 3;
-    Part expectedArtifact = Part.fromText("Version 3 content");
-    byte[] serializedData = objectMapper.writeValueAsBytes(expectedArtifact);
+    String content = "Version 3 content";
+    byte[] contentBytes = content.getBytes();
+    Part expectedArtifact = Part.fromBytes(contentBytes, "text/plain");
 
     ArtifactData artifactData =
         new ArtifactData(
-            serializedData,
-            "application/json",
-            version,
-            new Timestamp(System.currentTimeMillis()),
-            null);
+            contentBytes, "text/plain", version, new Timestamp(System.currentTimeMillis()), null);
 
     when(mockStore.loadArtifact(eq(appName), eq(userId), eq(sessionId), eq(filename), eq(version)))
         .thenReturn(artifactData);
@@ -344,8 +345,10 @@ public class PostgresArtifactServiceTest {
     String sessionId2 = "session2";
     String filename = "shared-filename.txt";
 
-    Part artifact1 = Part.fromText("App1 User1 Session1");
-    Part artifact2 = Part.fromText("App2 User2 Session2");
+    byte[] contentBytes1 = "App1 User1 Session1".getBytes();
+    byte[] contentBytes2 = "App2 User2 Session2".getBytes();
+    Part artifact1 = Part.fromBytes(contentBytes1, "text/plain");
+    Part artifact2 = Part.fromBytes(contentBytes2, "text/plain");
 
     when(mockStore.saveArtifact(
             eq(appName1), eq(userId1), eq(sessionId1), eq(filename), any(), anyString(), isNull()))
