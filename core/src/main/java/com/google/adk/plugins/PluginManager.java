@@ -75,7 +75,7 @@ public class PluginManager implements Plugin {
           "Plugin with name '" + plugin.getName() + "' already registered.");
     }
     plugins.add(plugin);
-    logger.info("Plugin '{}' registered.", plugin.getName());
+    logger.trace("Plugin '{}' registered.", plugin.getName());
   }
 
   /**

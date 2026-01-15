@@ -131,7 +131,7 @@ public class ReplayPlugin extends BasePlugin {
         .toolResponse()
         .flatMap(fr -> fr.response().map(resp -> (Map<String, Object>) resp))
         .map(Maybe::just)
-        .orElse(Maybe.empty());
+        .orElseGet(() -> Maybe.empty());
   }
 
   @Override

@@ -1,7 +1,11 @@
 package com.google.adk.a2a.converters;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Blob;
 import com.google.genai.types.FileData;
 import com.google.genai.types.FunctionCall;
@@ -15,6 +19,7 @@ import io.a2a.spec.FileWithUri;
 import io.a2a.spec.TextPart;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -58,6 +63,14 @@ public final class PartConverter {
 
     logger.warn("Unsupported A2A part type: {}", a2aPart.getClass());
     return Optional.empty();
+  }
+
+  public static ImmutableList<com.google.genai.types.Part> toGenaiParts(
+      List<io.a2a.spec.Part<?>> a2aParts) {
+    return a2aParts.stream()
+        .map(PartConverter::toGenaiPart)
+        .flatMap(Optional::stream)
+        .collect(toImmutableList());
   }
 
   /**
@@ -123,14 +136,14 @@ public final class PartConverter {
   private static Optional<com.google.genai.types.Part> convertDataPartToGenAiPart(
       DataPart dataPart) {
     Map<String, Object> data =
-        Optional.ofNullable(dataPart.getData()).map(HashMap::new).orElse(new HashMap<>());
+        Optional.ofNullable(dataPart.getData()).map(HashMap::new).orElseGet(HashMap::new);
     Map<String, Object> metadata =
-        Optional.ofNullable(dataPart.getMetadata()).map(HashMap::new).orElse(new HashMap<>());
+        Optional.ofNullable(dataPart.getMetadata()).map(HashMap::new).orElseGet(HashMap::new);
 
     String metadataType = metadata.getOrDefault(A2A_DATA_PART_METADATA_TYPE_KEY, "").toString();
 
-    if (data.containsKey("name") && data.containsKey("args")
-        || A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL.equals(metadataType)) {
+    if ((data.containsKey("name") && data.containsKey("args"))
+        || metadataType.equals(A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL)) {
       String functionName = String.valueOf(data.getOrDefault("name", ""));
       String functionId = String.valueOf(data.getOrDefault("id", ""));
       Map<String, Object> args = coerceToMap(data.get("args"));
@@ -141,8 +154,8 @@ public final class PartConverter {
               .build());
     }
 
-    if (data.containsKey("name") && data.containsKey("response")
-        || A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE.equals(metadataType)) {
+    if ((data.containsKey("name") && data.containsKey("response"))
+        || metadataType.equals(A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE)) {
       String functionName = String.valueOf(data.getOrDefault("name", ""));
       String functionId = String.valueOf(data.getOrDefault("id", ""));
       Map<String, Object> response = coerceToMap(data.get("response"));
@@ -175,10 +188,10 @@ public final class PartConverter {
     Map<String, Object> data = new HashMap<>();
     data.put("name", functionCall.name().orElse(""));
     data.put("id", functionCall.id().orElse(""));
-    data.put("args", functionCall.args().orElse(Map.of()));
+    data.put("args", functionCall.args().orElse(ImmutableMap.of()));
 
-    Map<String, Object> metadata =
-        Map.of(A2A_DATA_PART_METADATA_TYPE_KEY, A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL);
+    ImmutableMap<String, Object> metadata =
+        ImmutableMap.of(A2A_DATA_PART_METADATA_TYPE_KEY, A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL);
 
     return Optional.of(new DataPart(data, metadata));
   }
@@ -194,10 +207,11 @@ public final class PartConverter {
     Map<String, Object> data = new HashMap<>();
     data.put("name", functionResponse.name().orElse(""));
     data.put("id", functionResponse.id().orElse(""));
-    data.put("response", functionResponse.response().orElse(Map.of()));
+    data.put("response", functionResponse.response().orElse(ImmutableMap.of()));
 
-    Map<String, Object> metadata =
-        Map.of(A2A_DATA_PART_METADATA_TYPE_KEY, A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE);
+    ImmutableMap<String, Object> metadata =
+        ImmutableMap.of(
+            A2A_DATA_PART_METADATA_TYPE_KEY, A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE);
 
     return Optional.of(new DataPart(data, metadata));
   }
