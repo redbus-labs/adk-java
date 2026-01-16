@@ -253,6 +253,7 @@ public final class PartConverter {
     return Optional.empty();
   }
 
+  @SuppressWarnings("unchecked") // safe conversion from OBJECT_MAPPER.readValue
   private static Map<String, Object> coerceToMap(Object value) {
     if (value == null) {
       return new HashMap<>();

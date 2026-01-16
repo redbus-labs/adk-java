@@ -561,6 +561,22 @@ public final class ContentsTest {
         .containsExactly("Summary 1-4", "content 5", "Summary 6-9", "content 10");
   }
 
+  @Test
+  public void processRequest_compactionWithUncompactedEventsBetween() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("e1", "content 1", "inv1", 1),
+            createUserEvent("e2", "content 2", "inv2", 2),
+            createUserEvent("e3", "content 3", "inv3", 3),
+            createCompactedEvent(1, 2, "Summary 1-2"));
+
+    List<Content> contents = runContentsProcessor(events);
+    assertThat(contents)
+        .comparingElementsUsing(
+            transforming((Content c) -> c.parts().get().get(0).text().get(), "content text"))
+        .containsExactly("content 3", "Summary 1-2");
+  }
+
   private static Event createUserEvent(String id, String text) {
     return Event.builder()
         .id(id)

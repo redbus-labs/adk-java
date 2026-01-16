@@ -209,12 +209,15 @@ public final class Contents implements RequestProcessor {
     List<Event> result = new ArrayList<>();
     ListIterator<Event> iter = events.listIterator(events.size());
     Long lastCompactionStartTime = null;
+    Long lastCompactionEndTime = null;
 
     while (iter.hasPrevious()) {
       Event event = iter.previous();
       EventCompaction compaction = event.actions().compaction().orElse(null);
       if (compaction == null) {
-        if (lastCompactionStartTime == null || event.timestamp() < lastCompactionStartTime) {
+        if (lastCompactionStartTime == null
+            || event.timestamp() < lastCompactionStartTime
+            || (lastCompactionEndTime != null && event.timestamp() > lastCompactionEndTime)) {
           result.add(event);
         }
         continue;
@@ -233,6 +236,10 @@ public final class Contents implements RequestProcessor {
           lastCompactionStartTime == null
               ? compaction.startTimestamp()
               : Long.min(lastCompactionStartTime, compaction.startTimestamp());
+      lastCompactionEndTime =
+          lastCompactionEndTime == null
+              ? compaction.endTimestamp()
+              : Long.max(lastCompactionEndTime, compaction.endTimestamp());
     }
     return Lists.reverse(result);
   }
