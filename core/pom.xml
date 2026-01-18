@@ -273,6 +273,13 @@
       <groupId>net.javacrumbs.future-converter</groupId>
       <artifactId>future-converter-java8-guava</artifactId>
     </dependency>
+    <!-- Optional A2A dependency - only needed if using A2A features -->
+    <dependency>
+      <groupId>com.google.adk</groupId>
+      <artifactId>google-adk-a2a</artifactId>
+      <version>${project.version}</version>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
   <build>
     <resources>
