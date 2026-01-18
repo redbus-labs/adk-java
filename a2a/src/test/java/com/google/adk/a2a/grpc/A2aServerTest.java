@@ -35,7 +35,7 @@ class A2aServerTest {
   @Test
   void testStartAndStop_withRegistry() throws IOException, InterruptedException {
     URL registryUrl = new URL("http://localhost:8080");
-    a2aServer = new A2aServer(mockServer, registryUrl, mockHttpClient);
+    a2aServer = new A2aServer(mockServer, registryUrl, mockHttpClient, 8080);
 
     when(mockHttpClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
         .thenReturn(CompletableFuture.completedFuture(mockHttpResponse));
@@ -54,7 +54,7 @@ class A2aServerTest {
 
   @Test
   void testStartAndStop_withoutRegistry() throws IOException, InterruptedException {
-    a2aServer = new A2aServer(mockServer, null, mockHttpClient);
+    a2aServer = new A2aServer(mockServer, null, mockHttpClient, 8080);
     when(mockServer.shutdown()).thenReturn(mockServer);
     when(mockServer.awaitTermination(any(long.class), any(java.util.concurrent.TimeUnit.class)))
         .thenReturn(true);

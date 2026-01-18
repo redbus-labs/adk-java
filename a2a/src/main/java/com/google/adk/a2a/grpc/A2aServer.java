@@ -31,10 +31,10 @@ public class A2aServer {
    * @param registryUrl The URL of the service registry.
    * @param httpClient The HTTP client to use for registry communication.
    */
-  public A2aServer(Server server, URL registryUrl, HttpClient httpClient) {
+  public A2aServer(Server server, URL registryUrl, HttpClient httpClient, int port) {
     this.server = server;
     this.registryUrl = registryUrl;
-    this.agentInfo = new AgentInfo(server.getPort());
+    this.agentInfo = new AgentInfo(port);
     this.httpClient = httpClient;
   }
 

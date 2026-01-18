@@ -73,6 +73,6 @@ public class A2aServerBuilder {
   public A2aServer build() {
     Server grpcServer = ServerBuilder.forPort(port).addService(new A2aService(agent)).build();
     HttpClient client = (httpClient != null) ? httpClient : HttpClient.newHttpClient();
-    return new A2aServer(grpcServer, registryUrl, client);
+    return new A2aServer(grpcServer, registryUrl, client, this.port);
   }
 }
