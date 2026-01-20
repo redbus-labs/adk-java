@@ -23,7 +23,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
@@ -65,7 +64,6 @@ public class PostgresArtifactStore {
   private PostgresArtifactStore(String tableName) {
     this.tableName = tableName;
     this.dataSource = initializeDataSource();
-    initializeTable();
   }
 
   /**
@@ -79,7 +77,6 @@ public class PostgresArtifactStore {
   private PostgresArtifactStore(String dbUrl, String dbUser, String dbPassword, String tableName) {
     this.tableName = tableName;
     this.dataSource = initializeDataSource(dbUrl, dbUser, dbPassword);
-    initializeTable();
   }
 
   /**
@@ -203,45 +200,6 @@ public class PostgresArtifactStore {
    */
   private Connection getConnection() throws SQLException {
     return dataSource.getConnection();
-  }
-
-  /** Initialize artifacts table if it doesn't exist. */
-  public void initializeTable() {
-    String createTableSQL =
-        String.format(
-            "CREATE TABLE IF NOT EXISTS %s ("
-                + "id SERIAL PRIMARY KEY, "
-                + "app_name VARCHAR(255) NOT NULL, "
-                + "user_id VARCHAR(255) NOT NULL, "
-                + "session_id VARCHAR(255) NOT NULL, "
-                + "filename VARCHAR(255) NOT NULL, "
-                + "version INT NOT NULL DEFAULT 0, "
-                + "mime_type VARCHAR(100), "
-                + "data BYTEA NOT NULL, "
-                + "metadata JSONB, "
-                + "created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, "
-                + "CONSTRAINT %s_unique_version UNIQUE(app_name, user_id, session_id, filename, version)"
-                + ")",
-            tableName, tableName);
-
-    String createIndex1 =
-        String.format(
-            "CREATE INDEX IF NOT EXISTS idx_%s_lookup ON %s(app_name, user_id, session_id, filename)",
-            tableName, tableName);
-
-    String createIndex2 =
-        String.format(
-            "CREATE INDEX IF NOT EXISTS idx_%s_session ON %s(app_name, user_id, session_id)",
-            tableName, tableName);
-
-    try (Connection conn = getConnection();
-        Statement stmt = conn.createStatement()) {
-      stmt.execute(createTableSQL);
-      stmt.execute(createIndex1);
-      stmt.execute(createIndex2);
-    } catch (SQLException e) {
-      throw new RuntimeException("Failed to initialize artifacts table: " + tableName, e);
-    }
   }
 
   /**
