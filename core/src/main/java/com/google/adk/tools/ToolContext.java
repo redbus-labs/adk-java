@@ -19,6 +19,7 @@ package com.google.adk.tools;
 import com.google.adk.agents.CallbackContext;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.events.EventActions;
+import com.google.adk.events.ToolConfirmation;
 import com.google.adk.memory.SearchMemoryResponse;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import io.reactivex.rxjava3.core.Single;
@@ -125,6 +126,20 @@ public class ToolContext extends CallbackContext {
         .actions(eventActions)
         .functionCallId(functionCallId.orElse(null))
         .toolConfirmation(toolConfirmation.orElse(null));
+  }
+
+  @Override
+  public String toString() {
+    return "ToolContext{"
+        + "invocationContext="
+        + invocationContext
+        + ", eventActions="
+        + eventActions
+        + ", functionCallId="
+        + functionCallId
+        + ", toolConfirmation="
+        + toolConfirmation
+        + '}';
   }
 
   /** Builder for {@link ToolContext}. */

@@ -72,6 +72,7 @@
     <anthropic.version>1.4.0</anthropic.version>
     <maven-plugin-tools.version>3.9.0</maven-plugin-tools.version>
     <httpclient5.version>5.4.3</httpclient5.version>
+    <future-converter-java8-guava.version>1.2.0</future-converter-java8-guava.version>
   </properties>
 
   <dependencyManagement>
@@ -273,6 +274,11 @@
         <groupId>org.assertj</groupId>
         <artifactId>assertj-core</artifactId>
         <version>${assertj.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.javacrumbs.future-converter</groupId>
+        <artifactId>future-converter-java8-guava</artifactId>
+        <version>${future-converter-java8-guava.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

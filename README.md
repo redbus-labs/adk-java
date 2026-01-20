@@ -8,7 +8,7 @@ Of course. Here is the table with the 4th column for "Bedrock API" added.
 | **Chat** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Tools/Function** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Chat Stream** | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
-| **Image (Input)** | ✅ (Multimodal models) | ❌ | ✅ (Via models like Claude 3) | ❌ | ❓ | ❌ (Claude 3 models) |
+| **Image (Input)** | ✅ (Multimodal models) | ❌ | ✅ (Via models like Claude 3) |  ✅  | ❓ | ❌ (Claude 3 models) |
 | **Image Gen (Output)** | ✅ | ❌ | ✅ (Via Titan, Stable Diffusion) | ❌ | ❓ | ❌ (Via other models like Titan Image Generator) |
 | **Audio Streaming (Input)** | ✅ (Some APIs/integrations) | ❌ | ❌ (Via Amazon Transcribe) | ❌ | ❓ |❌ (Via services like Amazon Transcribe) |
 | **Transcription** | ✅ (Some APIs/integrations) | ❌ | ❌ (Via Amazon Transcribe) | ❌ | ❓ | ❌ (Via Amazon Transcribe) |

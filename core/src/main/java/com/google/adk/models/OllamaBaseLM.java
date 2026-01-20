@@ -24,6 +24,7 @@ import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -33,7 +34,9 @@ import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
 import java.net.URL;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,6 +130,27 @@ public class OllamaBaseLM extends BaseLlm {
                   item.role().get().equals("model") || item.role().get().equals("assistant")
                       ? "assistant"
                       : "user");
+
+              // Additional override work to add function response
+              if (item.parts().isPresent()) {
+                var parts = item.parts().get();
+
+                // Ensure index 1 exists
+                if (parts.size() > 1) {
+                  var part = parts.get(1);
+
+                  if (part.inlineData().isPresent() && part.inlineData().get().data().isPresent()) {
+
+                    byte[] inlineImageData = part.inlineData().get().data().get();
+
+                    String imgBase64 = toBase64String(inlineImageData);
+
+                    JSONArray images = new JSONArray();
+                    images.put(imgBase64);
+                    messageQuantum.put("images", images);
+                  }
+                }
+              }
 
               // Additinal override work to add function response
               if (item.parts().get().get(0).functionResponse().isPresent()) {
@@ -241,7 +265,6 @@ public class OllamaBaseLM extends BaseLlm {
             });
 
     // Check if the tool is executed, then parse and response.
-
     logger.debug("functions: {}", functions.toString(1));
 
     String modelId =
@@ -252,8 +275,10 @@ public class OllamaBaseLM extends BaseLlm {
     boolean LAST_RESP_TOOl_EXECUTED =
         Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
 
+    GenerateContentConfig config = llmRequest.config().get();
     JSONObject agentresponse =
         callLLMChat(
+            config,
             modelId,
             messages,
             LAST_RESP_TOOl_EXECUTED
@@ -285,7 +310,6 @@ public class OllamaBaseLM extends BaseLlm {
               .build());
 
       //  responseBuilder.partial(false).turnComplete(false);
-
     } else {
       responseBuilder.content(
           Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
@@ -799,8 +823,12 @@ public class OllamaBaseLM extends BaseLlm {
    * @return The response body as a String.
    * @throws RuntimeException If environment variables are not set or JSON creation fails.
    */
-  public JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+  public JSONObject callLLMChat(
+      GenerateContentConfig config, String model, JSONArray messages, JSONArray tools) {
     try {
+
+      float temperature = config.temperature().isPresent() ? config.temperature().get() : 0.7f;
+
       JSONObject responseJ = new JSONObject();
       // API endpoint URL //OLLAMA_API_BASE
       String apiUrl = D_URL != null ? D_URL : System.getenv(OLLAMA_EP);
@@ -816,6 +844,7 @@ public class OllamaBaseLM extends BaseLlm {
       JSONObject options = new JSONObject();
       options.put("num_ctx", 4096);
       payload.put("options", options);
+      payload.put("temperature", temperature);
 
       // Add messages to the payload
       payload.put("messages", messages);
@@ -1049,6 +1078,22 @@ public class OllamaBaseLM extends BaseLlm {
     return responseJ;
   }
 
+  public static byte[] fileToBase64Bytes(File imageFile) throws IOException {
+
+    // 1. Read file into raw bytes
+    byte[] fileBytes = Files.readAllBytes(imageFile.toPath());
+
+    // 2. Encode to Base64 (String or bytes)
+    String base64String = Base64.getEncoder().encodeToString(fileBytes);
+
+    // 3. Decode Base64 back to byte[]
+    return Base64.getDecoder().decode(base64String);
+  }
+
+  public static String toBase64String(byte[] data) {
+    return Base64.getEncoder().encodeToString(data);
+  }
+
   public static void main(String[] args) {
     // --- Create the 'messages' part of the JSON using org.json ---
     String messagesJsonString =
@@ -1114,7 +1159,9 @@ public class OllamaBaseLM extends BaseLlm {
       System.out.println("Attempting to call Ollama API (Non-Streaming)...");
       System.out.println("Using model ID: " + modelId);
 
-      JSONObject responseJson = ollamaLlm.callLLMChat(modelId, messagesArray, null);
+      JSONObject responseJson =
+          ollamaLlm.callLLMChat(
+              GenerateContentConfig.builder().build(), modelId, messagesArray, null);
 
       if (responseJson != null && !responseJson.isEmpty()) {
         System.out.println("\nAPI Call Successful! Non-Streaming response:");

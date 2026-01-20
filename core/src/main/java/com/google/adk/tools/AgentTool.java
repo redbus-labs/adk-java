@@ -28,6 +28,7 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
 import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.runner.Runner;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
@@ -76,6 +77,11 @@ public class AgentTool extends BaseTool {
     this.skipSummarization = skipSummarization;
   }
 
+  @VisibleForTesting
+  BaseAgent getAgent() {
+    return agent;
+  }
+
   @Override
   public Optional<FunctionDeclaration> declaration() {
     FunctionDeclaration.Builder builder =
@@ -103,7 +109,7 @@ public class AgentTool extends BaseTool {
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
 
     if (this.skipSummarization) {
-      toolContext.actions().setSkipSummarization(true);
+      toolContext.setActions(toolContext.actions().toBuilder().skipSummarization(true).build());
     }
 
     Optional<Schema> agentInputSchema = Optional.empty();
@@ -143,6 +149,13 @@ public class AgentTool extends BaseTool {
               }
               Event lastEvent = optionalLastEvent.get();
               Optional<String> outputText = lastEvent.content().map(Content::text);
+
+              // Forward state delta to parent session.
+              if (lastEvent.actions() != null
+                  && lastEvent.actions().stateDelta() != null
+                  && !lastEvent.actions().stateDelta().isEmpty()) {
+                toolContext.state().putAll(lastEvent.actions().stateDelta());
+              }
 
               if (outputText.isEmpty()) {
                 return ImmutableMap.of();

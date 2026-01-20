@@ -21,6 +21,7 @@ import static com.google.adk.testing.TestUtils.createTestLlm;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
+import com.google.adk.agents.Callbacks.AfterAgentCallback;
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LlmAgent;
@@ -35,8 +36,8 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Maybe;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -421,20 +422,42 @@ public final class AgentToolTest {
         .containsExactly(Content.fromParts(Part.fromText("magic")));
   }
 
+  @Test
+  public void call_withStateDeltaInResponse_propagatesStateDelta() throws Exception {
+    AfterAgentCallback afterAgentCallback =
+        (callbackContext) -> {
+          callbackContext.state().put("test_key", "test_value");
+          return Maybe.empty();
+        };
+    TestLlm testLlm =
+        createTestLlm(
+            LlmResponse.builder()
+                .content(Content.fromParts(Part.fromText("test response")))
+                .build());
+    LlmAgent testAgent =
+        createTestAgentBuilder(testLlm)
+            .name("agent name")
+            .description("agent description")
+            .afterAgentCallback(afterAgentCallback)
+            .build();
+    AgentTool agentTool = AgentTool.create(testAgent);
+    ToolContext toolContext = createToolContext(testAgent);
+
+    assertThat(toolContext.state()).doesNotContainKey("test_key");
+
+    Map<String, Object> unused =
+        agentTool.runAsync(ImmutableMap.of("request", "magic"), toolContext).blockingGet();
+
+    assertThat(toolContext.state()).containsEntry("test_key", "test_value");
+  }
+
   private static ToolContext createToolContext(LlmAgent agent) {
     return ToolContext.builder(
-            new InvocationContext(
-                /* sessionService= */ null,
-                /* artifactService= */ null,
-                /* memoryService= */ null,
-                /* liveRequestQueue= */ Optional.empty(),
-                /* branch= */ Optional.empty(),
-                /* invocationId= */ InvocationContext.newInvocationContextId(),
-                agent,
-                Session.builder("123").build(),
-                /* userContent= */ Optional.empty(),
-                /* runConfig= */ null,
-                /* endInvocation= */ false))
+            InvocationContext.builder()
+                .invocationId(InvocationContext.newInvocationContextId())
+                .agent(agent)
+                .session(Session.builder("123").build())
+                .build())
         .build();
   }
 }

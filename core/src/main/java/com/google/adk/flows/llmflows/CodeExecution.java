@@ -254,7 +254,9 @@ public final class CodeExecution {
                           llmRequest
                               .contents()
                               .add(
-                                  executionResultEvent.content().orElse(Content.builder().build())))
+                                  executionResultEvent
+                                      .content()
+                                      .orElseGet(() -> Content.builder().build())))
                   .map(executionResultEvent -> ImmutableList.of(codeEvent, executionResultEvent))
                   .flatMap(Flowable::fromIterable);
             });

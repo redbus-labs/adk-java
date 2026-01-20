@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package com.google.adk.tools;
+package com.google.adk.events;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.google.adk.JsonBaseModel;
 import com.google.auto.value.AutoValue;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import javax.annotation.Nullable;
@@ -26,7 +26,7 @@ import javax.annotation.Nullable;
 /** Represents a tool confirmation configuration. */
 @AutoValue
 @JsonDeserialize(builder = ToolConfirmation.Builder.class)
-public abstract class ToolConfirmation {
+public abstract class ToolConfirmation extends JsonBaseModel {
 
   @Nullable
   @JsonProperty("hint")

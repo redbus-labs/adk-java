@@ -50,7 +50,7 @@ public final class BuiltInCodeExecutionTool extends BaseTool {
             .build()
             .config()
             .map(GenerateContentConfig::toBuilder)
-            .orElse(GenerateContentConfig.builder());
+            .orElseGet(GenerateContentConfig::builder);
 
     List<Tool> existingTools = configBuilder.build().tools().orElse(ImmutableList.of());
     ImmutableList.Builder<Tool> updatedToolsBuilder = ImmutableList.builder();

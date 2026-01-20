@@ -24,7 +24,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LlmAgent;
-import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.plugins.PluginManager;
@@ -44,31 +43,28 @@ import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public class RequestConfirmationLlmRequestProcessorTest {
-  private static final String REQUEST_CONFIRMATION_FUNCTION_CALL_ID = "fc1";
   private static final String ECHO_TOOL_NAME = "echo_tool";
+  private static final String ORIGINAL_FUNCTION_CALL_ID = "original_fc_id";
+  private static final ImmutableMap<String, Object> ORIGINAL_FUNCTION_CALL_ARGS =
+      ImmutableMap.of("say", "hello");
+  private static final String FUNCTION_CALL_ID = "fc_id";
+  private static final ImmutableMap<String, Object> ARGS =
+      ImmutableMap.of(
+          "originalFunctionCall",
+          ImmutableMap.of( // original function call as a map
+              "id",
+              Optional.of("original_fc_id"),
+              "name",
+              Optional.of(ECHO_TOOL_NAME),
+              "args",
+              Optional.of(ORIGINAL_FUNCTION_CALL_ARGS)));
+  private static final FunctionCall FUNCTION_CALL =
+      FunctionCall.builder().id(FUNCTION_CALL_ID).name(ECHO_TOOL_NAME).args(ARGS).build();
 
   private static final Event REQUEST_CONFIRMATION_EVENT =
       Event.builder()
           .author("model")
-          .content(
-              Content.fromParts(
-                  Part.builder()
-                      .functionCall(
-                          FunctionCall.builder()
-                              .id(REQUEST_CONFIRMATION_FUNCTION_CALL_ID)
-                              .name(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)
-                              .args(
-                                  ImmutableMap.of(
-                                      "originalFunctionCall",
-                                      ImmutableMap.of(
-                                          "id",
-                                          "fc0",
-                                          "name",
-                                          ECHO_TOOL_NAME,
-                                          "args",
-                                          ImmutableMap.of("say", "hello"))))
-                              .build())
-                      .build()))
+          .content(Content.fromParts(Part.builder().functionCall(FUNCTION_CALL).build()))
           .build();
 
   private static final Event USER_CONFIRMATION_EVENT =
@@ -79,9 +75,24 @@ public class RequestConfirmationLlmRequestProcessorTest {
                   Part.builder()
                       .functionResponse(
                           FunctionResponse.builder()
-                              .id(REQUEST_CONFIRMATION_FUNCTION_CALL_ID)
+                              .id(FUNCTION_CALL_ID)
                               .name(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)
                               .response(ImmutableMap.of("confirmed", true))
+                              .build())
+                      .build()))
+          .build();
+
+  private static final Event USER_DECLINE_EVENT =
+      Event.builder()
+          .author("user")
+          .content(
+              Content.fromParts(
+                  Part.builder()
+                      .functionResponse(
+                          FunctionResponse.builder()
+                              .id(FUNCTION_CALL_ID)
+                              .name(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)
+                              .response(ImmutableMap.of("confirmed", false))
                               .build())
                       .build()))
           .build();
@@ -107,9 +118,66 @@ public class RequestConfirmationLlmRequestProcessorTest {
     Event event = result.events().iterator().next();
     assertThat(event.functionResponses()).hasSize(1);
     FunctionResponse fr = event.functionResponses().get(0);
-    assertThat(fr.id()).hasValue("fc0");
+    assertThat(fr.id()).hasValue(ORIGINAL_FUNCTION_CALL_ID);
     assertThat(fr.name()).hasValue(ECHO_TOOL_NAME);
-    assertThat(fr.response()).hasValue(ImmutableMap.of("result", ImmutableMap.of("say", "hello")));
+    assertThat(fr.response()).hasValue(ImmutableMap.of("result", ORIGINAL_FUNCTION_CALL_ARGS));
+  }
+
+  @Test
+  public void runAsync_withDecline_returnsErrorFunctionResponse() {
+    LlmAgent agent = createAgentWithEchoTool();
+    Session session =
+        Session.builder("session_id")
+            .events(ImmutableList.of(REQUEST_CONFIRMATION_EVENT, USER_DECLINE_EVENT))
+            .build();
+
+    InvocationContext context = createInvocationContext(agent, session);
+
+    RequestProcessor.RequestProcessingResult result =
+        processor.processRequest(context, LlmRequest.builder().build()).blockingGet();
+
+    assertThat(result).isNotNull();
+    assertThat(result.events()).hasSize(1);
+    Event event = result.events().iterator().next();
+    assertThat(event.functionResponses()).hasSize(1);
+    FunctionResponse fr = event.functionResponses().get(0);
+    assertThat(fr.id()).hasValue(ORIGINAL_FUNCTION_CALL_ID);
+    assertThat(fr.name()).hasValue(ECHO_TOOL_NAME);
+    assertThat(fr.response())
+        .hasValue(ImmutableMap.of("error", "User declined tool execution for echo_tool"));
+  }
+
+  @Test
+  public void runAsync_withConfirmationAndToolAlreadyCalled_doesNotCallOriginalFunction() {
+    LlmAgent agent = createAgentWithEchoTool();
+    Event toolResponseEvent =
+        Event.builder()
+            .author("model")
+            .content(
+                Content.fromParts(
+                    Part.builder()
+                        .functionResponse(
+                            FunctionResponse.builder()
+                                .id(ORIGINAL_FUNCTION_CALL_ID)
+                                .name(ECHO_TOOL_NAME)
+                                .response(ImmutableMap.of("result", ORIGINAL_FUNCTION_CALL_ARGS))
+                                .build())
+                        .build()))
+            .build();
+    Session session =
+        Session.builder("session_id")
+            .events(
+                ImmutableList.of(
+                    REQUEST_CONFIRMATION_EVENT, USER_CONFIRMATION_EVENT, toolResponseEvent))
+            .build();
+
+    InvocationContext context = createInvocationContext(agent, session);
+
+    RequestProcessor.RequestProcessingResult result =
+        processor.processRequest(context, LlmRequest.builder().build()).blockingGet();
+
+    assertThat(result).isNotNull();
+    assertThat(result.events()).isEmpty();
   }
 
   @Test
@@ -126,20 +194,28 @@ public class RequestConfirmationLlmRequestProcessorTest {
         .isEmpty();
   }
 
+  @Test
+  public void runAsync_noUserConfirmationEvent_empty() {
+    LlmAgent agent = createAgentWithEchoTool();
+    Session session =
+        Session.builder("session_id").events(ImmutableList.of(REQUEST_CONFIRMATION_EVENT)).build();
+
+    assertThat(
+            processor
+                .processRequest(
+                    createInvocationContext(agent, session), LlmRequest.builder().build())
+                .blockingGet()
+                .events())
+        .isEmpty();
+  }
+
   private static InvocationContext createInvocationContext(LlmAgent agent, Session session) {
-    return new InvocationContext(
-        /* sessionService= */ null,
-        /* artifactService= */ null,
-        /* memoryService= */ null,
-        /* pluginManager= */ new PluginManager(),
-        /* liveRequestQueue= */ Optional.empty(),
-        /* branch= */ Optional.empty(),
-        /* invocationId= */ InvocationContext.newInvocationContextId(),
-        /* agent= */ agent,
-        /* session= */ session,
-        /* userContent= */ Optional.empty(),
-        /* runConfig= */ RunConfig.builder().build(),
-        /* endInvocation= */ false);
+    return InvocationContext.builder()
+        .pluginManager(new PluginManager())
+        .invocationId(InvocationContext.newInvocationContextId())
+        .agent(agent)
+        .session(session)
+        .build();
   }
 
   private static LlmAgent createAgentWithEchoTool() {

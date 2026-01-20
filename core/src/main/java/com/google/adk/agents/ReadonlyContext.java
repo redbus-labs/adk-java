@@ -34,7 +34,8 @@ public class ReadonlyContext {
     this.invocationContext = invocationContext;
   }
 
-  public InvocationContext getInvocationContext() {
+  /** Returns the invocation context. */
+  public InvocationContext invocationContext() {
     return invocationContext;
   }
 

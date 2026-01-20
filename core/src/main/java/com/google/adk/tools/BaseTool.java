@@ -129,7 +129,7 @@ public abstract class BaseTool {
                       .addAll(
                           toolWithFunctionDeclarations
                               .functionDeclarations()
-                              .orElse(ImmutableList.of()))
+                              .orElseGet(ImmutableList::of))
                       .add(declaration().get())
                       .build())
               .build();
@@ -144,7 +144,7 @@ public abstract class BaseTool {
         llmRequest
             .config()
             .map(GenerateContentConfig::toBuilder)
-            .orElse(GenerateContentConfig.builder())
+            .orElseGet(GenerateContentConfig::builder)
             .tools(newTools)
             .build();
     LiveConnectConfig liveConnectConfig =

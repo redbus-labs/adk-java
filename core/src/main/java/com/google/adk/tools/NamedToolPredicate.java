@@ -1,19 +1,20 @@
 package com.google.adk.tools;
 
 import com.google.adk.agents.ReadonlyContext;
+import com.google.common.collect.ImmutableList;
 import java.util.List;
 import java.util.Optional;
 
 public class NamedToolPredicate implements ToolPredicate {
 
-  private final List<String> toolNames;
+  private final ImmutableList<String> toolNames;
 
   public NamedToolPredicate(List<String> toolNames) {
-    this.toolNames = List.copyOf(toolNames);
+    this.toolNames = ImmutableList.copyOf(toolNames);
   }
 
   public NamedToolPredicate(String... toolNames) {
-    this.toolNames = List.of(toolNames);
+    this.toolNames = ImmutableList.copyOf(toolNames);
   }
 
   @Override
