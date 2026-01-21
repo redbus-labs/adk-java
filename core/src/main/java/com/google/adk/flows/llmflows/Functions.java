@@ -254,16 +254,6 @@ public final class Functions {
               .toolConfirmation(functionCall.id().map(toolConfirmations::get).orElse(null))
               .build();
 
-      ToolConfirmation toolConfirmation = toolContext.toolConfirmation().orElse(null);
-      if (toolConfirmation != null && !toolConfirmation.confirmed()) {
-        return Maybe.just(
-            buildResponseEvent(
-                tool,
-                ImmutableMap.of("error", "User declined tool execution for " + tool.name()),
-                toolContext,
-                invocationContext));
-      }
-
       Map<String, Object> functionArgs = functionCall.args().orElse(new HashMap<>());
 
       Maybe<Map<String, Object>> maybeFunctionResult =
