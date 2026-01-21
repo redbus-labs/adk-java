@@ -16,10 +16,12 @@
 
 package com.google.adk.runner;
 
+import static com.google.adk.testing.TestUtils.createFunctionCallLlmResponse;
 import static com.google.adk.testing.TestUtils.createLlmResponse;
 import static com.google.adk.testing.TestUtils.createTestAgent;
 import static com.google.adk.testing.TestUtils.createTestAgentBuilder;
 import static com.google.adk.testing.TestUtils.createTestLlm;
+import static com.google.adk.testing.TestUtils.createTextLlmResponse;
 import static com.google.adk.testing.TestUtils.simplifyEvents;
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,6 +37,7 @@ import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
+import com.google.adk.flows.llmflows.Functions;
 import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
@@ -44,10 +47,13 @@ import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils;
 import com.google.adk.testing.TestUtils.EchoTool;
 import com.google.adk.testing.TestUtils.FailingEchoTool;
+import com.google.adk.tools.FunctionTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
+import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.sdk.testing.junit4.OpenTelemetryRule;
@@ -899,5 +905,83 @@ public final class RunnerTest {
         .runLive("user", newSessionId, liveRequestQueue, runConfig)
         .test()
         .assertError(IllegalArgumentException.class);
+  }
+
+  @Test
+  public void runAsync_withToolConfirmation() {
+    TestLlm testLlm =
+        createTestLlm(
+            createFunctionCallLlmResponse(
+                "tool_call_id", "echoTool", ImmutableMap.of("message", "hello")),
+            createTextLlmResponse("Response after observing tool needs confirmation."),
+            createTextLlmResponse("Response after user confirmed."));
+    LlmAgent agent =
+        createTestAgentBuilder(testLlm)
+            .tools(FunctionTool.create(Tools.class, "echoTool", /* requireConfirmation= */ true))
+            .build();
+    Runner runner = Runner.builder().agent(agent).appName("test").build();
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+
+    List<Event> eventsBeforeConfirmation =
+        runner
+            .runAsync("user", session.id(), Content.fromParts(Part.fromText("from user")))
+            .toList()
+            .blockingGet();
+    FunctionCall askUserConfirmationFunctionCall =
+        Iterables.getOnlyElement(
+            eventsBeforeConfirmation.stream()
+                .map(Functions::getAskUserConfirmationFunctionCalls)
+                .filter(functionCalls -> !functionCalls.isEmpty())
+                .findFirst()
+                .get());
+    List<Event> eventsAfterConfirmation =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                Content.fromParts(
+                    Part.builder()
+                        .functionResponse(
+                            FunctionResponse.builder()
+                                .id(askUserConfirmationFunctionCall.id().get())
+                                .name(askUserConfirmationFunctionCall.name().get())
+                                .response(ImmutableMap.of("confirmed", true)))
+                        .build()))
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(eventsBeforeConfirmation))
+        .containsExactly(
+            "test agent: FunctionCall(name=echoTool, args={message=hello})",
+            "test agent: FunctionCall(name=adk_request_confirmation,"
+                + " args={originalFunctionCall=FunctionCall{id=Optional[tool_call_id],"
+                + " args=Optional[{message=hello}], name=Optional[echoTool],"
+                + " partialArgs=Optional.empty, willContinue=Optional.empty},"
+                + " toolConfirmation=ToolConfirmation{hint=Please approve or reject the tool call"
+                + " echoTool() by responding with a FunctionResponse with an expected"
+                + " ToolConfirmation payload., confirmed=false, payload=null}})",
+            "test agent: FunctionResponse(name=echoTool, response={error=This tool call requires"
+                + " confirmation, please approve or reject.})",
+            "test agent: Response after observing tool needs confirmation.")
+        .inOrder();
+    assertThat(simplifyEvents(eventsAfterConfirmation))
+        .containsExactly(
+            "test agent: FunctionResponse(name=echoTool, response={message=hello})",
+            "test agent: Response after user confirmed.")
+        .inOrder();
+    assertThat(testLlm.getLastRequest().contents().stream().map(TestUtils::formatContent))
+        .containsExactly(
+            "from user",
+            "FunctionCall(name=echoTool, args={message=hello})",
+            "FunctionResponse(name=echoTool, response={message=hello})")
+        .inOrder();
+  }
+
+  public static class Tools {
+    private Tools() {}
+
+    public static ImmutableMap<String, Object> echoTool(String message) {
+      return ImmutableMap.of("message", message);
+    }
   }
 }

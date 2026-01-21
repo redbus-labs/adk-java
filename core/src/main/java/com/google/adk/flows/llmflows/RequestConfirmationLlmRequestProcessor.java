@@ -17,7 +17,6 @@
 package com.google.adk.flows.llmflows;
 
 import static com.google.adk.flows.llmflows.Functions.REQUEST_CONFIRMATION_FUNCTION_CALL_NAME;
-import static com.google.adk.flows.llmflows.Functions.TOOL_CALL_SECURITY_STATES;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
@@ -157,20 +156,8 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
               toolsToResumeWithArgs.values(),
               ImmutableMap.copyOf(toolsToResumeWithConfirmation))
           .map(
-              assembledEvent -> {
-                clearToolCallSecurityStates(invocationContext, toolsToResumeWithArgs.keySet());
-
-                // Create an updated LlmRequest including the new event's content
-                ImmutableList.Builder<Content> updatedContentsBuilder =
-                    ImmutableList.<Content>builder().addAll(llmRequest.contents());
-                assembledEvent.content().ifPresent(updatedContentsBuilder::add);
-
-                LlmRequest updatedLlmRequest =
-                    llmRequest.toBuilder().contents(updatedContentsBuilder.build()).build();
-
-                return RequestProcessingResult.create(
-                    updatedLlmRequest, ImmutableList.of(assembledEvent));
-              })
+              assembledEvent ->
+                  RequestProcessingResult.create(llmRequest, ImmutableList.of(assembledEvent)))
           .toSingle()
           .onErrorReturn(
               e -> {
@@ -254,37 +241,5 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
     }
 
     return Optional.empty();
-  }
-
-  private void clearToolCallSecurityStates(
-      InvocationContext invocationContext, Collection<String> processedFunctionCallIds) {
-    var state = invocationContext.session().state();
-    Object statesObj = state.get(TOOL_CALL_SECURITY_STATES);
-
-    if (statesObj == null) {
-      return;
-    }
-    if (!(statesObj instanceof Map)) {
-      logger.warn(
-          "Session key {} does not contain a Map, cannot clear tool states. Found: {}",
-          TOOL_CALL_SECURITY_STATES,
-          statesObj.getClass().getName());
-      return;
-    }
-
-    try {
-      @SuppressWarnings("unchecked") // safe after instanceof check
-      Map<String, String> updatedToolCallStates = new HashMap<>((Map<String, String>) statesObj);
-
-      // Remove the entries for the function calls that just got processed
-      processedFunctionCallIds.forEach(updatedToolCallStates::remove);
-
-      state.put(TOOL_CALL_SECURITY_STATES, updatedToolCallStates);
-    } catch (ClassCastException e) {
-      logger.warn(
-          "Session key {} has unexpected map types, cannot clear tool states.",
-          TOOL_CALL_SECURITY_STATES,
-          e);
-    }
   }
 }
