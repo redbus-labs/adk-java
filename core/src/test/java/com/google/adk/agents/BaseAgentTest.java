@@ -291,4 +291,29 @@ public final class BaseAgentTest {
     assertThat(afterCallback1.wasCalled()).isTrue();
     assertThat(afterCallback2.wasCalled()).isFalse();
   }
+
+  @Test
+  public void canonicalCallbacks_returnsEmptyListWhenNull() {
+    TestBaseAgent agent =
+        new TestBaseAgent(TEST_AGENT_NAME, TEST_AGENT_DESCRIPTION, null, null, null);
+
+    assertThat(agent.canonicalBeforeAgentCallbacks()).isEmpty();
+    assertThat(agent.canonicalAfterAgentCallbacks()).isEmpty();
+  }
+
+  @Test
+  public void canonicalCallbacks_returnsListWhenPresent() {
+    BeforeAgentCallback bc = unused -> Maybe.empty();
+    AfterAgentCallback ac = unused -> Maybe.empty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(bc),
+            ImmutableList.of(ac),
+            null);
+
+    assertThat(agent.canonicalBeforeAgentCallbacks()).containsExactly(bc);
+    assertThat(agent.canonicalAfterAgentCallbacks()).containsExactly(ac);
+  }
 }

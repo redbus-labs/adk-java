@@ -180,6 +180,24 @@ public abstract class BaseAgent {
   }
 
   /**
+   * The resolved beforeAgentCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends BeforeAgentCallback> canonicalBeforeAgentCallbacks() {
+    return beforeAgentCallback.orElse(ImmutableList.of());
+  }
+
+  /**
+   * The resolved afterAgentCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends AfterAgentCallback> canonicalAfterAgentCallbacks() {
+    return afterAgentCallback.orElse(ImmutableList.of());
+  }
+
+  /**
    * Creates a shallow copy of the parent context with the agent properly being set to this
    * instance.
    *
