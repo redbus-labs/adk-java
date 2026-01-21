@@ -378,9 +378,15 @@ public class Runner {
         this.sessionService.getSession(appName, userId, sessionId, Optional.empty());
     return maybeSession
         .switchIfEmpty(
-            Single.error(
-                new IllegalArgumentException(
-                    String.format("Session not found: %s for user %s", sessionId, userId))))
+            Single.defer(
+                () -> {
+                  if (runConfig.autoCreateSession()) {
+                    return this.sessionService.createSession(appName, userId, null, sessionId);
+                  }
+                  return Single.error(
+                      new IllegalArgumentException(
+                          String.format("Session not found: %s for user %s", sessionId, userId)));
+                }))
         .flatMapPublisher(session -> this.runAsync(session, newMessage, runConfig, stateDelta));
   }
 
@@ -668,15 +674,17 @@ public class Runner {
       String userId, String sessionId, LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
     return this.sessionService
         .getSession(appName, userId, sessionId, Optional.empty())
-        .flatMapPublisher(
-            session -> {
-              if (session == null) {
-                return Flowable.error(
-                    new IllegalArgumentException(
-                        String.format("Session not found: %s for user %s", sessionId, userId)));
-              }
-              return this.runLive(session, liveRequestQueue, runConfig);
-            });
+        .switchIfEmpty(
+            Single.defer(
+                () -> {
+                  if (runConfig.autoCreateSession()) {
+                    return this.sessionService.createSession(appName, userId, null, sessionId);
+                  }
+                  return Single.error(
+                      new IllegalArgumentException(
+                          String.format("Session not found: %s for user %s", sessionId, userId)));
+                }))
+        .flatMapPublisher(session -> this.runLive(session, liveRequestQueue, runConfig));
   }
 
   /**

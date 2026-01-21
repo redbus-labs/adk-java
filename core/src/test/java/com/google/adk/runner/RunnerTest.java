@@ -59,6 +59,7 @@ import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.junit.After;
 import org.junit.Before;
@@ -76,10 +77,8 @@ public final class RunnerTest {
   private final Content pluginContent = createContent("from plugin");
   private final TestLlm testLlm = createTestLlm(createLlmResponse(createContent("from llm")));
   private final LlmAgent agent = createTestAgentBuilder(testLlm).build();
-  private final Runner runner =
-      Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
-  private final Session session =
-      runner.sessionService().createSession("test", "user").blockingGet();
+  private Runner runner;
+  private Session session;
   private Tracer originalTracer;
 
   private final FailingEchoTool failingEchoTool = new FailingEchoTool();
@@ -114,6 +113,9 @@ public final class RunnerTest {
   public void setUp() {
     this.originalTracer = Telemetry.getTracer();
     Telemetry.setTracerForTesting(openTelemetryRule.getOpenTelemetry().getTracer("RunnerTest"));
+    this.runner =
+        Runner.builder().agent(agent).appName("test").plugins(ImmutableList.of(plugin)).build();
+    this.session = runner.sessionService().createSession("test", "user").blockingGet();
   }
 
   @After
@@ -831,5 +833,71 @@ public final class RunnerTest {
     var unused =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
     assertThat(contextCaptor.getValue().isResumable()).isFalse();
+  }
+
+  @Test
+  public void runAsync_withoutSessionAndAutoCreateSessionTrue_createsSession() {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(true).build();
+    String newSessionId = UUID.randomUUID().toString();
+
+    var events =
+        runner
+            .runAsync("user", newSessionId, createContent("from user"), runConfig)
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+    assertThat(
+            runner
+                .sessionService()
+                .getSession("test", "user", newSessionId, Optional.empty())
+                .blockingGet())
+        .isNotNull();
+  }
+
+  @Test
+  public void runAsync_withoutSessionAndAutoCreateSessionFalse_throwsException() {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(false).build();
+    String newSessionId = UUID.randomUUID().toString();
+
+    runner
+        .runAsync("user", newSessionId, createContent("from user"), runConfig)
+        .test()
+        .assertError(IllegalArgumentException.class);
+  }
+
+  @Test
+  public void runLive_withoutSessionAndAutoCreateSessionTrue_createsSession() throws Exception {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(true).build();
+    String newSessionId = UUID.randomUUID().toString();
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+
+    TestSubscriber<Event> testSubscriber =
+        runner.runLive("user", newSessionId, liveRequestQueue, runConfig).test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+    assertThat(
+            runner
+                .sessionService()
+                .getSession("test", "user", newSessionId, Optional.empty())
+                .blockingGet())
+        .isNotNull();
+  }
+
+  @Test
+  public void runLive_withoutSessionAndAutoCreateSessionFalse_throwsException() {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(false).build();
+    String newSessionId = UUID.randomUUID().toString();
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+
+    runner
+        .runLive("user", newSessionId, liveRequestQueue, runConfig)
+        .test()
+        .assertError(IllegalArgumentException.class);
   }
 }
