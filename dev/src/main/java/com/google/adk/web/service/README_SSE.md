@@ -14,7 +14,7 @@ This module provides a clean, reusable, industry-standard implementation of Serv
 1. **SseEventStreamService** - Generic SSE streaming service
 2. **EventProcessor** - Interface for custom event processing
 3. **PassThroughEventProcessor** - Default pass-through processor
-4. **Domain-Specific Examples** - SearchSseController, SearchEventProcessor
+4. **Generic SSE Infrastructure** - Reusable for any domain
 
 ### Design Principles
 
@@ -160,9 +160,8 @@ public class AccumulatingEventProcessor implements EventProcessor {
 ## Examples
 
 See the `examples` package for complete implementations:
-- `SearchSseController` - Domain-specific controller example
-- `SearchEventProcessor` - Domain-specific processor example
-- `SearchRequest` - Domain-specific DTO example
+- Applications can create their own domain-specific controllers and processors
+- Use `EventProcessor` interface to implement custom event handling
 
 ## Testing
 

@@ -46,7 +46,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * <p><b>Usage Example:</b>
  *
  * <pre>{@code
- * public class SearchEventProcessor implements EventProcessor {
+ * public class CustomEventProcessor implements EventProcessor {
  *   private final AtomicReference<String> finalResponse = new AtomicReference<>("");
  *
  *   @Override
