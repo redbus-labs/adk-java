@@ -272,6 +272,7 @@
     <dependency>
       <groupId>net.javacrumbs.future-converter</groupId>
       <artifactId>future-converter-java8-guava</artifactId>
+      <version>1.2.0</version>
     </dependency>
   </dependencies>
   <build>
