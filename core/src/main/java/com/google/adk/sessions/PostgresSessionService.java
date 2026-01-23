@@ -263,7 +263,8 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
                       updatedState.remove(key);
                     } else {
                       updatedState.put(key, value);
-                    }                  });
+                    }
+                  });
             }
           }
 
