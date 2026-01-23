@@ -163,7 +163,7 @@ public class HttpServerSseService {
    * The handler uses the same event processing logic as the Spring-based implementation, ensuring
    * consistency across both implementations.
    *
-   * @param path the endpoint path (e.g., "/sse" or "/search/sse")
+   * @param path the endpoint path (e.g., "/sse" or "/custom/sse")
    * @param runner the agent runner
    * @param appName the application name
    * @param eventProcessor optional event processor for custom event transformation
