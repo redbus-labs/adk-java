@@ -17,7 +17,6 @@
 package com.google.adk.flows.llmflows;
 
 import static com.google.adk.flows.llmflows.Functions.REQUEST_CONFIRMATION_FUNCTION_CALL_NAME;
-import static com.google.adk.flows.llmflows.Functions.TOOL_CALL_SECURITY_STATES;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
@@ -65,41 +64,15 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
       return Single.just(RequestProcessingResult.create(llmRequest, ImmutableList.of()));
     }
 
-    int confirmationEventIndex = -1;
-    ImmutableMap<String, ToolConfirmation> responses = ImmutableMap.of();
-    // Search backwards for the most recent user event that contains request confirmation
-    // function responses.
-    for (int i = events.size() - 1; i >= 0; i--) {
-      Event event = events.get(i);
-      if (!Objects.equals(event.author(), "user") || event.functionResponses().isEmpty()) {
-        continue;
-      }
-
-      ImmutableMap<String, ToolConfirmation> confirmationsInEvent =
-          event.functionResponses().stream()
-              .filter(functionResponse -> functionResponse.id().isPresent())
-              .filter(
-                  functionResponse ->
-                      Objects.equals(
-                          functionResponse.name().orElse(null),
-                          REQUEST_CONFIRMATION_FUNCTION_CALL_NAME))
-              .map(this::maybeCreateToolConfirmationEntry)
-              .flatMap(Optional::stream)
-              .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
-      if (!confirmationsInEvent.isEmpty()) {
-        responses = confirmationsInEvent;
-        confirmationEventIndex = i;
-        break;
-      }
-    }
-    if (responses.isEmpty()) {
+    Optional<ConfirmationResult> confirmationResult = findMostRecentConfirmations(events);
+    if (confirmationResult.isEmpty()) {
       logger.trace("No request confirmation function responses found.");
       return Single.just(RequestProcessingResult.create(llmRequest, ImmutableList.of()));
     }
 
-    // Make them final to enable access from lambda expressions.
-    final int finalConfirmationEventIndex = confirmationEventIndex;
-    final ImmutableMap<String, ToolConfirmation> requestConfirmationFunctionResponses = responses;
+    int finalConfirmationEventIndex = confirmationResult.get().eventIndex();
+    ImmutableMap<String, ToolConfirmation> requestConfirmationFunctionResponses =
+        confirmationResult.get().responses();
 
     // Search backwards from the event before confirmation for the corresponding
     // request_confirmation function calls emitted by the model.
@@ -157,20 +130,8 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
               toolsToResumeWithArgs.values(),
               ImmutableMap.copyOf(toolsToResumeWithConfirmation))
           .map(
-              assembledEvent -> {
-                clearToolCallSecurityStates(invocationContext, toolsToResumeWithArgs.keySet());
-
-                // Create an updated LlmRequest including the new event's content
-                ImmutableList.Builder<Content> updatedContentsBuilder =
-                    ImmutableList.<Content>builder().addAll(llmRequest.contents());
-                assembledEvent.content().ifPresent(updatedContentsBuilder::add);
-
-                LlmRequest updatedLlmRequest =
-                    llmRequest.toBuilder().contents(updatedContentsBuilder.build()).build();
-
-                return RequestProcessingResult.create(
-                    updatedLlmRequest, ImmutableList.of(assembledEvent));
-              })
+              assembledEvent ->
+                  RequestProcessingResult.create(llmRequest, ImmutableList.of(assembledEvent)))
           .toSingle()
           .onErrorReturn(
               e -> {
@@ -180,6 +141,34 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
     }
 
     return Single.just(RequestProcessingResult.create(llmRequest, ImmutableList.of()));
+  }
+
+  private static Optional<ConfirmationResult> findMostRecentConfirmations(
+      ImmutableList<Event> events) {
+    // Search backwards for the most recent user event that contains request confirmation
+    // function responses.
+    for (int i = events.size() - 1; i >= 0; i--) {
+      Event event = events.get(i);
+      if (!Objects.equals(event.author(), "user") || event.functionResponses().isEmpty()) {
+        continue;
+      }
+
+      ImmutableMap<String, ToolConfirmation> confirmationsInEvent =
+          event.functionResponses().stream()
+              .filter(functionResponse -> functionResponse.id().isPresent())
+              .filter(
+                  functionResponse ->
+                      Objects.equals(
+                          functionResponse.name().orElse(null),
+                          REQUEST_CONFIRMATION_FUNCTION_CALL_NAME))
+              .map(RequestConfirmationLlmRequestProcessor::maybeCreateToolConfirmationEntry)
+              .flatMap(Optional::stream)
+              .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue));
+      if (!confirmationsInEvent.isEmpty()) {
+        return Optional.of(new ConfirmationResult(confirmationsInEvent, i));
+      }
+    }
+    return Optional.empty();
   }
 
   private Optional<FunctionCall> getOriginalFunctionCall(FunctionCall functionCall) {
@@ -233,7 +222,7 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
                 invocationContext, functionCallEvent, toolsMap, toolConfirmations));
   }
 
-  private Optional<Map.Entry<String, ToolConfirmation>> maybeCreateToolConfirmationEntry(
+  private static Optional<Map.Entry<String, ToolConfirmation>> maybeCreateToolConfirmationEntry(
       FunctionResponse functionResponse) {
     Map<String, Object> responseMap = functionResponse.response().orElse(ImmutableMap.of());
     if (responseMap.size() != 1 || !responseMap.containsKey("response")) {
@@ -256,35 +245,6 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
     return Optional.empty();
   }
 
-  private void clearToolCallSecurityStates(
-      InvocationContext invocationContext, Collection<String> processedFunctionCallIds) {
-    var state = invocationContext.session().state();
-    Object statesObj = state.get(TOOL_CALL_SECURITY_STATES);
-
-    if (statesObj == null) {
-      return;
-    }
-    if (!(statesObj instanceof Map)) {
-      logger.warn(
-          "Session key {} does not contain a Map, cannot clear tool states. Found: {}",
-          TOOL_CALL_SECURITY_STATES,
-          statesObj.getClass().getName());
-      return;
-    }
-
-    try {
-      @SuppressWarnings("unchecked") // safe after instanceof check
-      Map<String, String> updatedToolCallStates = new HashMap<>((Map<String, String>) statesObj);
-
-      // Remove the entries for the function calls that just got processed
-      processedFunctionCallIds.forEach(updatedToolCallStates::remove);
-
-      state.put(TOOL_CALL_SECURITY_STATES, updatedToolCallStates);
-    } catch (ClassCastException e) {
-      logger.warn(
-          "Session key {} has unexpected map types, cannot clear tool states.",
-          TOOL_CALL_SECURITY_STATES,
-          e);
-    }
-  }
+  private record ConfirmationResult(
+      ImmutableMap<String, ToolConfirmation> responses, int eventIndex) {}
 }
