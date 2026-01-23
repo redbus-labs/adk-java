@@ -620,12 +620,11 @@ public class LlmAgent extends BaseAgent {
 
       if (this.outputSchema != null) {
         if (!this.disallowTransferToParent || !this.disallowTransferToPeers) {
-          System.err.println(
-              "Warning: Invalid config for agent "
-                  + this.name
-                  + ": outputSchema cannot co-exist with agent transfer"
+          logger.warn(
+              "Invalid config for agent {}: outputSchema cannot co-exist with agent transfer"
                   + " configurations. Setting disallowTransferToParent=true and"
-                  + " disallowTransferToPeers=true.");
+                  + " disallowTransferToPeers=true.",
+              this.name);
           this.disallowTransferToParent = true;
           this.disallowTransferToPeers = true;
         }
