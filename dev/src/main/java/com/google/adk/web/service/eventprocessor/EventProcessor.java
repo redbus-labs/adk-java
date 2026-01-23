@@ -53,7 +53,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *   public Optional<String> processEvent(Event event, Map<String, Object> context) {
  *     // Only process final result events
  *     if (event.actions().stateDelta().containsKey("finalResult")) {
- *       String result = formatAsSearchResponse(event, context);
+ *       String result = formatAsCustomResponse(event, context);
  *       finalResponse.set(result);
  *       return Optional.of(result);
  *     }
