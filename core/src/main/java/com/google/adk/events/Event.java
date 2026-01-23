@@ -605,8 +605,8 @@ public class Event extends JsonBaseModel {
       event.branch(branch);
       event.setGroundingMetadata(groundingMetadata);
       event.setModelVersion(modelVersion);
-      event.setActions(actions().orElse(EventActions.builder().build()));
-      event.setTimestamp(timestamp().orElse(Instant.now().toEpochMilli()));
+      event.setActions(actions().orElseGet(() -> EventActions.builder().build()));
+      event.setTimestamp(timestamp().orElseGet(() -> Instant.now().toEpochMilli()));
       return event;
     }
   }

@@ -28,9 +28,9 @@ import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
+import com.google.adk.events.ToolConfirmation;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.tools.BaseTool;
-import com.google.adk.tools.ToolConfirmation;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -60,7 +60,7 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
       InvocationContext invocationContext, LlmRequest llmRequest) {
     ImmutableList<Event> events = ImmutableList.copyOf(invocationContext.session().events());
     if (events.isEmpty()) {
-      logger.info(
+      logger.trace(
           "No events are present in the session. Skipping request confirmation processing.");
       return Single.just(RequestProcessingResult.create(llmRequest, ImmutableList.of()));
     }
@@ -93,7 +93,7 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
       }
     }
     if (responses.isEmpty()) {
-      logger.info("No request confirmation function responses found.");
+      logger.trace("No request confirmation function responses found.");
       return Single.just(RequestProcessingResult.create(llmRequest, ImmutableList.of()));
     }
 

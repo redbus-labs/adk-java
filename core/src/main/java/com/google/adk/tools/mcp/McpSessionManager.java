@@ -77,8 +77,9 @@ public class McpSessionManager {
     McpSyncClient client =
         McpClient.sync(transport)
             .initializationTimeout(
-                Optional.ofNullable(initializationTimeout).orElse(Duration.ofMinutes(5)))
-            .requestTimeout(Optional.ofNullable(requestTimeout).orElse(Duration.ofMinutes(5)))
+                Optional.ofNullable(initializationTimeout).orElseGet(() -> Duration.ofMinutes(5)))
+            .requestTimeout(
+                Optional.ofNullable(requestTimeout).orElseGet(() -> Duration.ofMinutes(5)))
             .loggingConsumer(new McpServerLogConsumer())
             .capabilities(ClientCapabilities.builder().build())
             .build();

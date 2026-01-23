@@ -25,7 +25,6 @@ import com.google.genai.types.Tool;
 import com.google.genai.types.VertexRagStore;
 import com.google.genai.types.VertexRagStoreRagResource;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -56,18 +55,7 @@ public final class VertexAiRagRetrievalTest {
     String query = "test query";
     ToolContext toolContext =
         ToolContext.builder(
-                new InvocationContext(
-                    /* sessionService= */ null,
-                    /* artifactService= */ null,
-                    /* memoryService= */ null,
-                    /* liveRequestQueue= */ Optional.empty(),
-                    /* branch= */ Optional.empty(),
-                    /* invocationId= */ null,
-                    /* agent= */ null,
-                    Session.builder("123").build(),
-                    /* userContent= */ null,
-                    /* runConfig= */ null,
-                    /* endInvocation= */ false))
+                InvocationContext.builder().session(Session.builder("123").build()).build())
             .functionCallId("functionCallId")
             .build();
     RetrieveContextsRequest expectedRequest =
@@ -111,18 +99,7 @@ public final class VertexAiRagRetrievalTest {
     String query = "test query";
     ToolContext toolContext =
         ToolContext.builder(
-                new InvocationContext(
-                    /* sessionService= */ null,
-                    /* artifactService= */ null,
-                    /* memoryService= */ null,
-                    /* liveRequestQueue= */ Optional.empty(),
-                    /* branch= */ Optional.empty(),
-                    /* invocationId= */ null,
-                    /* agent= */ null,
-                    Session.builder("123").build(),
-                    /* userContent= */ Optional.empty(),
-                    /* runConfig= */ null,
-                    /* endInvocation= */ false))
+                InvocationContext.builder().session(Session.builder("123").build()).build())
             .functionCallId("functionCallId")
             .build();
     RetrieveContextsRequest expectedRequest =
@@ -168,18 +145,7 @@ public final class VertexAiRagRetrievalTest {
     LlmRequest.Builder llmRequestBuilder = LlmRequest.builder().model("gemini-2-pro");
     ToolContext toolContext =
         ToolContext.builder(
-                new InvocationContext(
-                    /* sessionService= */ null,
-                    /* artifactService= */ null,
-                    /* memoryService= */ null,
-                    /* liveRequestQueue= */ Optional.empty(),
-                    /* branch= */ Optional.empty(),
-                    /* invocationId= */ null,
-                    /* agent= */ null,
-                    Session.builder("123").build(),
-                    /* userContent= */ Optional.empty(),
-                    /* runConfig= */ null,
-                    /* endInvocation= */ false))
+                InvocationContext.builder().session(Session.builder("123").build()).build())
             .functionCallId("functionCallId")
             .build();
 
@@ -245,18 +211,7 @@ public final class VertexAiRagRetrievalTest {
     LlmRequest.Builder llmRequestBuilder = LlmRequest.builder().model("gemini-1-pro");
     ToolContext toolContext =
         ToolContext.builder(
-                new InvocationContext(
-                    /* sessionService= */ null,
-                    /* artifactService= */ null,
-                    /* memoryService= */ null,
-                    /* liveRequestQueue= */ Optional.empty(),
-                    /* branch= */ Optional.empty(),
-                    /* invocationId= */ null,
-                    /* agent= */ null,
-                    Session.builder("123").build(),
-                    /* userContent= */ Optional.empty(),
-                    /* runConfig= */ null,
-                    /* endInvocation= */ false))
+                InvocationContext.builder().session(Session.builder("123").build()).build())
             .functionCallId("functionCallId")
             .build();
     GenerateContentConfig initialConfig = GenerateContentConfig.builder().build();

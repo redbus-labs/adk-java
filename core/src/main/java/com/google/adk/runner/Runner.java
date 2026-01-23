@@ -29,11 +29,15 @@ import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
 import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.BaseMemoryService;
+import com.google.adk.models.Model;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
+import com.google.adk.summarizer.EventsCompactionConfig;
+import com.google.adk.summarizer.LlmEventSummarizer;
+import com.google.adk.summarizer.SlidingWindowEventCompactor;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
@@ -68,6 +72,7 @@ public class Runner {
   @Nullable private final BaseMemoryService memoryService;
   private final PluginManager pluginManager;
   private final ResumabilityConfig resumabilityConfig;
+  @Nullable private final EventsCompactionConfig eventsCompactionConfig;
 
   /** Builder for {@link Runner}. */
   public static class Builder {
@@ -78,6 +83,7 @@ public class Runner {
     @Nullable private BaseMemoryService memoryService = null;
     private List<BasePlugin> plugins = ImmutableList.of();
     private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
+    @Nullable private EventsCompactionConfig eventsCompactionConfig;
 
     @CanIgnoreReturnValue
     public Builder agent(BaseAgent agent) {
@@ -121,6 +127,12 @@ public class Runner {
       return this;
     }
 
+    @CanIgnoreReturnValue
+    public Builder eventsCompactionConfig(EventsCompactionConfig eventsCompactionConfig) {
+      this.eventsCompactionConfig = eventsCompactionConfig;
+      return this;
+    }
+
     public Runner build() {
       if (agent == null) {
         throw new IllegalStateException("Agent must be provided.");
@@ -141,7 +153,8 @@ public class Runner {
           sessionService,
           memoryService,
           plugins,
-          resumabilityConfig);
+          resumabilityConfig,
+          eventsCompactionConfig);
     }
   }
 
@@ -208,6 +221,32 @@ public class Runner {
       @Nullable BaseMemoryService memoryService,
       List<BasePlugin> plugins,
       ResumabilityConfig resumabilityConfig) {
+    this(
+        agent,
+        appName,
+        artifactService,
+        sessionService,
+        memoryService,
+        plugins,
+        resumabilityConfig,
+        null);
+  }
+
+  /**
+   * Creates a new {@code Runner} with a list of plugins and resumability config.
+   *
+   * @deprecated Use {@link Runner.Builder} instead.
+   */
+  @Deprecated
+  protected Runner(
+      BaseAgent agent,
+      String appName,
+      BaseArtifactService artifactService,
+      BaseSessionService sessionService,
+      @Nullable BaseMemoryService memoryService,
+      List<BasePlugin> plugins,
+      ResumabilityConfig resumabilityConfig,
+      @Nullable EventsCompactionConfig eventsCompactionConfig) {
     this.agent = agent;
     this.appName = appName;
     this.artifactService = artifactService;
@@ -215,6 +254,7 @@ public class Runner {
     this.memoryService = memoryService;
     this.pluginManager = new PluginManager(plugins);
     this.resumabilityConfig = resumabilityConfig;
+    this.eventsCompactionConfig = createEventsCompactionConfig(agent, eventsCompactionConfig);
   }
 
   /**
@@ -386,12 +426,13 @@ public class Runner {
 
       // Create initial context
       InvocationContext initialContext =
-          newInvocationContextWithId(
-              session,
-              Optional.of(newMessage),
-              /* liveRequestQueue= */ Optional.empty(),
-              runConfig,
-              invocationId);
+          newInvocationContextBuilder(
+                  session,
+                  Optional.of(newMessage),
+                  /* liveRequestQueue= */ Optional.empty(),
+                  runConfig)
+              .invocationId(invocationId)
+              .build();
 
       return Telemetry.traceFlowable(
           spanContext,
@@ -400,8 +441,8 @@ public class Runner {
               Flowable.defer(
                       () ->
                           this.pluginManager
-                              .runOnUserMessageCallback(initialContext, newMessage)
-                              .switchIfEmpty(Single.just(newMessage))
+                              .onUserMessageCallback(initialContext, newMessage)
+                              .defaultIfEmpty(newMessage)
                               .flatMap(
                                   content ->
                                       (content != null)
@@ -427,20 +468,21 @@ public class Runner {
                                               // Create context with updated session for
                                               // beforeRunCallback
                                               InvocationContext contextWithUpdatedSession =
-                                                  newInvocationContextWithId(
-                                                      updatedSession,
-                                                      event.content(),
-                                                      /* liveRequestQueue= */ Optional.empty(),
-                                                      runConfig,
-                                                      invocationId);
-                                              contextWithUpdatedSession.agent(
-                                                  this.findAgentToRun(updatedSession, rootAgent));
+                                                  newInvocationContextBuilder(
+                                                          updatedSession,
+                                                          event.content(),
+                                                          /* liveRequestQueue= */ Optional.empty(),
+                                                          runConfig)
+                                                      .invocationId(invocationId)
+                                                      .agent(
+                                                          this.findAgentToRun(
+                                                              updatedSession, rootAgent))
+                                                      .build();
 
                                               // Call beforeRunCallback with updated session
                                               Maybe<Event> beforeRunEvent =
                                                   this.pluginManager
-                                                      .runBeforeRunCallback(
-                                                          contextWithUpdatedSession)
+                                                      .beforeRunCallback(contextWithUpdatedSession)
                                                       .map(
                                                           content ->
                                                               Event.builder()
@@ -472,8 +514,8 @@ public class Runner {
                                                                             updatedSession,
                                                                             session);
                                                                         return contextWithUpdatedSession
-                                                                            .pluginManager()
-                                                                            .runOnEventCallback(
+                                                                            .combinedPlugin()
+                                                                            .onEventCallback(
                                                                                 contextWithUpdatedSession,
                                                                                 registeredEvent)
                                                                             .defaultIfEmpty(
@@ -491,7 +533,10 @@ public class Runner {
                                                       Completable.defer(
                                                           () ->
                                                               pluginManager.runAfterRunCallback(
-                                                                  contextWithUpdatedSession)));
+                                                                  contextWithUpdatedSession)))
+                                                  .concatWith(
+                                                      Completable.defer(
+                                                          () -> compactEvents(updatedSession)));
                                             });
                                   }))
                   .doOnError(
@@ -507,11 +552,16 @@ public class Runner {
     }
   }
 
+  private Completable compactEvents(Session session) {
+    return Optional.ofNullable(eventsCompactionConfig)
+        .map(SlidingWindowEventCompactor::new)
+        .map(c -> c.compact(session, sessionService))
+        .orElseGet(Completable::complete);
+  }
+
   private void copySessionStates(Session source, Session target) {
     // TODO: remove this hack when deprecating all runAsync with Session.
-    for (var entry : source.state().entrySet()) {
-      target.state().put(entry.getKey(), entry.getValue());
-    }
+    target.state().putAll(source.state());
   }
 
   /**
@@ -554,35 +604,14 @@ public class Runner {
       Optional<Content> newMessage,
       Optional<LiveRequestQueue> liveRequestQueue,
       RunConfig runConfig) {
-    BaseAgent rootAgent = this.agent;
-    var invocationContextBuilder =
-        InvocationContext.builder()
-            .sessionService(this.sessionService)
-            .artifactService(this.artifactService)
-            .memoryService(this.memoryService)
-            .pluginManager(this.pluginManager)
-            .agent(rootAgent)
-            .session(session)
-            .userContent(newMessage)
-            .runConfig(runConfig)
-            .resumabilityConfig(this.resumabilityConfig);
-    liveRequestQueue.ifPresent(invocationContextBuilder::liveRequestQueue);
-    var invocationContext = invocationContextBuilder.build();
-    invocationContext.agent(this.findAgentToRun(session, rootAgent));
-    return invocationContext;
+    return newInvocationContextBuilder(session, newMessage, liveRequestQueue, runConfig).build();
   }
 
-  /**
-   * Creates a new InvocationContext with a specific invocation ID.
-   *
-   * @return a new {@link InvocationContext} with the specified invocation ID.
-   */
-  private InvocationContext newInvocationContextWithId(
+  private InvocationContext.Builder newInvocationContextBuilder(
       Session session,
       Optional<Content> newMessage,
       Optional<LiveRequestQueue> liveRequestQueue,
-      RunConfig runConfig,
-      String invocationId) {
+      RunConfig runConfig) {
     BaseAgent rootAgent = this.agent;
     var invocationContextBuilder =
         InvocationContext.builder()
@@ -590,16 +619,14 @@ public class Runner {
             .artifactService(this.artifactService)
             .memoryService(this.memoryService)
             .pluginManager(this.pluginManager)
-            .invocationId(invocationId)
             .agent(rootAgent)
             .session(session)
-            .userContent(newMessage)
+            .userContent(newMessage.orElseGet(() -> Content.fromParts()))
             .runConfig(runConfig)
-            .resumabilityConfig(this.resumabilityConfig);
+            .resumabilityConfig(this.resumabilityConfig)
+            .agent(this.findAgentToRun(session, rootAgent));
     liveRequestQueue.ifPresent(invocationContextBuilder::liveRequestQueue);
-    var invocationContext = invocationContextBuilder.build();
-    invocationContext.agent(this.findAgentToRun(session, rootAgent));
-    return invocationContext;
+    return invocationContextBuilder;
   }
 
   /**
@@ -759,6 +786,27 @@ public class Runner {
   private boolean hasLiveRequestQueueParameter(FunctionTool functionTool) {
     return Arrays.stream(functionTool.func().getParameters())
         .anyMatch(parameter -> parameter.getType().equals(LiveRequestQueue.class));
+  }
+
+  @Nullable
+  private static EventsCompactionConfig createEventsCompactionConfig(
+      BaseAgent agent, @Nullable EventsCompactionConfig config) {
+    if (config == null || config.summarizer() != null) {
+      return config;
+    }
+    LlmEventSummarizer summarizer =
+        Optional.of(agent)
+            .filter(LlmAgent.class::isInstance)
+            .map(LlmAgent.class::cast)
+            .flatMap(LlmAgent::model)
+            .flatMap(Model::model)
+            .map(LlmEventSummarizer::new)
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "No BaseLlm model available for event compaction"));
+    return new EventsCompactionConfig(
+        config.compactionInterval(), config.overlapSize(), summarizer);
   }
 
   // TODO: run statelessly

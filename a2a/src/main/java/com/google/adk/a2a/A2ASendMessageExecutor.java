@@ -201,7 +201,7 @@ public final class A2ASendMessageExecutor {
         new Message.Builder()
             .messageId(UUID.randomUUID().toString())
             .role(Message.Role.AGENT)
-            .parts(List.of(new TextPart("Error: " + msg)))
+            .parts(ImmutableList.of(new TextPart("Error: " + msg)))
             .build();
     if (contextId != null && !contextId.isEmpty()) {
       error.setContextId(contextId);

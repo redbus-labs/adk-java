@@ -19,13 +19,11 @@ package com.google.adk.tools.retrieval;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.datastax.oss.driver.api.core.CqlSession;
-import com.datastax.oss.driver.api.core.data.CqlVector;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableMap;
 import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,14 +100,11 @@ public class CassandraRagRetrieval extends BaseRetrievalTool {
         () -> {
           String cql =
               String.format(
-                  "SELECT agent_name, similarity_cosine(%s, ?) as score, data FROM %s.%s ORDER BY %s ANN OF ? LIMIT ?",
+                  "SELECT agent_name, similarity_cosine(embedding, ?) as score, data FROM %s.%s ORDER BY"
+                      + " %s ANN OF ? LIMIT ?",
                   keyspace, table, embeddingColumn);
           var prepared = session.prepare(cql);
-          // Bind as a native Cassandra vector<float, N>, not a list<double>.
-          List<Float> floatList =
-              embedding.stream().map(Double::floatValue).collect(Collectors.toList());
-          CqlVector<Float> vector = CqlVector.newInstance(floatList);
-          var rows = session.execute(prepared.bind(vector, vector, topK));
+          var rows = session.execute(prepared.bind(embedding, embedding, topK));
           var contexts =
               rows.all().stream()
                   .filter(row -> row.getFloat("score") > similarityThreshold)
