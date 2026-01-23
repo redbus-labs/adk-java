@@ -148,7 +148,8 @@ public final class ExampleUtils {
   }
 
   /**
-   * Builds a formatted few-shot example string for the given query.
+   * Builds a formatted few-shot example string for the given query. The string can be used for
+   * system instructions (i.e., the method name means "Build Example System Instructions").
    *
    * @param exampleProvider Source of examples.
    * @param query User query.
