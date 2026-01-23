@@ -184,7 +184,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
     if (closed.compareAndSet(false, true)) {
       logger.error("Error during WebSocket receive operation", throwable);
       responseProcessor.onError(throwable);
-      sessionFuture.thenAccept(this::closeSessionIgnoringErrors).exceptionally(err -> null);
+      sessionFuture.thenAccept(this::closeSessionIgnoringErrors).exceptionally(unusedError -> null);
     }
   }
 
@@ -198,26 +198,22 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   public Completable sendContent(Content content) {
     Objects.requireNonNull(content, "content cannot be null");
 
-    Optional<List<FunctionResponse>> functionResponses = extractFunctionResponses(content);
-
-    if (functionResponses.isPresent()) {
-      return sendToolResponseInternal(
-          LiveSendToolResponseParameters.builder()
-              .functionResponses(functionResponses.get())
-              .build());
-    } else {
+    List<FunctionResponse> functionResponses = extractFunctionResponses(content);
+    if (functionResponses.isEmpty()) {
       return sendClientContentInternal(
           LiveSendClientContentParameters.builder()
               .turns(ImmutableList.of(content))
               .turnComplete(true)
               .build());
     }
+    return sendToolResponseInternal(
+        LiveSendToolResponseParameters.builder().functionResponses(functionResponses).build());
   }
 
   /** Extracts FunctionResponse parts from a Content object if all parts are FunctionResponses. */
-  private Optional<List<FunctionResponse>> extractFunctionResponses(Content content) {
+  private List<FunctionResponse> extractFunctionResponses(Content content) {
     if (content.parts().isEmpty() || content.parts().get().isEmpty()) {
-      return Optional.empty();
+      return ImmutableList.of();
     }
 
     ImmutableList<FunctionResponse> responses =
@@ -226,12 +222,8 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
             .flatMap(Optional::stream)
             .collect(toImmutableList());
 
-    // Ensure *all* parts were function responses
-    if (responses.size() == content.parts().get().size()) {
-      return Optional.of(responses);
-    } else {
-      return Optional.empty();
-    }
+    // Ensure *all* parts were function responses.
+    return (responses.size() == content.parts().get().size()) ? responses : ImmutableList.of();
   }
 
   @Override
@@ -283,7 +275,9 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       }
 
       if (sessionFuture.isDone()) {
-        sessionFuture.thenAccept(this::closeSessionIgnoringErrors).exceptionally(err -> null);
+        sessionFuture
+            .thenAccept(this::closeSessionIgnoringErrors)
+            .exceptionally(unusedError -> null);
       } else {
         sessionFuture.cancel(false);
       }
