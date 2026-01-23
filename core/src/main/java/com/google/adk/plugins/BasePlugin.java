@@ -30,6 +30,11 @@ package com.google.adk.plugins;
 public abstract class BasePlugin implements Plugin {
   protected final String name;
 
+  /**
+   * Constructs a new plugin with the given name.
+   *
+   * @param name The name of the plugin.
+   */
   public BasePlugin(String name) {
     this.name = name;
   }

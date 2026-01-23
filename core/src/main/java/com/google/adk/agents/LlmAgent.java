@@ -35,6 +35,12 @@ import com.google.adk.agents.Callbacks.BeforeModelCallbackSync;
 import com.google.adk.agents.Callbacks.BeforeToolCallback;
 import com.google.adk.agents.Callbacks.BeforeToolCallbackBase;
 import com.google.adk.agents.Callbacks.BeforeToolCallbackSync;
+import com.google.adk.agents.Callbacks.OnModelErrorCallback;
+import com.google.adk.agents.Callbacks.OnModelErrorCallbackBase;
+import com.google.adk.agents.Callbacks.OnModelErrorCallbackSync;
+import com.google.adk.agents.Callbacks.OnToolErrorCallback;
+import com.google.adk.agents.Callbacks.OnToolErrorCallbackBase;
+import com.google.adk.agents.Callbacks.OnToolErrorCallbackSync;
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
 import com.google.adk.codeexecutors.BaseCodeExecutor;
 import com.google.adk.events.Event;
@@ -56,12 +62,15 @@ import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,6 +103,12 @@ public class LlmAgent extends BaseAgent {
   private final Optional<Integer> maxSteps;
   private final boolean disallowTransferToParent;
   private final boolean disallowTransferToPeers;
+  private final Optional<List<? extends BeforeModelCallback>> beforeModelCallback;
+  private final Optional<List<? extends AfterModelCallback>> afterModelCallback;
+  private final Optional<List<? extends OnModelErrorCallback>> onModelErrorCallback;
+  private final Optional<List<? extends BeforeToolCallback>> beforeToolCallback;
+  private final Optional<List<? extends AfterToolCallback>> afterToolCallback;
+  private final Optional<List<? extends OnToolErrorCallback>> onToolErrorCallback;
   private final Optional<Schema> inputSchema;
   private final Optional<Schema> outputSchema;
   private final Optional<Executor> executor;
@@ -108,7 +123,8 @@ public class LlmAgent extends BaseAgent {
         builder.name,
         builder.description,
         builder.subAgents,
-        builder.callbackPluginBuilder.build());
+        builder.beforeAgentCallback,
+        builder.afterAgentCallback);
     this.model = Optional.ofNullable(builder.model);
     this.instruction =
         builder.instruction == null ? new Instruction.Static("") : builder.instruction;
@@ -122,6 +138,12 @@ public class LlmAgent extends BaseAgent {
     this.maxSteps = Optional.ofNullable(builder.maxSteps);
     this.disallowTransferToParent = builder.disallowTransferToParent;
     this.disallowTransferToPeers = builder.disallowTransferToPeers;
+    this.beforeModelCallback = Optional.ofNullable(builder.beforeModelCallback);
+    this.afterModelCallback = Optional.ofNullable(builder.afterModelCallback);
+    this.onModelErrorCallback = Optional.ofNullable(builder.onModelErrorCallback);
+    this.beforeToolCallback = Optional.ofNullable(builder.beforeToolCallback);
+    this.afterToolCallback = Optional.ofNullable(builder.afterToolCallback);
+    this.onToolErrorCallback = Optional.ofNullable(builder.onToolErrorCallback);
     this.inputSchema = Optional.ofNullable(builder.inputSchema);
     this.outputSchema = Optional.ofNullable(builder.outputSchema);
     this.executor = Optional.ofNullable(builder.executor);
@@ -163,6 +185,12 @@ public class LlmAgent extends BaseAgent {
     private Integer maxSteps;
     private Boolean disallowTransferToParent;
     private Boolean disallowTransferToPeers;
+    private ImmutableList<? extends BeforeModelCallback> beforeModelCallback;
+    private ImmutableList<? extends AfterModelCallback> afterModelCallback;
+    private ImmutableList<? extends OnModelErrorCallback> onModelErrorCallback;
+    private ImmutableList<? extends BeforeToolCallback> beforeToolCallback;
+    private ImmutableList<? extends AfterToolCallback> afterToolCallback;
+    private ImmutableList<? extends OnToolErrorCallback> onToolErrorCallback;
     private Schema inputSchema;
     private Schema outputSchema;
     private Executor executor;
@@ -234,13 +262,13 @@ public class LlmAgent extends BaseAgent {
 
     @CanIgnoreReturnValue
     public Builder exampleProvider(List<Example> examples) {
-      this.exampleProvider = (query) -> examples;
+      this.exampleProvider = (unused) -> examples;
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder exampleProvider(Example... examples) {
-      this.exampleProvider = (query) -> ImmutableList.copyOf(examples);
+      this.exampleProvider = (unused) -> ImmutableList.copyOf(examples);
       return this;
     }
 
@@ -274,88 +302,260 @@ public class LlmAgent extends BaseAgent {
       return this;
     }
 
+    // (b/476510024): Temporary workaround for ces
     @CanIgnoreReturnValue
-    public Builder beforeModelCallback(BeforeModelCallback beforeModelCallback) {
-      callbackPluginBuilder.addBeforeModelCallback(beforeModelCallback);
+    public Builder clearBeforeModelCallbacks() {
+      this.beforeModelCallback = null;
       return this;
     }
 
     @CanIgnoreReturnValue
-    public Builder beforeModelCallback(List<BeforeModelCallbackBase> beforeModelCallback) {
-      beforeModelCallback.forEach(callbackPluginBuilder::addCallback);
+    public Builder beforeModelCallback(BeforeModelCallback beforeModelCallback) {
+      this.beforeModelCallback = ImmutableList.of(beforeModelCallback);
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder beforeModelCallback(
+        @Nullable List<BeforeModelCallbackBase> beforeModelCallbacks) {
+      this.beforeModelCallback =
+          convertCallbacks(
+              beforeModelCallbacks,
+              callback -> {
+                if (callback instanceof BeforeModelCallback beforeModelCallbackInstance) {
+                  return beforeModelCallbackInstance;
+                } else if (callback
+                    instanceof BeforeModelCallbackSync beforeModelCallbackSyncInstance) {
+                  return (callbackContext, llmRequestBuilder) ->
+                      Maybe.fromOptional(
+                          beforeModelCallbackSyncInstance.call(callbackContext, llmRequestBuilder));
+                } else {
+                  return null;
+                }
+              },
+              "beforeModelCallback");
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder beforeModelCallbackSync(BeforeModelCallbackSync beforeModelCallbackSync) {
-      callbackPluginBuilder.addBeforeModelCallbackSync(beforeModelCallbackSync);
+      this.beforeModelCallback =
+          ImmutableList.of(
+              (callbackContext, llmRequestBuilder) ->
+                  Maybe.fromOptional(
+                      beforeModelCallbackSync.call(callbackContext, llmRequestBuilder)));
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder afterModelCallback(AfterModelCallback afterModelCallback) {
-      callbackPluginBuilder.addAfterModelCallback(afterModelCallback);
+      this.afterModelCallback = ImmutableList.of(afterModelCallback);
       return this;
     }
 
     @CanIgnoreReturnValue
-    public Builder afterModelCallback(List<AfterModelCallbackBase> afterModelCallback) {
-      afterModelCallback.forEach(callbackPluginBuilder::addCallback);
+    public Builder afterModelCallback(@Nullable List<AfterModelCallbackBase> afterModelCallbacks) {
+      this.afterModelCallback =
+          convertCallbacks(
+              afterModelCallbacks,
+              callback -> {
+                if (callback instanceof AfterModelCallback afterModelCallbackInstance) {
+                  return afterModelCallbackInstance;
+                } else if (callback
+                    instanceof AfterModelCallbackSync afterModelCallbackSyncInstance) {
+                  return (callbackContext, llmResponse) ->
+                      Maybe.fromOptional(
+                          afterModelCallbackSyncInstance.call(callbackContext, llmResponse));
+                } else {
+                  return null;
+                }
+              },
+              "afterModelCallback");
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder afterModelCallbackSync(AfterModelCallbackSync afterModelCallbackSync) {
-      callbackPluginBuilder.addAfterModelCallbackSync(afterModelCallbackSync);
+      this.afterModelCallback =
+          ImmutableList.of(
+              (callbackContext, llmResponse) ->
+                  Maybe.fromOptional(afterModelCallbackSync.call(callbackContext, llmResponse)));
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder onModelErrorCallback(OnModelErrorCallback onModelErrorCallback) {
+      this.onModelErrorCallback = ImmutableList.of(onModelErrorCallback);
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder onModelErrorCallback(
+        @Nullable List<OnModelErrorCallbackBase> onModelErrorCallbacks) {
+      this.onModelErrorCallback =
+          convertCallbacks(
+              onModelErrorCallbacks,
+              callback -> {
+                if (callback instanceof OnModelErrorCallback onModelErrorCallbackInstance) {
+                  return onModelErrorCallbackInstance;
+                } else if (callback
+                    instanceof OnModelErrorCallbackSync onModelErrorCallbackSyncInstance) {
+                  return (callbackContext, llmRequest, error) ->
+                      Maybe.fromOptional(
+                          onModelErrorCallbackSyncInstance.call(
+                              callbackContext, llmRequest, error));
+                } else {
+                  return null;
+                }
+              },
+              "onModelErrorCallback");
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder onModelErrorCallbackSync(OnModelErrorCallbackSync onModelErrorCallbackSync) {
+      this.onModelErrorCallback =
+          ImmutableList.of(
+              (callbackContext, llmRequest, error) ->
+                  Maybe.fromOptional(
+                      onModelErrorCallbackSync.call(callbackContext, llmRequest, error)));
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder beforeAgentCallbackSync(BeforeAgentCallbackSync beforeAgentCallbackSync) {
-      callbackPluginBuilder.addBeforeAgentCallbackSync(beforeAgentCallbackSync);
+      this.beforeAgentCallback =
+          ImmutableList.of(
+              (callbackContext) ->
+                  Maybe.fromOptional(beforeAgentCallbackSync.call(callbackContext)));
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder afterAgentCallbackSync(AfterAgentCallbackSync afterAgentCallbackSync) {
-      callbackPluginBuilder.addAfterAgentCallbackSync(afterAgentCallbackSync);
+      this.afterAgentCallback =
+          ImmutableList.of(
+              (callbackContext) ->
+                  Maybe.fromOptional(afterAgentCallbackSync.call(callbackContext)));
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder beforeToolCallback(BeforeToolCallback beforeToolCallback) {
-      callbackPluginBuilder.addBeforeToolCallback(beforeToolCallback);
+      this.beforeToolCallback = ImmutableList.of(beforeToolCallback);
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder beforeToolCallback(
         @Nullable List<? extends BeforeToolCallbackBase> beforeToolCallbacks) {
-      beforeToolCallbacks.forEach(callbackPluginBuilder::addCallback);
+      this.beforeToolCallback =
+          convertCallbacks(
+              beforeToolCallbacks,
+              callback -> {
+                if (callback instanceof BeforeToolCallback beforeToolCallbackInstance) {
+                  return beforeToolCallbackInstance;
+                } else if (callback
+                    instanceof BeforeToolCallbackSync beforeToolCallbackSyncInstance) {
+                  return (invocationContext, baseTool, input, toolContext) ->
+                      Maybe.fromOptional(
+                          beforeToolCallbackSyncInstance.call(
+                              invocationContext, baseTool, input, toolContext));
+                } else {
+                  return null;
+                }
+              },
+              "beforeToolCallback");
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder beforeToolCallbackSync(BeforeToolCallbackSync beforeToolCallbackSync) {
-      callbackPluginBuilder.addBeforeToolCallbackSync(beforeToolCallbackSync);
+      this.beforeToolCallback =
+          ImmutableList.of(
+              (invocationContext, baseTool, input, toolContext) ->
+                  Maybe.fromOptional(
+                      beforeToolCallbackSync.call(
+                          invocationContext, baseTool, input, toolContext)));
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder afterToolCallback(AfterToolCallback afterToolCallback) {
-      callbackPluginBuilder.addAfterToolCallback(afterToolCallback);
+      this.afterToolCallback = ImmutableList.of(afterToolCallback);
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder afterToolCallback(@Nullable List<AfterToolCallbackBase> afterToolCallbacks) {
-      afterToolCallbacks.forEach(callbackPluginBuilder::addCallback);
+      this.afterToolCallback =
+          convertCallbacks(
+              afterToolCallbacks,
+              callback -> {
+                if (callback instanceof AfterToolCallback afterToolCallbackInstance) {
+                  return afterToolCallbackInstance;
+                } else if (callback
+                    instanceof AfterToolCallbackSync afterToolCallbackSyncInstance) {
+                  return (invocationContext, baseTool, input, toolContext, response) ->
+                      Maybe.fromOptional(
+                          afterToolCallbackSyncInstance.call(
+                              invocationContext, baseTool, input, toolContext, response));
+                } else {
+                  return null;
+                }
+              },
+              "afterToolCallback");
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder afterToolCallbackSync(AfterToolCallbackSync afterToolCallbackSync) {
-      callbackPluginBuilder.addAfterToolCallbackSync(afterToolCallbackSync);
+      this.afterToolCallback =
+          ImmutableList.of(
+              (invocationContext, baseTool, input, toolContext, response) ->
+                  Maybe.fromOptional(
+                      afterToolCallbackSync.call(
+                          invocationContext, baseTool, input, toolContext, response)));
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder onToolErrorCallback(OnToolErrorCallback onToolErrorCallback) {
+      this.onToolErrorCallback = ImmutableList.of(onToolErrorCallback);
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder onToolErrorCallback(
+        @Nullable List<OnToolErrorCallbackBase> onToolErrorCallbacks) {
+      this.onToolErrorCallback =
+          convertCallbacks(
+              onToolErrorCallbacks,
+              callback -> {
+                if (callback instanceof OnToolErrorCallback onToolErrorCallbackInstance) {
+                  return onToolErrorCallbackInstance;
+                } else if (callback
+                    instanceof OnToolErrorCallbackSync onToolErrorCallbackSyncInstance) {
+                  return (invocationContext, baseTool, input, toolContext, error) ->
+                      Maybe.fromOptional(
+                          onToolErrorCallbackSyncInstance.call(
+                              invocationContext, baseTool, input, toolContext, error));
+                } else {
+                  return null;
+                }
+              },
+              "onToolErrorCallback");
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder onToolErrorCallbackSync(OnToolErrorCallbackSync onToolErrorCallbackSync) {
+      this.onToolErrorCallback =
+          ImmutableList.of(
+              (invocationContext, baseTool, input, toolContext, error) ->
+                  Maybe.fromOptional(
+                      onToolErrorCallbackSync.call(
+                          invocationContext, baseTool, input, toolContext, error)));
       return this;
     }
 
@@ -387,6 +587,29 @@ public class LlmAgent extends BaseAgent {
     public Builder codeExecutor(BaseCodeExecutor codeExecutor) {
       this.codeExecutor = codeExecutor;
       return this;
+    }
+
+    @Nullable
+    private static <B, A> ImmutableList<A> convertCallbacks(
+        @Nullable List<? extends B> callbacks, Function<B, A> converter, String callbackType) {
+      return Optional.ofNullable(callbacks)
+          .map(
+              c ->
+                  c.stream()
+                      .map(
+                          callback -> {
+                            A converted = converter.apply(callback);
+                            if (converted == null) {
+                              LlmAgent.logger.warn(
+                                  "Invalid {} callback type: {}. Ignoring this callback.",
+                                  callbackType,
+                                  callback.getClass().getName());
+                            }
+                            return converted;
+                          })
+                      .filter(Objects::nonNull)
+                      .collect(toImmutableList()))
+          .orElse(null);
     }
 
     protected void validate() {
@@ -629,19 +852,81 @@ public class LlmAgent extends BaseAgent {
   }
 
   public Optional<List<? extends BeforeModelCallback>> beforeModelCallback() {
-    return Optional.of(callbackPlugin.getBeforeModelCallback());
+    return beforeModelCallback;
   }
 
   public Optional<List<? extends AfterModelCallback>> afterModelCallback() {
-    return Optional.of(callbackPlugin.getAfterModelCallback());
+    return afterModelCallback;
   }
 
   public Optional<List<? extends BeforeToolCallback>> beforeToolCallback() {
-    return Optional.of(callbackPlugin.getBeforeToolCallback());
+    return beforeToolCallback;
   }
 
   public Optional<List<? extends AfterToolCallback>> afterToolCallback() {
-    return Optional.of(callbackPlugin.getAfterToolCallback());
+    return afterToolCallback;
+  }
+
+  public Optional<List<? extends OnModelErrorCallback>> onModelErrorCallback() {
+    return onModelErrorCallback;
+  }
+
+  public Optional<List<? extends OnToolErrorCallback>> onToolErrorCallback() {
+    return onToolErrorCallback;
+  }
+
+  /**
+   * The resolved beforeModelCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends BeforeModelCallback> canonicalBeforeModelCallbacks() {
+    return beforeModelCallback.orElse(ImmutableList.of());
+  }
+
+  /**
+   * The resolved afterModelCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends AfterModelCallback> canonicalAfterModelCallbacks() {
+    return afterModelCallback.orElse(ImmutableList.of());
+  }
+
+  /**
+   * The resolved onModelErrorCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends OnModelErrorCallback> canonicalOnModelErrorCallbacks() {
+    return onModelErrorCallback.orElse(ImmutableList.of());
+  }
+
+  /**
+   * The resolved beforeToolCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends BeforeToolCallback> canonicalBeforeToolCallbacks() {
+    return beforeToolCallback.orElse(ImmutableList.of());
+  }
+
+  /**
+   * The resolved afterToolCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends AfterToolCallback> canonicalAfterToolCallbacks() {
+    return afterToolCallback.orElse(ImmutableList.of());
+  }
+
+  /**
+   * The resolved onToolErrorCallback field as a list.
+   *
+   * <p>This method is only for use by Agent Development Kit.
+   */
+  public List<? extends OnToolErrorCallback> canonicalOnToolErrorCallbacks() {
+    return onToolErrorCallback.orElse(ImmutableList.of());
   }
 
   public Optional<Schema> inputSchema() {
@@ -702,8 +987,8 @@ public class LlmAgent extends BaseAgent {
     }
     BaseAgent current = this.parentAgent();
     while (current != null) {
-      if (current instanceof LlmAgent llmAgent) {
-        return llmAgent.resolvedModel();
+      if (current instanceof LlmAgent) {
+        return ((LlmAgent) current).resolvedModel();
       }
       current = current.parentAgent();
     }

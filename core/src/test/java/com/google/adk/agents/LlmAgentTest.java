@@ -26,6 +26,12 @@ import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
+import com.google.adk.agents.Callbacks.AfterModelCallback;
+import com.google.adk.agents.Callbacks.AfterToolCallback;
+import com.google.adk.agents.Callbacks.BeforeModelCallback;
+import com.google.adk.agents.Callbacks.BeforeToolCallback;
+import com.google.adk.agents.Callbacks.OnModelErrorCallback;
+import com.google.adk.agents.Callbacks.OnToolErrorCallback;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.LlmResponse;
@@ -39,6 +45,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
+import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Optional;
@@ -315,11 +322,54 @@ public final class LlmAgentTest {
   public void resolveModel_withModelName_resolvesFromRegistry() {
     String modelName = "test-model";
     TestLlm testLlm = createTestLlm(LlmResponse.builder().build());
-    LlmRegistry.registerLlm(modelName, (name) -> testLlm);
+    LlmRegistry.registerLlm(modelName, (unusedName) -> testLlm);
     LlmAgent agent = createTestAgentBuilder(testLlm).model(modelName).build();
     Model resolvedModel = agent.resolvedModel();
 
     assertThat(resolvedModel.modelName()).hasValue(modelName);
     assertThat(resolvedModel.model()).hasValue(testLlm);
+  }
+
+  @Test
+  public void canonicalCallbacks_returnsEmptyListWhenNull() {
+    TestLlm testLlm = createTestLlm(LlmResponse.builder().build());
+    LlmAgent agent = createTestAgent(testLlm);
+
+    assertThat(agent.canonicalBeforeModelCallbacks()).isEmpty();
+    assertThat(agent.canonicalAfterModelCallbacks()).isEmpty();
+    assertThat(agent.canonicalOnModelErrorCallbacks()).isEmpty();
+    assertThat(agent.canonicalBeforeToolCallbacks()).isEmpty();
+    assertThat(agent.canonicalAfterToolCallbacks()).isEmpty();
+    assertThat(agent.canonicalOnToolErrorCallbacks()).isEmpty();
+  }
+
+  @Test
+  public void canonicalCallbacks_returnsListWhenPresent() {
+    BeforeModelCallback bmc = (unusedCtx, unusedReq) -> Maybe.empty();
+    AfterModelCallback amc = (unusedCtx, unusedRes) -> Maybe.empty();
+    OnModelErrorCallback omec = (unusedCtx, unusedReq, unusedErr) -> Maybe.empty();
+    BeforeToolCallback btc = (unusedInvCtx, unusedTool, unusedArgs, unusedToolCtx) -> Maybe.empty();
+    AfterToolCallback atc =
+        (unusedInvCtx, unusedTool, unusedArgs, unusedToolCtx, unusedRes) -> Maybe.empty();
+    OnToolErrorCallback otec =
+        (unusedInvCtx, unusedTool, unusedArgs, unusedToolCtx, unusedErr) -> Maybe.empty();
+
+    TestLlm testLlm = createTestLlm(LlmResponse.builder().build());
+    LlmAgent agent =
+        createTestAgentBuilder(testLlm)
+            .beforeModelCallback(ImmutableList.of(bmc))
+            .afterModelCallback(ImmutableList.of(amc))
+            .onModelErrorCallback(ImmutableList.of(omec))
+            .beforeToolCallback(ImmutableList.of(btc))
+            .afterToolCallback(ImmutableList.of(atc))
+            .onToolErrorCallback(ImmutableList.of(otec))
+            .build();
+
+    assertThat(agent.canonicalBeforeModelCallbacks()).containsExactly(bmc);
+    assertThat(agent.canonicalAfterModelCallbacks()).containsExactly(amc);
+    assertThat(agent.canonicalOnModelErrorCallbacks()).containsExactly(omec);
+    assertThat(agent.canonicalBeforeToolCallbacks()).containsExactly(btc);
+    assertThat(agent.canonicalAfterToolCallbacks()).containsExactly(atc);
+    assertThat(agent.canonicalOnToolErrorCallbacks()).containsExactly(otec);
   }
 }
