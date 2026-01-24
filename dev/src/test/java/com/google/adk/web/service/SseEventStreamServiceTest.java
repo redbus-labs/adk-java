@@ -19,6 +19,7 @@ package com.google.adk.web.service;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.timeout;
 
 import com.google.adk.agents.RunConfig;
 import com.google.adk.agents.RunConfig.StreamingMode;
@@ -69,7 +70,8 @@ class SseEventStreamServiceTest {
 
   @BeforeEach
   void setUp() {
-    testExecutor = Executors.newCachedThreadPool();
+    // Use a single-threaded executor for deterministic test execution
+    testExecutor = Executors.newSingleThreadExecutor();
     sseEventStreamService = new SseEventStreamService(testExecutor);
   }
 
@@ -80,7 +82,7 @@ class SseEventStreamServiceTest {
   }
 
   @Test
-  void testStreamEvents_ValidParameters_ReturnsSseEmitter() {
+  void testStreamEvents_ValidParameters_ReturnsSseEmitter() throws Exception {
     // Arrange
     Content message = Content.fromParts(Part.fromText("Hello"));
     RunConfig runConfig = RunConfig.builder().setStreamingMode(StreamingMode.SSE).build();
@@ -97,7 +99,9 @@ class SseEventStreamServiceTest {
 
     // Assert
     assertNotNull(emitter);
-    verify(mockRunner).runAsync(eq("user1"), eq("session1"), eq(message), eq(runConfig), any());
+    // Wait for async execution to complete - use timeout verification
+    verify(mockRunner, timeout(2000))
+        .runAsync(eq("user1"), eq("session1"), eq(message), eq(runConfig), any());
   }
 
   @Test
@@ -155,12 +159,12 @@ class SseEventStreamServiceTest {
 
     // Assert
     assertNotNull(emitter);
-    verify(mockEventProcessor).onStreamStart(any(SseEmitter.class), any(Map.class));
-    verify(mockEventProcessor).processEvent(eq(testEvent), any(Map.class));
 
-    // Wait for async processing
-    Thread.sleep(100);
-    verify(mockEventProcessor).onStreamComplete(any(SseEmitter.class), any(Map.class));
+    // Wait for async processing - use timeout verification with longer waits
+    verify(mockEventProcessor, timeout(3000)).onStreamStart(any(SseEmitter.class), any(Map.class));
+    verify(mockEventProcessor, timeout(3000)).processEvent(eq(testEvent), any(Map.class));
+    verify(mockEventProcessor, timeout(3000))
+        .onStreamComplete(any(SseEmitter.class), any(Map.class));
   }
 
   @Test
@@ -190,10 +194,9 @@ class SseEventStreamServiceTest {
 
     // Assert
     assertNotNull(emitter);
-    verify(mockEventProcessor).processEvent(eq(testEvent), any(Map.class));
 
-    // Wait for async processing
-    Thread.sleep(100);
+    // Wait for async processing - use timeout verification
+    verify(mockEventProcessor, timeout(3000)).processEvent(eq(testEvent), any(Map.class));
   }
 
   @Test
@@ -226,7 +229,7 @@ class SseEventStreamServiceTest {
   }
 
   @Test
-  void testStreamEvents_WithStateDelta_PassesStateDelta() {
+  void testStreamEvents_WithStateDelta_PassesStateDelta() throws Exception {
     // Arrange
     Content message = Content.fromParts(Part.fromText("Hello"));
     RunConfig runConfig = RunConfig.builder().setStreamingMode(StreamingMode.SSE).build();
@@ -243,7 +246,9 @@ class SseEventStreamServiceTest {
 
     // Assert
     assertNotNull(emitter);
-    verify(mockRunner)
+
+    // Wait for async execution to complete - use timeout verification
+    verify(mockRunner, timeout(2000))
         .runAsync(eq("user1"), eq("session1"), eq(message), eq(runConfig), eq(stateDelta));
   }
 

@@ -17,10 +17,13 @@
 package com.google.adk.web.service;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 import com.google.adk.agents.RunConfig;
 import com.google.adk.agents.RunConfig.StreamingMode;
 import com.google.adk.events.Event;
+import com.google.adk.runner.Runner;
 import com.google.adk.web.service.eventprocessor.EventProcessor;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
@@ -31,10 +34,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
@@ -52,15 +60,18 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * @author Sandeep Belgavi
  * @since January 24, 2026
  */
+@ExtendWith(MockitoExtension.class)
 class SseEventStreamServiceIntegrationTest {
 
+  @Mock private Runner mockRunner;
+
   private SseEventStreamService sseEventStreamService;
-  private TestRunner testRunner;
 
   @BeforeEach
   void setUp() {
-    sseEventStreamService = new SseEventStreamService();
-    testRunner = new TestRunner();
+    // Use a single-threaded executor for deterministic test execution
+    ExecutorService testExecutor = Executors.newSingleThreadExecutor();
+    sseEventStreamService = new SseEventStreamService(testExecutor);
   }
 
   @Test
@@ -68,43 +79,23 @@ class SseEventStreamServiceIntegrationTest {
     // Arrange
     Content message = Content.fromParts(Part.fromText("Hello"));
     RunConfig runConfig = RunConfig.builder().setStreamingMode(StreamingMode.SSE).build();
-    List<String> receivedEvents = new ArrayList<>();
-    CountDownLatch latch = new CountDownLatch(3); // Expect 3 events
+    List<Event> testEvents =
+        List.of(createTestEvent("event1"), createTestEvent("event2"), createTestEvent("event3"));
+    Flowable<Event> eventFlowable = Flowable.fromIterable(testEvents);
 
-    TestSseEmitter emitter =
-        new TestSseEmitter() {
-          @Override
-          public void send(SseEmitter.SseEventBuilder event) throws IOException {
-            super.send(event);
-            try {
-              java.lang.reflect.Field dataField = event.getClass().getDeclaredField("data");
-              dataField.setAccessible(true);
-              Object data = dataField.get(event);
-              if (data != null) {
-                receivedEvents.add(data.toString());
-              }
-            } catch (Exception e) {
-              receivedEvents.add("event-data");
-            }
-            latch.countDown();
-          }
-        };
+    when(mockRunner.runAsync(anyString(), anyString(), any(), any(), any()))
+        .thenReturn(eventFlowable);
 
-    // Note: This test demonstrates the concept but would need proper Runner mocking
-    // In real integration tests, use a proper Runner instance or complete mock
-    testRunner.setEvents(
-        List.of(createTestEvent("event1"), createTestEvent("event2"), createTestEvent("event3")));
-
-    // Act - This would work with a proper Runner mock
-    // SseEmitter result = sseEventStreamService.streamEvents(
-    //     testRunner, "test-app", "user1", "session1", message, runConfig, null, null);
-
-    // Wait for events (with timeout)
-    boolean completed = latch.await(5, TimeUnit.SECONDS);
+    // Act
+    SseEmitter emitter =
+        sseEventStreamService.streamEvents(
+            mockRunner, "test-app", "user1", "session1", message, runConfig, null, null);
 
     // Assert
-    assertTrue(completed, "Should receive all events within timeout");
-    // Note: Actual event verification would require mocking SseEmitter properly
+    assertNotNull(emitter);
+
+    // Wait for async processing to complete - use timeout verification
+    verify(mockRunner, timeout(3000)).runAsync(anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -135,17 +126,24 @@ class SseEventStreamServiceIntegrationTest {
           }
         };
 
-    testRunner.setEvents(List.of(createTestEvent("event1"), createTestEvent("event2")));
+    List<Event> testEvents = List.of(createTestEvent("event1"), createTestEvent("event2"));
+    Flowable<Event> eventFlowable = Flowable.fromIterable(testEvents);
 
-    // Act - Note: This test requires proper Runner mocking
-    // In a real scenario, you would use a proper Runner instance
-    // SseEmitter emitter = sseEventStreamService.streamEvents(
-    //     testRunner, "test-app", "user1", "session1", message, runConfig, null, processor);
+    when(mockRunner.runAsync(anyString(), anyString(), any(), any(), any()))
+        .thenReturn(eventFlowable);
 
-    // Wait for processing
-    assertTrue(startLatch.await(2, TimeUnit.SECONDS), "Stream should start");
-    assertTrue(completeLatch.await(5, TimeUnit.SECONDS), "Stream should complete");
-    Thread.sleep(500); // Give time for event processing
+    // Act
+    SseEmitter emitter =
+        sseEventStreamService.streamEvents(
+            mockRunner, "test-app", "user1", "session1", message, runConfig, null, processor);
+
+    // Assert
+    assertNotNull(emitter);
+
+    // Wait for processing with longer timeouts for async execution
+    assertTrue(startLatch.await(5, TimeUnit.SECONDS), "Stream should start");
+    assertTrue(completeLatch.await(10, TimeUnit.SECONDS), "Stream should complete");
+    Thread.sleep(1000); // Give time for event processing
 
     // Assert
     assertTrue(processCount.get() >= 2, "Should process at least 2 events");
@@ -172,14 +170,22 @@ class SseEventStreamServiceIntegrationTest {
           }
         };
 
-    testRunner.setError(new RuntimeException("Test error"));
+    RuntimeException testError = new RuntimeException("Test error");
+    Flowable<Event> errorFlowable = Flowable.error(testError);
 
-    // Act - Note: This test requires proper Runner mocking
-    // SseEmitter emitter = sseEventStreamService.streamEvents(
-    //     testRunner, "test-app", "user1", "session1", message, runConfig, null, processor);
+    when(mockRunner.runAsync(anyString(), anyString(), any(), any(), any()))
+        .thenReturn(errorFlowable);
 
-    // Wait for error handling
-    assertTrue(errorLatch.await(5, TimeUnit.SECONDS), "Error should be handled");
+    // Act
+    SseEmitter emitter =
+        sseEventStreamService.streamEvents(
+            mockRunner, "test-app", "user1", "session1", message, runConfig, null, processor);
+
+    // Assert
+    assertNotNull(emitter);
+
+    // Wait for error handling with longer timeout for async execution
+    assertTrue(errorLatch.await(10, TimeUnit.SECONDS), "Error should be handled");
   }
 
   /**
