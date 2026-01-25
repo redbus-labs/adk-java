@@ -16,9 +16,9 @@
 
 package com.google.adk.agents;
 
+import com.google.adk.apps.ResumabilityConfig;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
-import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.plugins.Plugin;
