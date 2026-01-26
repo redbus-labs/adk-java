@@ -1161,25 +1161,20 @@ public final class ConfigAgentUtilsTest {
 
     String pfx = "test.callbacks.";
     registry.register(
-        pfx + "before_agent_1", (Callbacks.BeforeAgentCallback) (unusedCtx) -> Maybe.empty());
+        pfx + "before_agent_1", (Callbacks.BeforeAgentCallback) (ctx) -> Maybe.empty());
     registry.register(
-        pfx + "before_agent_2", (Callbacks.BeforeAgentCallback) (unusedCtx) -> Maybe.empty());
+        pfx + "before_agent_2", (Callbacks.BeforeAgentCallback) (ctx) -> Maybe.empty());
+    registry.register(pfx + "after_agent_1", (Callbacks.AfterAgentCallback) (ctx) -> Maybe.empty());
     registry.register(
-        pfx + "after_agent_1", (Callbacks.AfterAgentCallback) (unusedCtx) -> Maybe.empty());
+        pfx + "before_model_1", (Callbacks.BeforeModelCallback) (ctx, req) -> Maybe.empty());
     registry.register(
-        pfx + "before_model_1",
-        (Callbacks.BeforeModelCallback) (unusedCtx, unusedReq) -> Maybe.empty());
-    registry.register(
-        pfx + "after_model_1",
-        (Callbacks.AfterModelCallback) (unusedCtx, unusedResp) -> Maybe.empty());
+        pfx + "after_model_1", (Callbacks.AfterModelCallback) (ctx, resp) -> Maybe.empty());
     registry.register(
         pfx + "before_tool_1",
-        (Callbacks.BeforeToolCallback)
-            (unusedInv, unusedTool, unusedArgs, unusedToolCtx) -> Maybe.empty());
+        (Callbacks.BeforeToolCallback) (inv, tool, args, toolCtx) -> Maybe.empty());
     registry.register(
         pfx + "after_tool_1",
-        (Callbacks.AfterToolCallback)
-            (unusedInv, unusedTool, unusedArgs, unusedToolCtx, unusedResp) -> Maybe.empty());
+        (Callbacks.AfterToolCallback) (inv, tool, args, toolCtx, resp) -> Maybe.empty());
 
     File configFile = tempFolder.newFile("with_callbacks.yaml");
     Files.writeString(
@@ -1209,8 +1204,10 @@ public final class ConfigAgentUtilsTest {
     assertThat(agent).isInstanceOf(LlmAgent.class);
     LlmAgent llm = (LlmAgent) agent;
 
-    assertThat(agent.beforeAgentCallback()).hasSize(2);
-    assertThat(agent.afterAgentCallback()).hasSize(1);
+    assertThat(agent.beforeAgentCallback()).isPresent();
+    assertThat(agent.beforeAgentCallback().get()).hasSize(2);
+    assertThat(agent.afterAgentCallback()).isPresent();
+    assertThat(agent.afterAgentCallback().get()).hasSize(1);
 
     assertThat(llm.beforeModelCallback()).isPresent();
     assertThat(llm.beforeModelCallback().get()).hasSize(1);

@@ -59,8 +59,8 @@ public abstract class BaseAgent {
 
   private final List<? extends BaseAgent> subAgents;
 
-  private final List<? extends BeforeAgentCallback> beforeAgentCallback;
-  private final List<? extends AfterAgentCallback> afterAgentCallback;
+  private final Optional<List<? extends BeforeAgentCallback>> beforeAgentCallback;
+  private final Optional<List<? extends AfterAgentCallback>> afterAgentCallback;
 
   /**
    * Creates a new BaseAgent.
@@ -83,9 +83,8 @@ public abstract class BaseAgent {
     this.description = description;
     this.parentAgent = null;
     this.subAgents = subAgents != null ? subAgents : ImmutableList.of();
-    this.beforeAgentCallback =
-        beforeAgentCallback != null ? beforeAgentCallback : ImmutableList.of();
-    this.afterAgentCallback = afterAgentCallback != null ? afterAgentCallback : ImmutableList.of();
+    this.beforeAgentCallback = Optional.ofNullable(beforeAgentCallback);
+    this.afterAgentCallback = Optional.ofNullable(afterAgentCallback);
 
     // Establish parent relationships for all sub-agents if needed.
     for (BaseAgent subAgent : this.subAgents) {
@@ -172,11 +171,11 @@ public abstract class BaseAgent {
     return subAgents;
   }
 
-  public List<? extends BeforeAgentCallback> beforeAgentCallback() {
+  public Optional<List<? extends BeforeAgentCallback>> beforeAgentCallback() {
     return beforeAgentCallback;
   }
 
-  public List<? extends AfterAgentCallback> afterAgentCallback() {
+  public Optional<List<? extends AfterAgentCallback>> afterAgentCallback() {
     return afterAgentCallback;
   }
 
@@ -186,7 +185,7 @@ public abstract class BaseAgent {
    * <p>This method is only for use by Agent Development Kit.
    */
   public List<? extends BeforeAgentCallback> canonicalBeforeAgentCallbacks() {
-    return beforeAgentCallback;
+    return beforeAgentCallback.orElse(ImmutableList.of());
   }
 
   /**
@@ -195,7 +194,7 @@ public abstract class BaseAgent {
    * <p>This method is only for use by Agent Development Kit.
    */
   public List<? extends AfterAgentCallback> canonicalAfterAgentCallbacks() {
-    return afterAgentCallback;
+    return afterAgentCallback.orElse(ImmutableList.of());
   }
 
   /**
@@ -240,7 +239,8 @@ public abstract class BaseAgent {
               () ->
                   callCallback(
                           beforeCallbacksToFunctions(
-                              invocationContext.pluginManager(), beforeAgentCallback),
+                              invocationContext.pluginManager(),
+                              beforeAgentCallback.orElse(ImmutableList.of())),
                           invocationContext)
                       .flatMapPublisher(
                           beforeEventOpt -> {
@@ -257,7 +257,7 @@ public abstract class BaseAgent {
                                         callCallback(
                                                 afterCallbacksToFunctions(
                                                     invocationContext.pluginManager(),
-                                                    afterAgentCallback),
+                                                    afterAgentCallback.orElse(ImmutableList.of())),
                                                 invocationContext)
                                             .flatMapPublisher(Flowable::fromOptional));
 
