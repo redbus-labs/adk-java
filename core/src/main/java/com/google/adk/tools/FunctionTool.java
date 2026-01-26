@@ -44,7 +44,7 @@ import org.slf4j.LoggerFactory;
 public class FunctionTool extends BaseTool {
 
   private static final Logger logger = LoggerFactory.getLogger(FunctionTool.class);
-  private static final ObjectMapper OBJECT_MAPPER = JsonBaseModel.getMapper();
+  private static final ObjectMapper objectMapper = JsonBaseModel.getMapper();
 
   private final @Nullable Object instance;
   private final Method func;
@@ -241,17 +241,15 @@ public class FunctionTool extends BaseTool {
     } else if (result instanceof Maybe) {
       return ((Maybe<?>) result)
           .map(
-              data ->
-                  OBJECT_MAPPER.convertValue(data, new TypeReference<Map<String, Object>>() {}));
+              data -> objectMapper.convertValue(data, new TypeReference<Map<String, Object>>() {}));
     } else if (result instanceof Single) {
       return ((Single<?>) result)
-          .map(
-              data -> OBJECT_MAPPER.convertValue(data, new TypeReference<Map<String, Object>>() {}))
+          .map(data -> objectMapper.convertValue(data, new TypeReference<Map<String, Object>>() {}))
           .toMaybe();
     } else {
       try {
         return Maybe.just(
-            OBJECT_MAPPER.convertValue(result, new TypeReference<Map<String, Object>>() {}));
+            objectMapper.convertValue(result, new TypeReference<Map<String, Object>>() {}));
       } catch (IllegalArgumentException e) {
         // Conversion to map failed, in this case we follow
         // https://google.github.io/adk-docs/tools-custom/function-tools/#return-type and return
@@ -326,7 +324,7 @@ public class FunctionTool extends BaseTool {
           continue;
         }
       } else if (argValue instanceof Map) {
-        arguments[i] = OBJECT_MAPPER.convertValue(argValue, paramType);
+        arguments[i] = objectMapper.convertValue(argValue, paramType);
         continue;
       }
       arguments[i] = castValue(argValue, paramType);
@@ -363,7 +361,7 @@ public class FunctionTool extends BaseTool {
           || cls == String.class) {
         list.add(castValue(value, cls));
       } else {
-        list.add(OBJECT_MAPPER.convertValue(value, type));
+        list.add(objectMapper.convertValue(value, type));
       }
     }
     return list;
@@ -414,6 +412,6 @@ public class FunctionTool extends BaseTool {
         return value;
       }
     }
-    return OBJECT_MAPPER.convertValue(value, type);
+    return objectMapper.convertValue(value, type);
   }
 }

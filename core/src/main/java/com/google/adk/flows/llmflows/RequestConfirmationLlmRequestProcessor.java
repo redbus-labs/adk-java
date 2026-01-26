@@ -51,7 +51,7 @@ import org.slf4j.LoggerFactory;
 public class RequestConfirmationLlmRequestProcessor implements RequestProcessor {
   private static final Logger logger =
       LoggerFactory.getLogger(RequestConfirmationLlmRequestProcessor.class);
-  private static final ObjectMapper OBJECT_MAPPER = JsonBaseModel.getMapper();
+  private static final ObjectMapper objectMapper = JsonBaseModel.getMapper();
   private static final String ORIGINAL_FUNCTION_CALL = "originalFunctionCall";
 
   @Override
@@ -177,7 +177,7 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
     }
     try {
       FunctionCall originalFunctionCall =
-          OBJECT_MAPPER.convertValue(
+          objectMapper.convertValue(
               functionCall.args().get().get(ORIGINAL_FUNCTION_CALL), FunctionCall.class);
       if (originalFunctionCall.id().isEmpty()) {
         return Optional.empty();
@@ -229,14 +229,14 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
       return Optional.of(
           Map.entry(
               functionResponse.id().get(),
-              OBJECT_MAPPER.convertValue(responseMap, ToolConfirmation.class)));
+              objectMapper.convertValue(responseMap, ToolConfirmation.class)));
     }
 
     try {
       return Optional.of(
           Map.entry(
               functionResponse.id().get(),
-              OBJECT_MAPPER.readValue(
+              objectMapper.readValue(
                   (String) responseMap.get("response"), ToolConfirmation.class)));
     } catch (JsonProcessingException e) {
       logger.error("Failed to parse tool confirmation response", e);
