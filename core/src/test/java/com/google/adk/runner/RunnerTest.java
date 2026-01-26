@@ -31,7 +31,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.google.adk.Telemetry;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
@@ -44,6 +43,7 @@ import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.Session;
 import com.google.adk.summarizer.EventsCompactionConfig;
+import com.google.adk.telemetry.Tracing;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils;
 import com.google.adk.testing.TestUtils.EchoTool;
@@ -118,8 +118,8 @@ public final class RunnerTest {
 
   @Before
   public void setUp() {
-    this.originalTracer = Telemetry.getTracer();
-    Telemetry.setTracerForTesting(openTelemetryRule.getOpenTelemetry().getTracer("RunnerTest"));
+    this.originalTracer = Tracing.getTracer();
+    Tracing.setTracerForTesting(openTelemetryRule.getOpenTelemetry().getTracer("RunnerTest"));
     this.runner =
         Runner.builder()
             .app(
@@ -134,7 +134,7 @@ public final class RunnerTest {
 
   @After
   public void tearDown() {
-    Telemetry.setTracerForTesting(originalTracer);
+    Tracing.setTracerForTesting(originalTracer);
   }
 
   @Test

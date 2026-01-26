@@ -16,7 +16,6 @@
 
 package com.google.adk.flows.llmflows;
 
-import com.google.adk.Telemetry;
 import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.CallbackContext;
@@ -38,6 +37,7 @@ import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -178,7 +178,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
               return Flowable.defer(
                       () -> {
                         Span llmCallSpan =
-                            Telemetry.getTracer()
+                            Tracing.getTracer()
                                 .spanBuilder("call_llm")
                                 .setParent(Context.current())
                                 .startSpan();
@@ -199,7 +199,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                               .doOnNext(
                                   llmResp -> {
                                     try (Scope innerScope = llmCallSpan.makeCurrent()) {
-                                      Telemetry.traceCallLlm(
+                                      Tracing.traceCallLlm(
                                           context,
                                           eventForCallbackUsage.id(),
                                           llmRequestBuilder.build(),
@@ -474,7 +474,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                       : Completable.defer(
                           () -> {
                             Span sendDataSpan =
-                                Telemetry.getTracer()
+                                Tracing.getTracer()
                                     .spanBuilder("send_data")
                                     .setParent(Context.current())
                                     .startSpan();
@@ -484,7 +484,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                   .doOnComplete(
                                       () -> {
                                         try (Scope innerScope = sendDataSpan.makeCurrent()) {
-                                          Telemetry.traceSendData(
+                                          Tracing.traceSendData(
                                               invocationContext,
                                               eventIdForSendData,
                                               llmRequestAfterPreprocess.contents());
@@ -496,7 +496,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                             StatusCode.ERROR, error.getMessage());
                                         sendDataSpan.recordException(error);
                                         try (Scope innerScope = sendDataSpan.makeCurrent()) {
-                                          Telemetry.traceSendData(
+                                          Tracing.traceSendData(
                                               invocationContext,
                                               eventIdForSendData,
                                               llmRequestAfterPreprocess.contents());

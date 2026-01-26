@@ -16,7 +16,6 @@
 
 package com.google.adk.runner;
 
-import com.google.adk.Telemetry;
 import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
@@ -39,6 +38,7 @@ import com.google.adk.sessions.Session;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.adk.summarizer.LlmEventSummarizer;
 import com.google.adk.summarizer.SlidingWindowEventCompactor;
+import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
@@ -450,7 +450,7 @@ public class Runner {
       RunConfig runConfig,
       @Nullable Map<String, Object> stateDelta) {
     Span span =
-        Telemetry.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
+        Tracing.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
     Context spanContext = Context.current().with(span);
 
     try {
@@ -465,7 +465,7 @@ public class Runner {
               .userContent(newMessage)
               .build();
 
-      return Telemetry.traceFlowable(
+      return Tracing.traceFlowable(
           spanContext,
           span,
           () ->
@@ -645,7 +645,7 @@ public class Runner {
   public Flowable<Event> runLive(
       Session session, LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
     Span span =
-        Telemetry.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
+        Tracing.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
     Context spanContext = Context.current().with(span);
 
     try {
@@ -668,7 +668,7 @@ public class Runner {
 
       return invocationContextSingle.flatMapPublisher(
           updatedInvocationContext ->
-              Telemetry.traceFlowable(
+              Tracing.traceFlowable(
                   spanContext,
                   span,
                   () ->

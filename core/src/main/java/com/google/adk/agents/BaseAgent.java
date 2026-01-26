@@ -18,11 +18,11 @@ package com.google.adk.agents;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
-import com.google.adk.Telemetry;
 import com.google.adk.agents.Callbacks.AfterAgentCallback;
 import com.google.adk.agents.Callbacks.BeforeAgentCallback;
 import com.google.adk.events.Event;
 import com.google.adk.plugins.Plugin;
+import com.google.adk.telemetry.Tracing;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.DoNotCall;
@@ -222,7 +222,7 @@ public abstract class BaseAgent {
    * @return stream of agent-generated events.
    */
   public Flowable<Event> runAsync(InvocationContext parentContext) {
-    Tracer tracer = Telemetry.getTracer();
+    Tracer tracer = Tracing.getTracer();
     return Flowable.defer(
         () -> {
           Span span =
@@ -234,7 +234,7 @@ public abstract class BaseAgent {
 
           InvocationContext invocationContext = createInvocationContext(parentContext);
 
-          return Telemetry.traceFlowable(
+          return Tracing.traceFlowable(
               spanContext,
               span,
               () ->
@@ -361,7 +361,7 @@ public abstract class BaseAgent {
    * @return stream of agent-generated events.
    */
   public Flowable<Event> runLive(InvocationContext parentContext) {
-    Tracer tracer = Telemetry.getTracer();
+    Tracer tracer = Tracing.getTracer();
     return Flowable.defer(
         () -> {
           Span span =
@@ -373,7 +373,7 @@ public abstract class BaseAgent {
 
           InvocationContext invocationContext = createInvocationContext(parentContext);
 
-          return Telemetry.traceFlowable(spanContext, span, () -> runLiveImpl(invocationContext));
+          return Tracing.traceFlowable(spanContext, span, () -> runLiveImpl(invocationContext));
         });
   }
 
