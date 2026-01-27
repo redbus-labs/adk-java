@@ -50,7 +50,7 @@ public final class ExampleUtils {
   private static final String FUNCTION_RESPONSE_PREFIX = "```tool_outputs\n";
   private static final String FUNCTION_RESPONSE_SUFFIX = "\n```\n";
 
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper objectMapper = new ObjectMapper();
 
   /**
    * Converts a list of examples into a formatted few-shot prompt string.
@@ -140,7 +140,7 @@ public final class ExampleUtils {
       Object responseMap = response.response().orElse(ImmutableMap.of());
       builder
           .append(FUNCTION_RESPONSE_PREFIX)
-          .append(OBJECT_MAPPER.writeValueAsString(responseMap))
+          .append(objectMapper.writeValueAsString(responseMap))
           .append(FUNCTION_RESPONSE_SUFFIX);
     } catch (JsonProcessingException e) {
       builder.append(FUNCTION_RESPONSE_PREFIX).append(FUNCTION_RESPONSE_SUFFIX);
@@ -148,7 +148,8 @@ public final class ExampleUtils {
   }
 
   /**
-   * Builds a formatted few-shot example string for the given query.
+   * Builds a formatted few-shot example string for the given query. The string can be used for
+   * system instructions (i.e., the method name means "Build Example System Instructions").
    *
    * @param exampleProvider Source of examples.
    * @param query User query.

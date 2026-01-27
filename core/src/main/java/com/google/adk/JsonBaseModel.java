@@ -56,7 +56,7 @@ public abstract class JsonBaseModel {
   }
 
   /** Serializes an object to a Json string. */
-  protected static String toJsonString(Object object) {
+  public static String toJsonString(Object object) {
     try {
       return objectMapper.writeValueAsString(object);
     } catch (JsonProcessingException e) {

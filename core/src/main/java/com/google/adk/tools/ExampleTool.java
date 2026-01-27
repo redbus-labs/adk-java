@@ -47,7 +47,7 @@ import java.util.Optional;
 public final class ExampleTool extends BaseTool {
 
   private final Optional<BaseExampleProvider> exampleProvider;
-  private final Optional<List<Example>> examples;
+  private final List<Example> examples;
 
   /** Single private constructor; create via builder or fromConfig. */
   private ExampleTool(Builder builder) {
@@ -57,7 +57,7 @@ public final class ExampleTool extends BaseTool {
             ? "Adds few-shot examples to the request"
             : builder.description);
     this.exampleProvider = builder.provider;
-    this.examples = builder.examples.isEmpty() ? Optional.empty() : Optional.of(builder.examples);
+    this.examples = builder.examples;
   }
 
   @Override
@@ -77,9 +77,9 @@ public final class ExampleTool extends BaseTool {
     final String examplesBlock;
     if (exampleProvider.isPresent()) {
       examplesBlock = ExampleUtils.buildExampleSi(exampleProvider.get(), query);
-    } else if (examples.isPresent()) {
+    } else if (!examples.isEmpty()) {
       // Adapter provider that returns a fixed list irrespective of query
-      BaseExampleProvider provider = q -> examples.get();
+      BaseExampleProvider provider = (unusedQuery) -> examples;
       examplesBlock = ExampleUtils.buildExampleSi(provider, query);
     } else {
       return Completable.complete();
@@ -157,6 +157,7 @@ public final class ExampleTool extends BaseTool {
     return new Builder();
   }
 
+  /** Builder for {@link ExampleTool}. */
   public static final class Builder {
     private final List<Example> examples = new ArrayList<>();
     private String name = "example_tool";

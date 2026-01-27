@@ -43,7 +43,7 @@ public class IntegrationConnectorTool extends BaseTool {
   private String operation;
   private String action;
 
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper objectMapper = new ObjectMapper();
 
   private static final ImmutableList<String> EXCLUDE_FIELDS =
       ImmutableList.of("connectionName", "serviceName", "host", "entity", "operation", "action");
@@ -166,7 +166,7 @@ public class IntegrationConnectorTool extends BaseTool {
     String url = String.format("https://integrations.googleapis.com%s", this.pathUrl);
     String jsonRequestBody;
     try {
-      jsonRequestBody = OBJECT_MAPPER.writeValueAsString(args);
+      jsonRequestBody = objectMapper.writeValueAsString(args);
     } catch (IOException e) {
       throw new Exception("Error converting args to JSON: " + e.getMessage(), e);
     }
@@ -193,13 +193,13 @@ public class IntegrationConnectorTool extends BaseTool {
   }
 
   String getOperationIdFromPathUrl(String openApiSchemaString, String pathUrl) throws Exception {
-    JsonNode topLevelNode = OBJECT_MAPPER.readTree(openApiSchemaString);
+    JsonNode topLevelNode = objectMapper.readTree(openApiSchemaString);
     JsonNode specNode = topLevelNode.path("openApiSpec");
     if (specNode.isMissingNode() || !specNode.isTextual()) {
       throw new IllegalArgumentException(
           "Failed to get OpenApiSpec, please check the project and region for the integration.");
     }
-    JsonNode rootNode = OBJECT_MAPPER.readTree(specNode.asText());
+    JsonNode rootNode = objectMapper.readTree(specNode.asText());
     JsonNode paths = rootNode.path("paths");
 
     // Iterate through each path in the OpenAPI spec.
@@ -239,13 +239,13 @@ public class IntegrationConnectorTool extends BaseTool {
 
   private String getResolvedRequestSchemaByOperationId(
       String openApiSchemaString, String operationId) throws Exception {
-    JsonNode topLevelNode = OBJECT_MAPPER.readTree(openApiSchemaString);
+    JsonNode topLevelNode = objectMapper.readTree(openApiSchemaString);
     JsonNode specNode = topLevelNode.path("openApiSpec");
     if (specNode.isMissingNode() || !specNode.isTextual()) {
       throw new IllegalArgumentException(
           "Failed to get OpenApiSpec, please check the project and region for the integration.");
     }
-    JsonNode rootNode = OBJECT_MAPPER.readTree(specNode.asText());
+    JsonNode rootNode = objectMapper.readTree(specNode.asText());
     JsonNode operationNode = findOperationNodeById(rootNode, operationId);
     if (operationNode == null) {
       throw new Exception("Could not find operation with operationId: " + operationId);
@@ -290,7 +290,7 @@ public class IntegrationConnectorTool extends BaseTool {
         }
       }
     }
-    return OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(resolvedSchema);
+    return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(resolvedSchema);
   }
 
   private @Nullable JsonNode findOperationNodeById(JsonNode rootNode, String operationId) {
@@ -322,7 +322,7 @@ public class IntegrationConnectorTool extends BaseTool {
         }
         return resolveRefs(referencedNode, rootNode);
       } else {
-        ObjectNode newObjectNode = OBJECT_MAPPER.createObjectNode();
+        ObjectNode newObjectNode = objectMapper.createObjectNode();
         Iterator<Map.Entry<String, JsonNode>> fields = currentNode.fields();
         while (fields.hasNext()) {
           Map.Entry<String, JsonNode> field = fields.next();
@@ -336,12 +336,12 @@ public class IntegrationConnectorTool extends BaseTool {
 
   private String getOperationDescription(String openApiSchemaString, String operationId)
       throws Exception {
-    JsonNode topLevelNode = OBJECT_MAPPER.readTree(openApiSchemaString);
+    JsonNode topLevelNode = objectMapper.readTree(openApiSchemaString);
     JsonNode specNode = topLevelNode.path("openApiSpec");
     if (specNode.isMissingNode() || !specNode.isTextual()) {
       return "";
     }
-    JsonNode rootNode = OBJECT_MAPPER.readTree(specNode.asText());
+    JsonNode rootNode = objectMapper.readTree(specNode.asText());
     JsonNode operationNode = findOperationNodeById(rootNode, operationId);
     if (operationNode == null) {
       return "";

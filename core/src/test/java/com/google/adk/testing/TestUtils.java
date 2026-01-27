@@ -24,6 +24,7 @@ import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
+import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
 import com.google.adk.events.EventCompaction;
@@ -54,6 +55,7 @@ public final class TestUtils {
     InMemorySessionService sessionService = new InMemorySessionService();
     return InvocationContext.builder()
         .sessionService(sessionService)
+        .artifactService(new InMemoryArtifactService())
         .invocationId("invocationId")
         .agent(agent)
         .session(sessionService.createSession("test-app", "test-user").blockingGet())
