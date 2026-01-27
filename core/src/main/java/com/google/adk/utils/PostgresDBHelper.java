@@ -77,10 +77,6 @@ public class PostgresDBHelper {
     String password = System.getenv(PASSWORD);
     String host = System.getenv(DB_URL);
 
-    logger.info("DB_URL env var: {}", host);
-    logger.info("USER env var: {}", userName);
-    logger.info("PASSWORD env var: {}", password != null ? "***SET***" : "NULL");
-
     if (host == null) {
       host = PropertiesHelper.getInstance().getValue("db_url");
     }
