@@ -31,6 +31,7 @@ import java.util.List;
  * execution.
  */
 public final class BuiltInCodeExecutionTool extends BaseTool {
+  public static final BuiltInCodeExecutionTool INSTANCE = new BuiltInCodeExecutionTool();
 
   public BuiltInCodeExecutionTool() {
     super("code_execution", "code_execution");
