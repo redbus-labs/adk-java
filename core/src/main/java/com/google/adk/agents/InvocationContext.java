@@ -25,6 +25,7 @@ import com.google.adk.plugins.Plugin;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
+import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.InlineMe;
@@ -53,6 +54,7 @@ public class InvocationContext {
   private final Map<String, BaseAgentState> agentStates;
   private final Map<String, Boolean> endOfAgents;
   private final ResumabilityConfig resumabilityConfig;
+  @Nullable private final EventsCompactionConfig eventsCompactionConfig;
   private final InvocationCostManager invocationCostManager;
 
   private Optional<String> branch;
@@ -76,6 +78,7 @@ public class InvocationContext {
     this.agentStates = builder.agentStates;
     this.endOfAgents = builder.endOfAgents;
     this.resumabilityConfig = builder.resumabilityConfig;
+    this.eventsCompactionConfig = builder.eventsCompactionConfig;
     this.invocationCostManager = builder.invocationCostManager;
   }
 
@@ -356,6 +359,11 @@ public class InvocationContext {
     return resumabilityConfig.isResumable();
   }
 
+  /** Returns the events compaction configuration for the current agent run. */
+  public Optional<EventsCompactionConfig> eventsCompactionConfig() {
+    return Optional.ofNullable(eventsCompactionConfig);
+  }
+
   /** Returns whether to pause the invocation right after this [event]. */
   public boolean shouldPauseInvocation(Event event) {
     if (!isResumable()) {
@@ -427,6 +435,7 @@ public class InvocationContext {
       this.agentStates = new ConcurrentHashMap<>(context.agentStates);
       this.endOfAgents = new ConcurrentHashMap<>(context.endOfAgents);
       this.resumabilityConfig = context.resumabilityConfig;
+      this.eventsCompactionConfig = context.eventsCompactionConfig;
       this.invocationCostManager = context.invocationCostManager;
     }
 
@@ -446,6 +455,7 @@ public class InvocationContext {
     private Map<String, BaseAgentState> agentStates = new ConcurrentHashMap<>();
     private Map<String, Boolean> endOfAgents = new ConcurrentHashMap<>();
     private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
+    @Nullable private EventsCompactionConfig eventsCompactionConfig;
     private InvocationCostManager invocationCostManager = new InvocationCostManager();
 
     /**
@@ -671,6 +681,18 @@ public class InvocationContext {
     }
 
     /**
+     * Sets the events compaction configuration for the current agent run.
+     *
+     * @param eventsCompactionConfig the events compaction configuration.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder eventsCompactionConfig(@Nullable EventsCompactionConfig eventsCompactionConfig) {
+      this.eventsCompactionConfig = eventsCompactionConfig;
+      return this;
+    }
+
+    /**
      * Builds the {@link InvocationContext} instance.
      *
      * @throws IllegalStateException if any required parameters are missing.
@@ -705,6 +727,7 @@ public class InvocationContext {
         && Objects.equals(agentStates, that.agentStates)
         && Objects.equals(endOfAgents, that.endOfAgents)
         && Objects.equals(resumabilityConfig, that.resumabilityConfig)
+        && Objects.equals(eventsCompactionConfig, that.eventsCompactionConfig)
         && Objects.equals(invocationCostManager, that.invocationCostManager);
   }
 
@@ -727,6 +750,7 @@ public class InvocationContext {
         agentStates,
         endOfAgents,
         resumabilityConfig,
+        eventsCompactionConfig,
         invocationCostManager);
   }
 }
