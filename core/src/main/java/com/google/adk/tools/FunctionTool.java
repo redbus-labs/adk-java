@@ -56,6 +56,11 @@ public class FunctionTool extends BaseTool {
   }
 
   public static FunctionTool create(Object instance, Method func, boolean requireConfirmation) {
+    return create(instance, func, requireConfirmation, false);
+  }
+
+  public static FunctionTool create(
+      Object instance, Method func, boolean requireConfirmation, boolean isLongRunning) {
     if (!areParametersAnnotatedWithSchema(func) && wasCompiledWithDefaultParameterNames(func)) {
       logger.error(
           """
@@ -72,7 +77,7 @@ public class FunctionTool extends BaseTool {
               func.getDeclaringClass().getName(), instance.getClass().getName()));
     }
     return new FunctionTool(
-        instance, func, /* isLongRunning= */ false, /* requireConfirmation= */ requireConfirmation);
+        instance, func, isLongRunning, /* requireConfirmation= */ requireConfirmation);
   }
 
   public static FunctionTool create(Method func) {
@@ -80,6 +85,11 @@ public class FunctionTool extends BaseTool {
   }
 
   public static FunctionTool create(Method func, boolean requireConfirmation) {
+    return create(func, requireConfirmation, false);
+  }
+
+  public static FunctionTool create(
+      Method func, boolean requireConfirmation, boolean isLongRunning) {
     if (!areParametersAnnotatedWithSchema(func) && wasCompiledWithDefaultParameterNames(func)) {
       logger.error(
           """
@@ -91,7 +101,7 @@ public class FunctionTool extends BaseTool {
     if (!Modifier.isStatic(func.getModifiers())) {
       throw new IllegalArgumentException("The method provided must be static.");
     }
-    return new FunctionTool(null, func, /* isLongRunning= */ false, requireConfirmation);
+    return new FunctionTool(null, func, isLongRunning, requireConfirmation);
   }
 
   public static FunctionTool create(Class<?> cls, String methodName) {
@@ -99,9 +109,14 @@ public class FunctionTool extends BaseTool {
   }
 
   public static FunctionTool create(Class<?> cls, String methodName, boolean requireConfirmation) {
+    return create(cls, methodName, requireConfirmation, false);
+  }
+
+  public static FunctionTool create(
+      Class<?> cls, String methodName, boolean requireConfirmation, boolean isLongRunning) {
     for (Method method : cls.getMethods()) {
       if (method.getName().equals(methodName) && Modifier.isStatic(method.getModifiers())) {
-        return create(null, method, requireConfirmation);
+        return create(null, method, requireConfirmation, isLongRunning);
       }
     }
     throw new IllegalArgumentException(
@@ -114,10 +129,15 @@ public class FunctionTool extends BaseTool {
 
   public static FunctionTool create(
       Object instance, String methodName, boolean requireConfirmation) {
+    return create(instance, methodName, requireConfirmation, false);
+  }
+
+  public static FunctionTool create(
+      Object instance, String methodName, boolean requireConfirmation, boolean isLongRunning) {
     Class<?> cls = instance.getClass();
     for (Method method : cls.getMethods()) {
       if (method.getName().equals(methodName) && !Modifier.isStatic(method.getModifiers())) {
-        return create(instance, method, requireConfirmation);
+        return create(instance, method, requireConfirmation, isLongRunning);
       }
     }
     throw new IllegalArgumentException(
