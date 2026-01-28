@@ -33,10 +33,12 @@ import org.slf4j.LoggerFactory;
  */
 public final class PartConverter {
   private static final Logger logger = LoggerFactory.getLogger(PartConverter.class);
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-  // Constants for metadata types
-  public static final String A2A_DATA_PART_METADATA_TYPE_KEY = "type";
-  public static final String A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY = "is_long_running";
+  private static final ObjectMapper objectMapper = new ObjectMapper();
+
+  // Constants for metadata types. By convention metadata keys are prefixed with "adk_" to align
+  // with the Python and Golang libraries.
+  public static final String A2A_DATA_PART_METADATA_TYPE_KEY = "adk_type";
+  public static final String A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY = "adk_is_long_running";
   public static final String A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL = "function_call";
   public static final String A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE = "function_response";
   public static final String A2A_DATA_PART_METADATA_TYPE_CODE_EXECUTION_RESULT =
@@ -171,7 +173,7 @@ public final class PartConverter {
     }
 
     try {
-      String json = OBJECT_MAPPER.writeValueAsString(data);
+      String json = objectMapper.writeValueAsString(data);
       return Optional.of(com.google.genai.types.Part.builder().text(json).build());
     } catch (JsonProcessingException e) {
       logger.warn("Failed to serialize DataPart payload", e);
@@ -253,7 +255,7 @@ public final class PartConverter {
     return Optional.empty();
   }
 
-  @SuppressWarnings("unchecked") // safe conversion from OBJECT_MAPPER.readValue
+  @SuppressWarnings("unchecked") // safe conversion from objectMapper.readValue
   private static Map<String, Object> coerceToMap(Object value) {
     if (value == null) {
       return new HashMap<>();
@@ -271,7 +273,7 @@ public final class PartConverter {
         return new HashMap<>();
       }
       try {
-        return OBJECT_MAPPER.readValue(str, Map.class);
+        return objectMapper.readValue(str, Map.class);
       } catch (JsonProcessingException e) {
         logger.warn("Failed to parse map from string payload", e);
         Map<String, Object> fallback = new HashMap<>();

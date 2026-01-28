@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-package com.google.adk;
+package com.google.adk.telemetry;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmRequest;
@@ -47,18 +48,22 @@ import org.slf4j.LoggerFactory;
  * LLM interactions, and data handling. It leverages OpenTelemetry for tracing and logging for
  * detailed information. These traces can then be exported through the ADK Dev Server UI.
  */
-public class Telemetry {
+public class Tracing {
 
-  private static final Logger log = LoggerFactory.getLogger(Telemetry.class);
+  private static final Logger log = LoggerFactory.getLogger(Tracing.class);
 
   @SuppressWarnings("NonFinalStaticField")
-  private static Tracer tracer = GlobalOpenTelemetry.getTracer("gcp.vertex.agent");
+  private static Tracer tracer = GlobalOpenTelemetry.getTracer("com.google.adk");
 
-  private Telemetry() {}
+  private static final boolean CAPTURE_MESSAGE_CONTENT_IN_SPANS =
+      Boolean.parseBoolean(
+          System.getenv().getOrDefault("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "true"));
+
+  private Tracing() {}
 
   /** Sets the OpenTelemetry instance to be used for tracing. This is for testing purposes only. */
   public static void setTracerForTesting(Tracer tracer) {
-    Telemetry.tracer = tracer;
+    Tracing.tracer = tracer;
   }
 
   /**
@@ -73,10 +78,9 @@ public class Telemetry {
       return;
     }
 
-    span.setAttribute("gen_ai.system", "gcp.vertex.agent");
+    span.setAttribute("gen_ai.system", "com.google.adk");
     try {
-      span.setAttribute(
-          "gcp.vertex.agent.tool_call_args", JsonBaseModel.getMapper().writeValueAsString(args));
+      span.setAttribute("adk.tool_call_args", JsonBaseModel.getMapper().writeValueAsString(args));
     } catch (JsonProcessingException e) {
       log.warn("traceToolCall: Failed to serialize tool call args to JSON", e);
     }
@@ -97,16 +101,16 @@ public class Telemetry {
       return;
     }
 
-    span.setAttribute("gen_ai.system", "gcp.vertex.agent");
-    span.setAttribute("gcp.vertex.agent.invocation_id", invocationContext.invocationId());
-    span.setAttribute("gcp.vertex.agent.event_id", eventId);
-    span.setAttribute("gcp.vertex.agent.tool_response", functionResponseEvent.toJson());
+    span.setAttribute("gen_ai.system", "com.google.adk");
+    span.setAttribute("adk.invocation_id", invocationContext.invocationId());
+    span.setAttribute("adk.event_id", eventId);
+    span.setAttribute("adk.tool_response", functionResponseEvent.toJson());
 
     // Setting empty llm request and response (as the AdkDevServer UI expects these)
-    span.setAttribute("gcp.vertex.agent.llm_request", "{}");
-    span.setAttribute("gcp.vertex.agent.llm_response", "{}");
+    span.setAttribute("adk.llm_request", "{}");
+    span.setAttribute("adk.llm_response", "{}");
     if (invocationContext.session() != null && invocationContext.session().id() != null) {
-      span.setAttribute("gcp.vertex.agent.session_id", invocationContext.session().id());
+      span.setAttribute("adk.session_id", invocationContext.session().id());
     }
   }
 
@@ -158,26 +162,31 @@ public class Telemetry {
       return;
     }
 
-    span.setAttribute("gen_ai.system", "gcp.vertex.agent");
+    span.setAttribute("gen_ai.system", "com.google.adk");
     llmRequest.model().ifPresent(modelName -> span.setAttribute("gen_ai.request.model", modelName));
-    span.setAttribute("gcp.vertex.agent.invocation_id", invocationContext.invocationId());
-    span.setAttribute("gcp.vertex.agent.event_id", eventId);
+    span.setAttribute("adk.invocation_id", invocationContext.invocationId());
+    span.setAttribute("adk.event_id", eventId);
 
     if (invocationContext.session() != null && invocationContext.session().id() != null) {
-      span.setAttribute("gcp.vertex.agent.session_id", invocationContext.session().id());
+      span.setAttribute("adk.session_id", invocationContext.session().id());
     } else {
       log.trace(
           "traceCallLlm: InvocationContext session or session ID is null, cannot set"
-              + " gcp.vertex.agent.session_id");
+              + " adk.session_id");
     }
 
-    try {
-      span.setAttribute(
-          "gcp.vertex.agent.llm_request",
-          JsonBaseModel.getMapper().writeValueAsString(buildLlmRequestForTrace(llmRequest)));
-      span.setAttribute("gcp.vertex.agent.llm_response", llmResponse.toJson());
-    } catch (JsonProcessingException e) {
-      log.warn("traceCallLlm: Failed to serialize LlmRequest or LlmResponse to JSON", e);
+    if (CAPTURE_MESSAGE_CONTENT_IN_SPANS) {
+      try {
+        span.setAttribute(
+            "adk.llm_request",
+            JsonBaseModel.getMapper().writeValueAsString(buildLlmRequestForTrace(llmRequest)));
+        span.setAttribute("adk.llm_response", llmResponse.toJson());
+      } catch (JsonProcessingException e) {
+        log.warn("traceCallLlm: Failed to serialize LlmRequest or LlmResponse to JSON", e);
+      }
+    } else {
+      span.setAttribute("adk.llm_request", "{}");
+      span.setAttribute("adk.llm_response", "{}");
     }
   }
 
@@ -196,13 +205,13 @@ public class Telemetry {
       return;
     }
 
-    span.setAttribute("gcp.vertex.agent.invocation_id", invocationContext.invocationId());
+    span.setAttribute("adk.invocation_id", invocationContext.invocationId());
     if (eventId != null && !eventId.isEmpty()) {
-      span.setAttribute("gcp.vertex.agent.event_id", eventId);
+      span.setAttribute("adk.event_id", eventId);
     }
 
     if (invocationContext.session() != null && invocationContext.session().id() != null) {
-      span.setAttribute("gcp.vertex.agent.session_id", invocationContext.session().id());
+      span.setAttribute("adk.session_id", invocationContext.session().id());
     }
 
     try {
@@ -216,7 +225,7 @@ public class Telemetry {
           }
         }
       }
-      span.setAttribute("gcp.vertex.agent.data", JsonBaseModel.toJsonString(dataList));
+      span.setAttribute("adk.data", JsonBaseModel.toJsonString(dataList));
     } catch (IllegalStateException e) {
       log.warn("traceSendData: Failed to serialize data to JSON", e);
     }

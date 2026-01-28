@@ -70,6 +70,8 @@ public abstract class RunConfig {
 
   public abstract int maxLlmCalls();
 
+  public abstract boolean autoCreateSession();
+
   public abstract Builder toBuilder();
 
   public static Builder builder() {
@@ -78,7 +80,8 @@ public abstract class RunConfig {
         .setResponseModalities(ImmutableList.of())
         .setStreamingMode(StreamingMode.NONE)
         .setToolExecutionMode(ToolExecutionMode.NONE)
-        .setMaxLlmCalls(500);
+        .setMaxLlmCalls(500)
+        .setAutoCreateSession(false);
   }
 
   public static Builder builder(RunConfig runConfig) {
@@ -90,7 +93,8 @@ public abstract class RunConfig {
         .setResponseModalities(runConfig.responseModalities())
         .setSpeechConfig(runConfig.speechConfig())
         .setOutputAudioTranscription(runConfig.outputAudioTranscription())
-        .setInputAudioTranscription(runConfig.inputAudioTranscription());
+        .setInputAudioTranscription(runConfig.inputAudioTranscription())
+        .setAutoCreateSession(runConfig.autoCreateSession());
   }
 
   /** Builder for {@link RunConfig}. */
@@ -122,6 +126,9 @@ public abstract class RunConfig {
 
     @CanIgnoreReturnValue
     public abstract Builder setMaxLlmCalls(int maxLlmCalls);
+
+    @CanIgnoreReturnValue
+    public abstract Builder setAutoCreateSession(boolean autoCreateSession);
 
     abstract RunConfig autoBuild();
 

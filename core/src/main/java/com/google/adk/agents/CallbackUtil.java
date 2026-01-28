@@ -54,12 +54,11 @@ public final class CallbackUtil {
           builder.add(beforeAgentCallbackInstance);
         } else if (callback instanceof BeforeAgentCallbackSync beforeAgentCallbackSyncInstance) {
           builder.add(
-              (BeforeAgentCallback)
-                  (callbackContext) ->
-                      Maybe.fromOptional(beforeAgentCallbackSyncInstance.call(callbackContext)));
+              (callbackContext) ->
+                  Maybe.fromOptional(beforeAgentCallbackSyncInstance.call(callbackContext)));
         } else {
           logger.warn(
-              "Invalid beforeAgentCallback callback type: %s. Ignoring this callback.",
+              "Invalid beforeAgentCallback callback type: {}. Ignoring this callback.",
               callback.getClass().getName());
         }
       }
@@ -87,12 +86,11 @@ public final class CallbackUtil {
           builder.add(afterAgentCallbackInstance);
         } else if (callback instanceof AfterAgentCallbackSync afterAgentCallbackSyncInstance) {
           builder.add(
-              (AfterAgentCallback)
-                  (callbackContext) ->
-                      Maybe.fromOptional(afterAgentCallbackSyncInstance.call(callbackContext)));
+              (callbackContext) ->
+                  Maybe.fromOptional(afterAgentCallbackSyncInstance.call(callbackContext)));
         } else {
           logger.warn(
-              "Invalid afterAgentCallback callback type: %s. Ignoring this callback.",
+              "Invalid afterAgentCallback callback type: {}. Ignoring this callback.",
               callback.getClass().getName());
         }
       }

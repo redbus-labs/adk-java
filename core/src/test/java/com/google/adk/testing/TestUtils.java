@@ -24,6 +24,7 @@ import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
+import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
 import com.google.adk.events.EventCompaction;
@@ -54,6 +55,7 @@ public final class TestUtils {
     InMemorySessionService sessionService = new InMemorySessionService();
     return InvocationContext.builder()
         .sessionService(sessionService)
+        .artifactService(new InMemoryArtifactService())
         .invocationId("invocationId")
         .agent(agent)
         .session(sessionService.createSession("test-app", "test-user").blockingGet())
@@ -81,17 +83,23 @@ public final class TestUtils {
         .build();
   }
 
-  public static ImmutableList<Object> simplifyEvents(List<Event> events) {
+  public static ImmutableList<String> simplifyEvents(List<Event> events) {
     return events.stream()
         .map(event -> event.author() + ": " + formatEventContent(event))
         .collect(toImmutableList());
   }
 
   private static String formatEventContent(Event event) {
-    return event
-        .content()
-        .or(() -> event.actions().compaction().map(EventCompaction::compactedContent))
-        .flatMap(Content::parts)
+    return formatContent(
+        event
+            .content()
+            .or(() -> event.actions().compaction().map(EventCompaction::compactedContent))
+            .orElse(Content.builder().build()));
+  }
+
+  public static String formatContent(Content content) {
+    return content
+        .parts()
         .map(
             parts -> {
               if (parts.size() == 1) {
@@ -212,6 +220,22 @@ public final class TestUtils {
 
   public static LlmResponse createLlmResponse(Content content) {
     return LlmResponse.builder().content(content).build();
+  }
+
+  public static LlmResponse createTextLlmResponse(String text) {
+    return createLlmResponse(Content.builder().role("model").parts(Part.fromText(text)).build());
+  }
+
+  public static LlmResponse createFunctionCallLlmResponse(
+      String id, String functionName, Map<String, Object> args) {
+    Content content =
+        Content.builder()
+            .parts(
+                Part.builder()
+                    .functionCall(FunctionCall.builder().id(id).name(functionName).args(args)))
+            .role("model")
+            .build();
+    return createLlmResponse(content);
   }
 
   public static class EchoTool extends BaseTool {

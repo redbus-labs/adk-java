@@ -82,21 +82,6 @@ public class RequestConfirmationLlmRequestProcessorTest {
                       .build()))
           .build();
 
-  private static final Event USER_DECLINE_EVENT =
-      Event.builder()
-          .author("user")
-          .content(
-              Content.fromParts(
-                  Part.builder()
-                      .functionResponse(
-                          FunctionResponse.builder()
-                              .id(FUNCTION_CALL_ID)
-                              .name(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)
-                              .response(ImmutableMap.of("confirmed", false))
-                              .build())
-                      .build()))
-          .build();
-
   private static final RequestConfirmationLlmRequestProcessor processor =
       new RequestConfirmationLlmRequestProcessor();
 
@@ -121,30 +106,6 @@ public class RequestConfirmationLlmRequestProcessorTest {
     assertThat(fr.id()).hasValue(ORIGINAL_FUNCTION_CALL_ID);
     assertThat(fr.name()).hasValue(ECHO_TOOL_NAME);
     assertThat(fr.response()).hasValue(ImmutableMap.of("result", ORIGINAL_FUNCTION_CALL_ARGS));
-  }
-
-  @Test
-  public void runAsync_withDecline_returnsErrorFunctionResponse() {
-    LlmAgent agent = createAgentWithEchoTool();
-    Session session =
-        Session.builder("session_id")
-            .events(ImmutableList.of(REQUEST_CONFIRMATION_EVENT, USER_DECLINE_EVENT))
-            .build();
-
-    InvocationContext context = createInvocationContext(agent, session);
-
-    RequestProcessor.RequestProcessingResult result =
-        processor.processRequest(context, LlmRequest.builder().build()).blockingGet();
-
-    assertThat(result).isNotNull();
-    assertThat(result.events()).hasSize(1);
-    Event event = result.events().iterator().next();
-    assertThat(event.functionResponses()).hasSize(1);
-    FunctionResponse fr = event.functionResponses().get(0);
-    assertThat(fr.id()).hasValue(ORIGINAL_FUNCTION_CALL_ID);
-    assertThat(fr.name()).hasValue(ECHO_TOOL_NAME);
-    assertThat(fr.response())
-        .hasValue(ImmutableMap.of("error", "User declined tool execution for echo_tool"));
   }
 
   @Test

@@ -4,9 +4,9 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.apps.App;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
-import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
@@ -188,12 +188,10 @@ public final class LongRunningFunctionToolTest {
             .build();
     runner =
         Runner.builder()
-            .agent(agent)
-            .appName("test_app")
+            .app(App.builder().name("test_app").rootAgent(agent).build())
             .artifactService(artifactService)
             .sessionService(sessionService)
             .memoryService(memoryService)
-            .resumabilityConfig(new ResumabilityConfig(false))
             .build();
     session =
         runner

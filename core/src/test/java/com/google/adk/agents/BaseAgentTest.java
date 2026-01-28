@@ -43,10 +43,40 @@ public final class BaseAgentTest {
   public void constructor_setsNameAndDescription() {
     String name = "testName";
     String description = "testDescription";
-    TestBaseAgent agent = new TestBaseAgent(name, description, ImmutableList.of(), null, null);
+    TestBaseAgent agent =
+        new TestBaseAgent(name, description, null, ImmutableList.of(), null, null);
 
     assertThat(agent.name()).isEqualTo(name);
     assertThat(agent.description()).isEqualTo(description);
+  }
+
+  @Test
+  public void findAgent_returnsCorrectAgent() {
+    TestBaseAgent subSubAgent =
+        new TestBaseAgent("subSubAgent", "subSubAgent", null, ImmutableList.of(), null, null);
+    TestBaseAgent subAgent =
+        new TestBaseAgent("subAgent", "subAgent", null, ImmutableList.of(subSubAgent), null, null);
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME, TEST_AGENT_DESCRIPTION, null, ImmutableList.of(subAgent), null, null);
+    assertThat(agent.findAgent("subSubAgent")).isEqualTo(subSubAgent);
+    assertThat(agent.findAgent("subAgent")).isEqualTo(subAgent);
+    assertThat(agent.findAgent(TEST_AGENT_NAME)).isEqualTo(agent);
+    assertThat(agent.findAgent("nonExistent")).isNull();
+  }
+
+  @Test
+  public void rootAgent_returnsRootAgent() {
+    TestBaseAgent subSubAgent =
+        new TestBaseAgent("subSubAgent", "subSubAgent", null, ImmutableList.of(), null, null);
+    TestBaseAgent subAgent =
+        new TestBaseAgent("subAgent", "subAgent", null, ImmutableList.of(subSubAgent), null, null);
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME, TEST_AGENT_DESCRIPTION, null, ImmutableList.of(subAgent), null, null);
+    assertThat(subSubAgent.rootAgent()).isEqualTo(agent);
+    assertThat(subAgent.rootAgent()).isEqualTo(agent);
+    assertThat(agent.rootAgent()).isEqualTo(agent);
   }
 
   @Test
@@ -260,5 +290,30 @@ public final class BaseAgentTest {
     assertThat(runAsyncImpl.wasCalled()).isTrue();
     assertThat(afterCallback1.wasCalled()).isTrue();
     assertThat(afterCallback2.wasCalled()).isFalse();
+  }
+
+  @Test
+  public void canonicalCallbacks_returnsEmptyListWhenNull() {
+    TestBaseAgent agent =
+        new TestBaseAgent(TEST_AGENT_NAME, TEST_AGENT_DESCRIPTION, null, null, null);
+
+    assertThat(agent.canonicalBeforeAgentCallbacks()).isEmpty();
+    assertThat(agent.canonicalAfterAgentCallbacks()).isEmpty();
+  }
+
+  @Test
+  public void canonicalCallbacks_returnsListWhenPresent() {
+    BeforeAgentCallback bc = unused -> Maybe.empty();
+    AfterAgentCallback ac = unused -> Maybe.empty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(bc),
+            ImmutableList.of(ac),
+            null);
+
+    assertThat(agent.canonicalBeforeAgentCallbacks()).containsExactly(bc);
+    assertThat(agent.canonicalAfterAgentCallbacks()).containsExactly(ac);
   }
 }

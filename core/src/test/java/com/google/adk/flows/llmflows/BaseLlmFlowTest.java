@@ -46,6 +46,7 @@ import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -299,6 +300,118 @@ public final class BaseLlmFlowTest {
     List<Event> unused = baseLlmFlow.run(invocationContext).toList().blockingGet();
 
     assertThat(testLlm.getLastRequest().tools()).containsEntry("my_function", testTool);
+  }
+
+  @Test
+  public void run_withRequestProcessorsAndTools_modifiesRequestInOrder() {
+    Content content = Content.fromParts(Part.fromText("LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(content));
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .tools(ImmutableList.of(new TestTool("my_function", ImmutableMap.of())))
+                .build());
+    RequestProcessor requestProcessor1 =
+        createRequestProcessor(
+            request ->
+                request.toBuilder().appendInstructions(ImmutableList.of("instruction1")).build());
+    RequestProcessor requestProcessor2 =
+        createRequestProcessor(
+            request ->
+                request.toBuilder().appendInstructions(ImmutableList.of("instruction2")).build());
+    BaseLlmFlow baseLlmFlow =
+        createBaseLlmFlow(
+            ImmutableList.of(requestProcessor1, requestProcessor2),
+            /* responseProcessors= */ ImmutableList.of());
+
+    List<Event> unused = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(testLlm.getLastRequest().tools()).containsKey("my_function");
+    assertThat(testLlm.getLastRequest().config().orElseThrow().systemInstruction().orElseThrow())
+        .isEqualTo(Content.fromParts(Part.fromText("instruction1\n\ninstruction2")));
+  }
+
+  @Test
+  public void run_requestProcessorsEmitEventsDirectly() {
+    Event eventFromProcessor1 =
+        Event.builder()
+            .id("event1")
+            .invocationId("invId")
+            .author("user")
+            .content(Content.fromParts(Part.fromText("event1")))
+            .build();
+    RequestProcessor processor1 =
+        (unusedCtx, request) ->
+            Single.just(
+                RequestProcessingResult.create(request, ImmutableList.of(eventFromProcessor1)));
+    RequestProcessor processor2 =
+        (context, request) -> {
+          boolean sawEvent1 =
+              context.session().events().stream()
+                  .anyMatch(e -> e.id().equals(eventFromProcessor1.id()));
+
+          Event resultEvent =
+              Event.builder()
+                  .id("event2")
+                  .invocationId("invId")
+                  .author("user")
+                  .content(
+                      Content.fromParts(
+                          Part.fromText(sawEvent1 ? "event1 was seen" : "event1 was not seen")))
+                  .build();
+
+          return Single.just(
+              RequestProcessingResult.create(request, ImmutableList.of(resultEvent)));
+        };
+    BaseLlmFlow baseLlmFlow =
+        createBaseLlmFlow(
+            ImmutableList.of(processor1, processor2), /* responseProcessors= */ ImmutableList.of());
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgent(
+                createTestLlm(
+                    createLlmResponse(Content.fromParts(Part.fromText("llm response"))))));
+
+    List<Event> events =
+        baseLlmFlow
+            .run(invocationContext)
+            .doOnNext(event -> invocationContext.session().events().add(event))
+            .toList()
+            .blockingGet();
+
+    assertThat(events.stream().map(Event::stringifyContent))
+        .containsExactly("event1", "event1 was seen", "llm response")
+        .inOrder();
+  }
+
+  @Test
+  public void run_requestProcessorsAreCalledExactlyOnce() {
+    AtomicInteger processor1CallCount = new AtomicInteger();
+    AtomicInteger processor2CallCount = new AtomicInteger();
+
+    RequestProcessor processor1 =
+        (unusedCtx, request) -> {
+          processor1CallCount.incrementAndGet();
+          return Single.just(RequestProcessingResult.create(request, ImmutableList.of()));
+        };
+    RequestProcessor processor2 =
+        (unusedCtx, request) -> {
+          processor2CallCount.incrementAndGet();
+          return Single.just(RequestProcessingResult.create(request, ImmutableList.of()));
+        };
+    BaseLlmFlow baseLlmFlow =
+        createBaseLlmFlow(
+            ImmutableList.of(processor1, processor2), /* responseProcessors= */ ImmutableList.of());
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgent(
+                createTestLlm(
+                    createLlmResponse(Content.fromParts(Part.fromText("llm response"))))));
+
+    List<Event> unused = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(processor1CallCount.get()).isEqualTo(1);
+    assertThat(processor2CallCount.get()).isEqualTo(1);
   }
 
   private static BaseLlmFlow createBaseLlmFlowWithoutProcessors() {

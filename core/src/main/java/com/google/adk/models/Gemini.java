@@ -17,12 +17,9 @@
 package com.google.adk.models;
 
 import static com.google.common.base.StandardSystemProperty.JAVA_VERSION;
-import static net.javacrumbs.futureconverter.java8guava.FutureConverter.toListenableFuture;
 
 import com.google.adk.Version;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.Client;
 import com.google.genai.ResponseStream;
@@ -35,14 +32,11 @@ import com.google.genai.types.HttpOptions;
 import com.google.genai.types.LiveConnectConfig;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
-import io.reactivex.rxjava3.core.Scheduler;
-import io.reactivex.rxjava3.core.Single;
-import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -211,23 +205,6 @@ public class Gemini extends BaseLlm {
     }
   }
 
-  private static <T> Single<T> toSingle(ListenableFuture<T> future, Scheduler scheduler) {
-    return Single.create(
-        emitter -> {
-          future.addListener(
-              () -> {
-                try {
-                  emitter.onSuccess(Futures.getDone(future));
-                } catch (ExecutionException e) {
-                  emitter.onError(e.getCause());
-                }
-              },
-              scheduler::scheduleDirect);
-
-          emitter.setCancellable(() -> future.cancel(false));
-        });
-  }
-
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
     llmRequest =
@@ -241,17 +218,14 @@ public class Gemini extends BaseLlm {
 
     if (stream) {
       logger.debug("Sending streaming generateContent request to model {}", effectiveModelName);
-      ListenableFuture<ResponseStream<GenerateContentResponse>> streamFuture =
-          toListenableFuture(
-              apiClient.async.models.generateContentStream(
-                  effectiveModelName, llmRequest.contents(), config));
+      CompletableFuture<ResponseStream<GenerateContentResponse>> streamFuture =
+          apiClient.async.models.generateContentStream(
+              effectiveModelName, llmRequest.contents(), config);
 
       return Flowable.defer(
               () ->
                   processRawResponses(
-                      toSingle(streamFuture, Schedulers.io())
-                          .toFlowable()
-                          .flatMapIterable(iterable -> iterable)))
+                      Flowable.fromFuture(streamFuture).flatMapIterable(iterable -> iterable)))
           .filter(
               llmResponse ->
                   llmResponse
@@ -269,16 +243,12 @@ public class Gemini extends BaseLlm {
                       .orElse(false));
     } else {
       logger.debug("Sending generateContent request to model {}", effectiveModelName);
-      final LlmRequest finalLlmRequest = llmRequest;
-      return toSingle(
-              toListenableFuture(
-                  apiClient
-                      .async
-                      .models
-                      .generateContent(effectiveModelName, finalLlmRequest.contents(), config)
-                      .thenApplyAsync(LlmResponse::create)),
-              Schedulers.io())
-          .toFlowable();
+      return Flowable.fromFuture(
+          apiClient
+              .async
+              .models
+              .generateContent(effectiveModelName, llmRequest.contents(), config)
+              .thenApplyAsync(LlmResponse::create));
     }
   }
 

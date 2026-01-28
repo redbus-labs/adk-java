@@ -72,6 +72,43 @@ public final class ExampleToolTest {
   }
 
   @Test
+  public void processLlmRequest_withProvider_appendsFewShot() {
+    ExampleTool tool = ExampleTool.builder().setExampleProvider(ProviderHolder.EXAMPLES).build();
+
+    InvocationContext ctx = newContext();
+    LlmRequest.Builder builder = LlmRequest.builder().model("gemini-2.0-flash");
+
+    tool.processLlmRequest(builder, ToolContext.builder(ctx).build()).blockingAwait();
+    LlmRequest updated = builder.build();
+
+    assertThat(updated.getSystemInstructions()).isNotEmpty();
+    String si = String.join("\n", updated.getSystemInstructions());
+    assertThat(si).contains("Begin few-shot");
+    assertThat(si).contains("qin");
+    assertThat(si).contains("qout");
+  }
+
+  @Test
+  public void processLlmRequest_withEmptyUserContent_doesNotAppendFewShot() {
+    ExampleTool tool = ExampleTool.builder().addExample(makeExample("qin", "qout")).build();
+    InvocationContext ctxWithContent = newContext();
+    InvocationContext ctx =
+        InvocationContext.builder()
+            .invocationId(ctxWithContent.invocationId())
+            .agent(ctxWithContent.agent())
+            .session(ctxWithContent.session())
+            .userContent(Content.fromParts(Part.fromText("")))
+            .runConfig(ctxWithContent.runConfig())
+            .build();
+    LlmRequest.Builder builder = LlmRequest.builder().model("gemini-2.0-flash");
+
+    tool.processLlmRequest(builder, ToolContext.builder(ctx).build()).blockingAwait();
+    LlmRequest updated = builder.build();
+
+    assertThat(updated.getSystemInstructions()).isEmpty();
+  }
+
+  @Test
   public void fromConfig_withInlineExamples_buildsTool() throws Exception {
     BaseTool.ToolArgsConfig args = new BaseTool.ToolArgsConfig();
     // args.examples = [{ input: {parts:[{text:q}]}, output:[{parts:[{text:a}]}] }]
@@ -95,7 +132,7 @@ public final class ExampleToolTest {
   /** Holder for a provider referenced via ClassName.FIELD reflection. */
   static final class ProviderHolder {
     public static final BaseExampleProvider EXAMPLES =
-        (query) -> ImmutableList.of(makeExample("qin", "qout"));
+        (unusedQuery) -> ImmutableList.of(makeExample("qin", "qout"));
 
     private ProviderHolder() {}
   }
@@ -255,7 +292,8 @@ public final class ExampleToolTest {
   /** Holder with non-static field for testing. */
   static final class NonStaticProviderHolder {
     @SuppressWarnings("ConstantField") // Intentionally non-static for testing
-    public final BaseExampleProvider INSTANCE = (query) -> ImmutableList.of(makeExample("q", "a"));
+    public final BaseExampleProvider INSTANCE =
+        (unusedQuery) -> ImmutableList.of(makeExample("q", "a"));
 
     private NonStaticProviderHolder() {}
   }

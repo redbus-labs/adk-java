@@ -19,8 +19,10 @@ package com.google.adk.sessions;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
+import com.google.adk.agents.BaseAgentState;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.events.ToolConfirmation;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
@@ -95,8 +97,11 @@ final class SessionJsonConverter {
       actionsJson.put("escalate", event.actions().escalate());
       actionsJson.put("requestedAuthConfigs", event.actions().requestedAuthConfigs());
       actionsJson.put("requestedToolConfirmations", event.actions().requestedToolConfirmations());
-      actionsJson.put("endInvocation", event.actions().endInvocation());
       actionsJson.put("compaction", event.actions().compaction());
+      if (!event.actions().agentState().isEmpty()) {
+        actionsJson.put("agentState", event.actions().agentState());
+      }
+      actionsJson.put("rewindBeforeInvocationId", event.actions().rewindBeforeInvocationId());
       eventJson.put("actions", actionsJson);
     }
     if (event.content().isPresent()) {
@@ -121,6 +126,7 @@ final class SessionJsonConverter {
    * @return parsed {@link Content}, or {@code null} if conversion fails.
    */
   @Nullable
+  // Safe because we check instanceof Map before casting.
   @SuppressWarnings("unchecked")
   private static Content convertMapToContent(Object rawContentValue) {
     if (rawContentValue == null) {
@@ -147,6 +153,7 @@ final class SessionJsonConverter {
    *
    * @return parsed {@link Event}.
    */
+  // Safe because we are parsing from a raw Map structure that follows a known schema.
   @SuppressWarnings("unchecked")
   static Event fromApiEvent(Map<String, Object> apiEvent) {
     EventActions.Builder eventActionsBuilder = EventActions.builder();
@@ -171,6 +178,17 @@ final class SessionJsonConverter {
           Optional.ofNullable(actionsMap.get("requestedAuthConfigs"))
               .map(SessionJsonConverter::asConcurrentMapOfConcurrentMaps)
               .orElse(new ConcurrentHashMap<>()));
+      eventActionsBuilder.requestedToolConfirmations(
+          Optional.ofNullable(actionsMap.get("requestedToolConfirmations"))
+              .map(SessionJsonConverter::asConcurrentMapOfToolConfirmations)
+              .orElse(new ConcurrentHashMap<>()));
+      if (actionsMap.get("agentState") != null) {
+        eventActionsBuilder.agentState(asConcurrentMapOfAgentState(actionsMap.get("agentState")));
+      }
+      if (actionsMap.get("rewindBeforeInvocationId") != null) {
+        eventActionsBuilder.rewindBeforeInvocationId(
+            (String) actionsMap.get("rewindBeforeInvocationId"));
+      }
     }
 
     Event event =
@@ -245,6 +263,7 @@ final class SessionJsonConverter {
    * @param artifactDeltaObj The raw object from which to parse the artifact delta.
    * @return A {@link ConcurrentMap} representing the artifact delta.
    */
+  // Safe because we check instanceof Map before casting.
   @SuppressWarnings("unchecked")
   private static ConcurrentMap<String, Part> convertToArtifactDeltaMap(Object artifactDeltaObj) {
     if (!(artifactDeltaObj instanceof Map)) {
@@ -268,6 +287,7 @@ final class SessionJsonConverter {
    *
    * @return thread-safe nested map.
    */
+  // Safe because we are parsing from a raw Map structure that follows a known schema.
   @SuppressWarnings("unchecked")
   private static ConcurrentMap<String, ConcurrentMap<String, Object>>
       asConcurrentMapOfConcurrentMaps(Object value) {
@@ -276,6 +296,35 @@ final class SessionJsonConverter {
             .collect(
                 ConcurrentHashMap::new,
                 (map, entry) -> map.put(entry.getKey(), new ConcurrentHashMap<>(entry.getValue())),
+                ConcurrentHashMap::putAll);
+  }
+
+  // Safe because we are parsing from a raw Map structure that follows a known schema.
+  @SuppressWarnings("unchecked")
+  private static ConcurrentMap<String, BaseAgentState> asConcurrentMapOfAgentState(Object value) {
+    return ((Map<String, Object>) value)
+        .entrySet().stream()
+            .collect(
+                ConcurrentHashMap::new,
+                (map, entry) ->
+                    map.put(
+                        entry.getKey(),
+                        objectMapper.convertValue(entry.getValue(), BaseAgentState.class)),
+                ConcurrentHashMap::putAll);
+  }
+
+  // Safe because we are parsing from a raw Map structure that follows a known schema.
+  @SuppressWarnings("unchecked")
+  private static ConcurrentMap<String, ToolConfirmation> asConcurrentMapOfToolConfirmations(
+      Object value) {
+    return ((Map<String, Object>) value)
+        .entrySet().stream()
+            .collect(
+                ConcurrentHashMap::new,
+                (map, entry) ->
+                    map.put(
+                        entry.getKey(),
+                        objectMapper.convertValue(entry.getValue(), ToolConfirmation.class)),
                 ConcurrentHashMap::putAll);
   }
 }

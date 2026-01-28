@@ -58,7 +58,7 @@
       <artifactId>docker-java-transport-httpclient5</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.modelcontextprotocol.sdk</groupId>
+      <groupId> io.modelcontextprotocol.sdk</groupId>
       <artifactId>mcp</artifactId>
     </dependency>
     <dependency>
@@ -272,6 +272,7 @@
     <dependency>
       <groupId>net.javacrumbs.future-converter</groupId>
       <artifactId>future-converter-java8-guava</artifactId>
+      <version>1.2.0</version>
     </dependency>
   </dependencies>
   <build>

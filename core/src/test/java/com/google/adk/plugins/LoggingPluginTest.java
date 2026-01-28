@@ -87,7 +87,7 @@ public class LoggingPluginTest {
 
     when(mockCallbackContext.invocationId()).thenReturn("invocation_id");
     when(mockCallbackContext.agentName()).thenReturn("agent_name");
-    when(mockCallbackContext.branch()).thenReturn(Optional.empty());
+    when(mockCallbackContext.invocationContext()).thenReturn(mockInvocationContext);
 
     when(mockTool.name()).thenReturn("tool_name");
     when(mockToolContext.agentName()).thenReturn("agent_name");

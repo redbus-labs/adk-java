@@ -62,7 +62,7 @@ public abstract class ToolConfirmation extends JsonBaseModel {
 
     /** For internal usage. Please use `ToolConfirmation.builder()` for instantiation. */
     @JsonCreator
-    private static Builder create() {
+    static Builder create() {
       return new AutoValue_ToolConfirmation.Builder();
     }
 
