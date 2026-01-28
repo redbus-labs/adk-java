@@ -28,6 +28,7 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
 import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.runner.Runner;
+import com.google.adk.sessions.State;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -154,7 +155,7 @@ public class AgentTool extends BaseTool {
               if (lastEvent.actions() != null
                   && lastEvent.actions().stateDelta() != null
                   && !lastEvent.actions().stateDelta().isEmpty()) {
-                toolContext.state().putAll(lastEvent.actions().stateDelta());
+                updateState(lastEvent.actions().stateDelta(), toolContext.state());
               }
 
               if (outputText.isEmpty()) {
@@ -173,5 +174,25 @@ public class AgentTool extends BaseTool {
                 return ImmutableMap.of("result", output);
               }
             });
+  }
+
+  /**
+   * Updates the given state map with the state delta.
+   *
+   * <p>If a value in the delta is {@link State#REMOVED}, the key is removed from the state map.
+   * Otherwise, the key-value pair is put into the state map. This method does not distinguish
+   * between session, app, and user state based on key prefixes.
+   *
+   * @param state The state map to update.
+   */
+  private void updateState(Map<String, Object> stateDelta, Map<String, Object> state) {
+    stateDelta.forEach(
+        (key, value) -> {
+          if (value == State.REMOVED) {
+            state.remove(key);
+          } else {
+            state.put(key, value);
+          }
+        });
   }
 }

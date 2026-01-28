@@ -91,7 +91,7 @@ final class SessionJsonConverter {
     if (event.actions() != null) {
       Map<String, Object> actionsJson = new HashMap<>();
       actionsJson.put("skipSummarization", event.actions().skipSummarization());
-      actionsJson.put("stateDelta", event.actions().stateDelta());
+      actionsJson.put("stateDelta", stateDeltaToJson(event.actions().stateDelta()));
       actionsJson.put("artifactDelta", event.actions().artifactDelta());
       actionsJson.put("transferAgent", event.actions().transferToAgent());
       actionsJson.put("escalate", event.actions().escalate());
@@ -126,8 +126,7 @@ final class SessionJsonConverter {
    * @return parsed {@link Content}, or {@code null} if conversion fails.
    */
   @Nullable
-  // Safe because we check instanceof Map before casting.
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Safe because we check instanceof Map before casting.
   private static Content convertMapToContent(Object rawContentValue) {
     if (rawContentValue == null) {
       return null;
@@ -153,8 +152,7 @@ final class SessionJsonConverter {
    *
    * @return parsed {@link Event}.
    */
-  // Safe because we are parsing from a raw Map structure that follows a known schema.
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
   static Event fromApiEvent(Map<String, Object> apiEvent) {
     EventActions.Builder eventActionsBuilder = EventActions.builder();
     if (apiEvent.get("actions") != null) {
@@ -162,10 +160,7 @@ final class SessionJsonConverter {
       if (actionsMap.get("skipSummarization") != null) {
         eventActionsBuilder.skipSummarization((Boolean) actionsMap.get("skipSummarization"));
       }
-      eventActionsBuilder.stateDelta(
-          actionsMap.get("stateDelta") != null
-              ? new ConcurrentHashMap<>((Map<String, Object>) actionsMap.get("stateDelta"))
-              : new ConcurrentHashMap<>());
+      eventActionsBuilder.stateDelta(stateDeltaFromJson(actionsMap.get("stateDelta")));
       eventActionsBuilder.artifactDelta(
           actionsMap.get("artifactDelta") != null
               ? convertToArtifactDeltaMap(actionsMap.get("artifactDelta"))
@@ -238,6 +233,32 @@ final class SessionJsonConverter {
     return event;
   }
 
+  @SuppressWarnings("unchecked") // stateDeltaFromMap is a Map<String, Object> from JSON.
+  private static ConcurrentMap<String, Object> stateDeltaFromJson(Object stateDeltaFromMap) {
+    if (stateDeltaFromMap == null) {
+      return new ConcurrentHashMap<>();
+    }
+    return ((Map<String, Object>) stateDeltaFromMap)
+        .entrySet().stream()
+            .collect(
+                ConcurrentHashMap::new,
+                (map, entry) ->
+                    map.put(
+                        entry.getKey(),
+                        entry.getValue() == null ? State.REMOVED : entry.getValue()),
+                ConcurrentHashMap::putAll);
+  }
+
+  private static Map<String, Object> stateDeltaToJson(Map<String, Object> stateDelta) {
+    return stateDelta.entrySet().stream()
+        .collect(
+            HashMap::new,
+            (map, entry) ->
+                map.put(
+                    entry.getKey(), entry.getValue() == State.REMOVED ? null : entry.getValue()),
+            HashMap::putAll);
+  }
+
   /**
    * Converts a timestamp from a Map or String into an {@link Instant}.
    *
@@ -263,8 +284,7 @@ final class SessionJsonConverter {
    * @param artifactDeltaObj The raw object from which to parse the artifact delta.
    * @return A {@link ConcurrentMap} representing the artifact delta.
    */
-  // Safe because we check instanceof Map before casting.
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Safe because we check instanceof Map before casting.
   private static ConcurrentMap<String, Part> convertToArtifactDeltaMap(Object artifactDeltaObj) {
     if (!(artifactDeltaObj instanceof Map)) {
       return new ConcurrentHashMap<>();
@@ -287,8 +307,7 @@ final class SessionJsonConverter {
    *
    * @return thread-safe nested map.
    */
-  // Safe because we are parsing from a raw Map structure that follows a known schema.
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
   private static ConcurrentMap<String, ConcurrentMap<String, Object>>
       asConcurrentMapOfConcurrentMaps(Object value) {
     return ((Map<String, Map<String, Object>>) value)
@@ -299,8 +318,7 @@ final class SessionJsonConverter {
                 ConcurrentHashMap::putAll);
   }
 
-  // Safe because we are parsing from a raw Map structure that follows a known schema.
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
   private static ConcurrentMap<String, BaseAgentState> asConcurrentMapOfAgentState(Object value) {
     return ((Map<String, Object>) value)
         .entrySet().stream()
@@ -313,8 +331,7 @@ final class SessionJsonConverter {
                 ConcurrentHashMap::putAll);
   }
 
-  // Safe because we are parsing from a raw Map structure that follows a known schema.
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
   private static ConcurrentMap<String, ToolConfirmation> asConcurrentMapOfToolConfirmations(
       Object value) {
     return ((Map<String, Object>) value)

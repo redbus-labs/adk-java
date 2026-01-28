@@ -19,6 +19,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.adk.agents.BaseAgentState;
+import com.google.adk.sessions.State;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Part;
 import java.util.Objects;
@@ -98,8 +99,18 @@ public class EventActions {
     return stateDelta;
   }
 
+  @Deprecated // Use stateDelta(), addState() and removeStateByKey() instead.
   public void setStateDelta(ConcurrentMap<String, Object> stateDelta) {
     this.stateDelta = stateDelta;
+  }
+
+  /**
+   * Removes a key from the state delta.
+   *
+   * @param key The key to remove.
+   */
+  public void removeStateByKey(String key) {
+    stateDelta.put(key, State.REMOVED);
   }
 
   @JsonProperty("artifactDelta")

@@ -221,4 +221,51 @@ public final class SessionJsonConverterTest {
     assertThat(event.turnComplete().get()).isFalse();
     assertThat(event.interrupted().get()).isFalse();
   }
+
+  @Test
+  public void convertEventToJson_withStateRemoved_success() throws JsonProcessingException {
+    EventActions actions =
+        EventActions.builder()
+            .stateDelta(
+                new ConcurrentHashMap<>(ImmutableMap.of("key1", "value1", "key2", State.REMOVED)))
+            .build();
+
+    Event event =
+        Event.builder()
+            .author("user")
+            .invocationId("inv-123")
+            .timestamp(Instant.parse("2023-01-01T00:00:00Z").toEpochMilli())
+            .actions(actions)
+            .build();
+
+    String json = SessionJsonConverter.convertEventToJson(event);
+    JsonNode jsonNode = objectMapper.readTree(json);
+
+    JsonNode actionsNode = jsonNode.get("actions");
+    assertThat(actionsNode.get("stateDelta").get("key1").asText()).isEqualTo("value1");
+    assertThat(actionsNode.get("stateDelta").get("key2").isNull()).isTrue();
+  }
+
+  @Test
+  public void fromApiEvent_withNullStateDeltaValue_success() {
+    Map<String, Object> apiEvent = new HashMap<>();
+    apiEvent.put("name", "sessions/123/events/456");
+    apiEvent.put("invocationId", "inv-123");
+    apiEvent.put("author", "model");
+    apiEvent.put("timestamp", "2023-01-01T00:00:00Z");
+
+    Map<String, Object> stateDelta = new HashMap<>();
+    stateDelta.put("key1", "value1");
+    stateDelta.put("key2", null);
+
+    Map<String, Object> actions = new HashMap<>();
+    actions.put("stateDelta", stateDelta);
+    apiEvent.put("actions", actions);
+
+    Event event = SessionJsonConverter.fromApiEvent(apiEvent);
+
+    EventActions eventActions = event.actions();
+    assertThat(eventActions.stateDelta()).containsEntry("key1", "value1");
+    assertThat(eventActions.stateDelta()).containsEntry("key2", State.REMOVED);
+  }
 }

@@ -18,6 +18,7 @@ package com.google.adk.events;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.adk.sessions.State;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
@@ -96,5 +97,14 @@ public final class EventActionsTest {
         .containsExactly("tool1", TOOL_CONFIRMATION, "tool2", TOOL_CONFIRMATION);
     assertThat(merged.endInvocation()).hasValue(true);
     assertThat(merged.compaction()).hasValue(COMPACTION);
+  }
+
+  @Test
+  public void removeStateByKey_marksKeyAsRemoved() {
+    EventActions eventActions = new EventActions();
+    eventActions.stateDelta().put("key1", "value1");
+    eventActions.removeStateByKey("key1");
+
+    assertThat(eventActions.stateDelta()).containsExactly("key1", State.REMOVED);
   }
 }
