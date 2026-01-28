@@ -52,7 +52,6 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.functions.Function;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -332,7 +331,7 @@ public final class Functions {
           ActiveStreamingTool activeTool =
               invocationContext
                   .activeStreamingTools()
-                  .getOrDefault(tool.name(), new ActiveStreamingTool(subscription));
+                  .computeIfAbsent(tool.name(), unused -> new ActiveStreamingTool(subscription));
           activeTool.task(subscription);
           invocationContext.activeStreamingTools().put(tool.name(), activeTool);
 
@@ -607,12 +606,7 @@ public final class Functions {
               .invocationId(invocationContext.invocationId())
               .author(invocationContext.agent().name())
               .branch(invocationContext.branch())
-              .content(
-                  Optional.of(
-                      Content.builder()
-                          .role("user")
-                          .parts(Collections.singletonList(partFunctionResponse))
-                          .build()))
+              .content(Content.builder().role("user").parts(partFunctionResponse).build())
               .actions(toolContext.eventActions())
               .build();
       Tracing.traceToolResponse(invocationContext, event.id(), event);
