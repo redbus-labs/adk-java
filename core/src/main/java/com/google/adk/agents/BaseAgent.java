@@ -76,7 +76,7 @@ public abstract class BaseAgent {
   public BaseAgent(
       String name,
       String description,
-      List<? extends BaseAgent> subAgents,
+      @Nullable List<? extends BaseAgent> subAgents,
       @Nullable List<? extends BeforeAgentCallback> beforeAgentCallback,
       @Nullable List<? extends AfterAgentCallback> afterAgentCallback) {
     this.name = name;
