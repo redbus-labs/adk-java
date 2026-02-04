@@ -245,6 +245,7 @@ public final class Functions {
       Map<String, BaseTool> tools,
       Map<String, ToolConfirmation> toolConfirmations,
       boolean isLive) {
+    Context parentContext = Context.current();
     return functionCall -> {
       BaseTool tool = tools.get(functionCall.name().get());
       ToolContext toolContext =
@@ -259,14 +260,19 @@ public final class Functions {
           maybeInvokeBeforeToolCall(invocationContext, tool, functionArgs, toolContext)
               .switchIfEmpty(
                   Maybe.defer(
-                      () ->
-                          isLive
+                      () -> {
+                        try (Scope scope = parentContext.makeCurrent()) {
+                          return isLive
                               ? processFunctionLive(
                                   invocationContext, tool, toolContext, functionCall, functionArgs)
-                              : callTool(tool, functionArgs, toolContext)));
+                              : callTool(tool, functionArgs, toolContext);
+                        }
+                      }));
 
-      return postProcessFunctionResult(
-          maybeFunctionResult, invocationContext, tool, functionArgs, toolContext, isLive);
+      try (Scope scope = parentContext.makeCurrent()) {
+        return postProcessFunctionResult(
+            maybeFunctionResult, invocationContext, tool, functionArgs, toolContext, isLive);
+      }
     };
   }
 
@@ -372,6 +378,7 @@ public final class Functions {
       Map<String, Object> functionArgs,
       ToolContext toolContext,
       boolean isLive) {
+    Context parentContext = Context.current();
     return maybeFunctionResult
         .map(Optional::of)
         .defaultIfEmpty(Optional.empty())
@@ -393,14 +400,17 @@ public final class Functions {
                   .defaultIfEmpty(Optional.ofNullable(initialFunctionResult))
                   .flatMapMaybe(
                       finalOptionalResult -> {
-                        Map<String, Object> finalFunctionResult = finalOptionalResult.orElse(null);
-                        if (tool.longRunning() && finalFunctionResult == null) {
-                          return Maybe.empty();
+                        try (Scope scope = parentContext.makeCurrent()) {
+                          Map<String, Object> finalFunctionResult =
+                              finalOptionalResult.orElse(null);
+                          if (tool.longRunning() && finalFunctionResult == null) {
+                            return Maybe.empty();
+                          }
+                          Event functionResponseEvent =
+                              buildResponseEvent(
+                                  tool, finalFunctionResult, toolContext, invocationContext);
+                          return Maybe.just(functionResponseEvent);
                         }
-                        Event functionResponseEvent =
-                            buildResponseEvent(
-                                tool, finalFunctionResult, toolContext, invocationContext);
-                        return Maybe.just(functionResponseEvent);
                       });
             });
   }
@@ -552,12 +562,13 @@ public final class Functions {
   private static Maybe<Map<String, Object>> callTool(
       BaseTool tool, Map<String, Object> args, ToolContext toolContext) {
     Tracer tracer = Tracing.getTracer();
+    Context parentContext = Context.current();
     return Maybe.defer(
         () -> {
           Span span =
               tracer
                   .spanBuilder("tool_call [" + tool.name() + "]")
-                  .setParent(Context.current())
+                  .setParent(parentContext)
                   .startSpan();
           try (Scope scope = span.makeCurrent()) {
             Tracing.traceToolCall(args);

@@ -144,11 +144,15 @@ public abstract class BaseLlmFlow implements BaseFlow {
                   })
               .map(ResponseProcessingResult::updatedResponse);
     }
+    Context parentContext = Context.current();
 
     return currentLlmResponse.flatMapPublisher(
-        updatedResponse ->
-            buildPostprocessingEvents(
-                updatedResponse, eventIterables, context, baseEventForLlmResponse, llmRequest));
+        updatedResponse -> {
+          try (Scope scope = parentContext.makeCurrent()) {
+            return buildPostprocessingEvents(
+                updatedResponse, eventIterables, context, baseEventForLlmResponse, llmRequest);
+          }
+        });
   }
 
   /**
@@ -160,7 +164,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
    *     callbacks. Callbacks should not rely on its ID if they create their own separate events.
    */
   private Flowable<LlmResponse> callLlm(
-      InvocationContext context, LlmRequest llmRequest, Event eventForCallbackUsage) {
+      InvocationContext context,
+      LlmRequest llmRequest,
+      Event eventForCallbackUsage,
+      Context parentTracingContext) {
     LlmAgent agent = (LlmAgent) context.agent();
 
     LlmRequest.Builder llmRequestBuilder = llmRequest.toBuilder();
@@ -180,7 +187,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                         Span llmCallSpan =
                             Tracing.getTracer()
                                 .spanBuilder("call_llm")
-                                .setParent(Context.current())
+                                .setParent(parentTracingContext)
                                 .startSpan();
 
                         try (Scope scope = llmCallSpan.makeCurrent()) {
@@ -333,6 +340,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
    * @throws IllegalStateException if a transfer agent is specified but not found.
    */
   private Flowable<Event> runOneStep(InvocationContext context) {
+    Context parentContext = Context.current();
     AtomicReference<LlmRequest> llmRequestRef = new AtomicReference<>(LlmRequest.builder().build());
     Flowable<Event> preprocessEvents = preprocess(context, llmRequestRef);
 
@@ -363,10 +371,12 @@ public abstract class BaseLlmFlow implements BaseFlow {
               // events with fresh timestamp.
               mutableEventTemplate.setTimestamp(0L);
 
-              return callLlm(context, llmRequestAfterPreprocess, mutableEventTemplate)
+              return callLlm(
+                      context, llmRequestAfterPreprocess, mutableEventTemplate, parentContext)
                   .concatMap(
-                      llmResponse ->
-                          postprocess(
+                      llmResponse -> {
+                        try (Scope scope = parentContext.makeCurrent()) {
+                          return postprocess(
                                   context,
                                   mutableEventTemplate,
                                   llmRequestAfterPreprocess,
@@ -380,7 +390,9 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                             + " next LlmResponse",
                                         oldId,
                                         mutableEventTemplate.id());
-                                  }))
+                                  });
+                        }
+                      })
                   .concatMap(
                       event -> {
                         Flowable<Event> postProcessedEvents = Flowable.just(event);
@@ -421,6 +433,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
       return currentStepEvents;
     }
 
+    Context parentContext = Context.current();
     return currentStepEvents.concatWith(
         currentStepEvents
             .toList()
@@ -435,7 +448,12 @@ public abstract class BaseLlmFlow implements BaseFlow {
                     return Flowable.empty();
                   } else {
                     logger.debug("Continuing to next step of the flow.");
-                    return Flowable.defer(() -> run(invocationContext, stepsCompleted + 1));
+                    return Flowable.defer(
+                        () -> {
+                          try (Scope scope = parentContext.makeCurrent()) {
+                            return run(invocationContext, stepsCompleted + 1);
+                          }
+                        });
                   }
                 }));
   }
