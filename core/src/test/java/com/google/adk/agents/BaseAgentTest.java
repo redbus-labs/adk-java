@@ -17,6 +17,7 @@
 package com.google.adk.agents;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.Callbacks.AfterAgentCallback;
 import com.google.adk.agents.Callbacks.BeforeAgentCallback;
@@ -335,5 +336,19 @@ public final class BaseAgentTest {
     assertThat(results).hasSize(1);
     assertThat(results.get(0).content()).hasValue(runLiveImplContent);
     assertThat(runLiveCallback.wasCalled()).isTrue();
+  }
+
+  @Test
+  public void constructor_invalidName_throwsIllegalArgumentException() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new TestBaseAgent("invalid name?", "description", null, null, null));
+  }
+
+  @Test
+  public void constructor_userName_throwsIllegalArgumentException() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new TestBaseAgent("user", "description", null, null, null));
   }
 }

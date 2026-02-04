@@ -16,7 +16,9 @@
 
 package com.google.adk.agents;
 
+import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.lang.String.format;
 
 import com.google.adk.agents.Callbacks.AfterAgentCallback;
 import com.google.adk.agents.Callbacks.BeforeAgentCallback;
@@ -36,11 +38,16 @@ import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
 /** Base class for all agents. */
 public abstract class BaseAgent {
+
+  // Pattern for valid agent names.
+  private static final String IDENTIFIER_REGEX = "^_?[a-zA-Z0-9]*([. _-][a-zA-Z0-9]+)*$";
+  private static final Pattern IDENTIFIER_PATTERN = Pattern.compile(IDENTIFIER_REGEX);
 
   /** The agent's name. Must be a unique identifier within the agent tree. */
   private final String name;
@@ -79,6 +86,7 @@ public abstract class BaseAgent {
       @Nullable List<? extends BaseAgent> subAgents,
       @Nullable List<? extends BeforeAgentCallback> beforeAgentCallback,
       @Nullable List<? extends AfterAgentCallback> afterAgentCallback) {
+    validateAgentName(name);
     this.name = name;
     this.description = description;
     this.parentAgent = null;
@@ -93,6 +101,20 @@ public abstract class BaseAgent {
     // Establish parent relationships for all sub-agents if needed.
     for (BaseAgent subAgent : this.subAgents) {
       subAgent.parentAgent(this);
+    }
+  }
+
+  private static void validateAgentName(String name) {
+    if (isNullOrEmpty(name)) {
+      throw new IllegalArgumentException("Agent name cannot be null or empty.");
+    }
+    if (!IDENTIFIER_PATTERN.matcher(name).matches()) {
+      throw new IllegalArgumentException(
+          format("Agent name '%s' does not match regex '%s'.", name, IDENTIFIER_REGEX));
+    }
+    if (name.equals("user")) {
+      throw new IllegalArgumentException(
+          "Agent name cannot be 'user'; reserved for end-user input.");
     }
   }
 
