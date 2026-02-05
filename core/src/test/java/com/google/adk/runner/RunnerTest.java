@@ -180,6 +180,70 @@ public final class RunnerTest {
   }
 
   @Test
+  public void eventsCompaction_withNullOverlap_doesNotCompact() {
+    TestLlm testLlm =
+        createTestLlm(
+            createLlmResponse(createContent("llm 1")), createLlmResponse(createContent("llm 2")));
+    LlmAgent agent = createTestAgent(testLlm);
+
+    Runner runner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name(this.runner.appName())
+                    .rootAgent(agent)
+                    .eventsCompactionConfig(new EventsCompactionConfig(1, null, null, null, null))
+                    .build())
+            .sessionService(this.runner.sessionService())
+            .build();
+
+    var unused1 =
+        runner.runAsync("user", session.id(), createContent("user 1")).toList().blockingGet();
+    var unused2 =
+        runner.runAsync("user", session.id(), createContent("user 2")).toList().blockingGet();
+
+    Session updatedSession =
+        runner
+            .sessionService()
+            .getSession(session.appName(), session.userId(), session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(simplifyEvents(updatedSession.events()))
+        .containsExactly("user: user 1", "test agent: llm 1", "user: user 2", "test agent: llm 2");
+  }
+
+  @Test
+  public void eventsCompaction_withNullInterval_doesNotCompact() {
+    TestLlm testLlm =
+        createTestLlm(
+            createLlmResponse(createContent("llm 1")), createLlmResponse(createContent("llm 2")));
+    LlmAgent agent = createTestAgent(testLlm);
+
+    Runner runner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name(this.runner.appName())
+                    .rootAgent(agent)
+                    .eventsCompactionConfig(new EventsCompactionConfig(null, 0, null, null, null))
+                    .build())
+            .sessionService(this.runner.sessionService())
+            .build();
+
+    var unused1 =
+        runner.runAsync("user", session.id(), createContent("user 1")).toList().blockingGet();
+    var unused2 =
+        runner.runAsync("user", session.id(), createContent("user 2")).toList().blockingGet();
+
+    Session updatedSession =
+        runner
+            .sessionService()
+            .getSession(session.appName(), session.userId(), session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(simplifyEvents(updatedSession.events()))
+        .containsExactly("user: user 1", "test agent: llm 1", "user: user 2", "test agent: llm 2");
+  }
+
+  @Test
   public void pluginDoesNothing() {
     var events =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();

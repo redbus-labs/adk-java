@@ -33,8 +33,8 @@ import javax.annotation.Nullable;
  *     null, no event retention limit will be enforced.
  */
 public record EventsCompactionConfig(
-    int compactionInterval,
-    int overlapSize,
+    @Nullable Integer compactionInterval,
+    @Nullable Integer overlapSize,
     @Nullable BaseEventSummarizer summarizer,
     @Nullable Integer tokenThreshold,
     @Nullable Integer eventRetentionSize) {
@@ -46,5 +46,9 @@ public record EventsCompactionConfig(
   public EventsCompactionConfig(
       int compactionInterval, int overlapSize, @Nullable BaseEventSummarizer summarizer) {
     this(compactionInterval, overlapSize, summarizer, null, null);
+  }
+
+  public boolean hasSlidingWindowCompactionConfig() {
+    return compactionInterval != null && compactionInterval > 0 && overlapSize != null;
   }
 }

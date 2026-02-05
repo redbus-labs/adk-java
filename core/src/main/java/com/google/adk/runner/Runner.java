@@ -580,6 +580,7 @@ public class Runner {
 
   private Completable compactEvents(Session session) {
     return Optional.ofNullable(eventsCompactionConfig)
+        .filter(EventsCompactionConfig::hasSlidingWindowCompactionConfig)
         .map(SlidingWindowEventCompactor::new)
         .map(c -> c.compact(session, sessionService))
         .orElseGet(Completable::complete);
@@ -817,7 +818,11 @@ public class Runner {
                     new IllegalArgumentException(
                         "No BaseLlm model available for event compaction"));
     return new EventsCompactionConfig(
-        config.compactionInterval(), config.overlapSize(), summarizer);
+        config.compactionInterval(),
+        config.overlapSize(),
+        summarizer,
+        config.tokenThreshold(),
+        config.eventRetentionSize());
   }
 
   // TODO: run statelessly
