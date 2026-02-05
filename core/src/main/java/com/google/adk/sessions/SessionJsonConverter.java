@@ -95,6 +95,7 @@ final class SessionJsonConverter {
       actionsJson.put("artifactDelta", event.actions().artifactDelta());
       actionsJson.put("transferAgent", event.actions().transferToAgent());
       actionsJson.put("escalate", event.actions().escalate());
+      actionsJson.put("endInvocation", event.actions().endInvocation());
       actionsJson.put("requestedAuthConfigs", event.actions().requestedAuthConfigs());
       actionsJson.put("requestedToolConfirmations", event.actions().requestedToolConfirmations());
       actionsJson.put("compaction", event.actions().compaction());
