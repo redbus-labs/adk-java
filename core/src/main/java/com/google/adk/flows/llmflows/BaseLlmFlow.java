@@ -237,7 +237,8 @@ public abstract class BaseLlmFlow implements BaseFlow {
   private Single<Optional<LlmResponse>> handleBeforeModelCallback(
       InvocationContext context, LlmRequest.Builder llmRequestBuilder, Event modelResponseEvent) {
     Event callbackEvent = modelResponseEvent.toBuilder().build();
-    CallbackContext callbackContext = new CallbackContext(context, callbackEvent.actions());
+    CallbackContext callbackContext =
+        new CallbackContext(context, callbackEvent.actions(), callbackEvent.id());
 
     Maybe<LlmResponse> pluginResult =
         context.pluginManager().beforeModelCallback(callbackContext, llmRequestBuilder);
@@ -274,7 +275,8 @@ public abstract class BaseLlmFlow implements BaseFlow {
       Event modelResponseEvent,
       Throwable throwable) {
     Event callbackEvent = modelResponseEvent.toBuilder().build();
-    CallbackContext callbackContext = new CallbackContext(context, callbackEvent.actions());
+    CallbackContext callbackContext =
+        new CallbackContext(context, callbackEvent.actions(), callbackEvent.id());
     Exception ex = throwable instanceof Exception e ? e : new Exception(throwable);
 
     Maybe<LlmResponse> pluginResult =
@@ -308,7 +310,8 @@ public abstract class BaseLlmFlow implements BaseFlow {
   private Single<LlmResponse> handleAfterModelCallback(
       InvocationContext context, LlmResponse llmResponse, Event modelResponseEvent) {
     Event callbackEvent = modelResponseEvent.toBuilder().build();
-    CallbackContext callbackContext = new CallbackContext(context, callbackEvent.actions());
+    CallbackContext callbackContext =
+        new CallbackContext(context, callbackEvent.actions(), callbackEvent.id());
 
     Maybe<LlmResponse> pluginResult =
         context.pluginManager().afterModelCallback(callbackContext, llmResponse);
