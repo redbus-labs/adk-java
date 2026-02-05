@@ -35,6 +35,7 @@ import io.opentelemetry.context.Context;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
@@ -90,13 +91,16 @@ public abstract class BaseAgent {
     this.name = name;
     this.description = description;
     this.parentAgent = null;
-    this.subAgents = subAgents == null ? ImmutableList.of() : ImmutableList.copyOf(subAgents);
+    this.subAgents = (subAgents != null) ? ImmutableList.copyOf(subAgents) : ImmutableList.of();
+    validateSubAgents(this.name, this.subAgents);
     this.beforeAgentCallback =
-        beforeAgentCallback == null
-            ? ImmutableList.of()
-            : ImmutableList.copyOf(beforeAgentCallback);
+        (beforeAgentCallback != null)
+            ? ImmutableList.copyOf(beforeAgentCallback)
+            : ImmutableList.of();
     this.afterAgentCallback =
-        afterAgentCallback == null ? ImmutableList.of() : ImmutableList.copyOf(afterAgentCallback);
+        (afterAgentCallback != null)
+            ? ImmutableList.copyOf(afterAgentCallback)
+            : ImmutableList.of();
 
     // Establish parent relationships for all sub-agents if needed.
     for (BaseAgent subAgent : this.subAgents) {
@@ -104,6 +108,13 @@ public abstract class BaseAgent {
     }
   }
 
+  /**
+   * Validates the agent name.
+   *
+   * @param name The agent name to validate.
+   * @throws IllegalArgumentException if the agent name is null, empty, or does not match the
+   *     identifier pattern.
+   */
   private static void validateAgentName(String name) {
     if (isNullOrEmpty(name)) {
       throw new IllegalArgumentException("Agent name cannot be null or empty.");
@@ -115,6 +126,36 @@ public abstract class BaseAgent {
     if (name.equals("user")) {
       throw new IllegalArgumentException(
           "Agent name cannot be 'user'; reserved for end-user input.");
+    }
+  }
+
+  /**
+   * Validates the sub-agents.
+   *
+   * @param name The name of the parent agent.
+   * @param subAgents The list of sub-agents to validate.
+   * @throws IllegalArgumentException if the sub-agents have duplicate names.
+   */
+  private static void validateSubAgents(
+      String name, @Nullable List<? extends BaseAgent> subAgents) {
+    if (subAgents == null) {
+      return;
+    }
+    HashSet<String> subAgentNames = new HashSet<>();
+    HashSet<String> duplicateSubAgentNames = new HashSet<>();
+    for (BaseAgent subAgent : subAgents) {
+      String subAgentName = subAgent.name();
+      // NOTE: Mocked agents have null names because BaseAgent.name() is a final method that
+      // cannot be mocked.
+      if (subAgentName != null && !subAgentNames.add(subAgentName)) {
+        duplicateSubAgentNames.add(subAgentName);
+      }
+    }
+    if (!duplicateSubAgentNames.isEmpty()) {
+      throw new IllegalArgumentException(
+          format(
+              "Agent named '%s' has sub-agents with duplicate names: %s. Sub-agents: %s",
+              name, duplicateSubAgentNames, subAgents));
     }
   }
 

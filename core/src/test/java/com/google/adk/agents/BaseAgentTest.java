@@ -351,4 +351,15 @@ public final class BaseAgentTest {
         IllegalArgumentException.class,
         () -> new TestBaseAgent("user", "description", null, null, null));
   }
+
+  @Test
+  public void constructor_duplicateSubAgentNames_throwsIllegalArgumentException() {
+    TestBaseAgent subAgent1 = new TestBaseAgent("subAgent", "subAgent1", null, null, null);
+    TestBaseAgent subAgent2 = new TestBaseAgent("subAgent", "subAgent2", null, null, null);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new TestBaseAgent(
+                "agent", "description", null, ImmutableList.of(subAgent1, subAgent2), null, null));
+  }
 }
