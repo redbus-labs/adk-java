@@ -138,7 +138,8 @@ public class AgentTool extends BaseTool {
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
 
     if (this.skipSummarization) {
-      toolContext.setActions(toolContext.actions().toBuilder().skipSummarization(true).build());
+      // Mutate EventActions in-place to ensure object references are maintained.
+      toolContext.actions().setSkipSummarization(true);
     }
 
     Optional<Schema> agentInputSchema = getInputSchema(agent);

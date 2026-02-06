@@ -454,6 +454,39 @@ public final class AgentToolTest {
   }
 
   @Test
+  public void call_withSkipSummarizationAndStateDelta_propagatesStateAndSetsSkipSummarization()
+      throws Exception {
+    AfterAgentCallback afterAgentCallback =
+        (callbackContext) -> {
+          callbackContext.state().put("test_key", "test_value");
+          return Maybe.empty();
+        };
+    TestLlm testLlm =
+        createTestLlm(
+            LlmResponse.builder()
+                .content(Content.fromParts(Part.fromText("test response")))
+                .build());
+    LlmAgent testAgent =
+        createTestAgentBuilder(testLlm)
+            .name("agent name")
+            .description("agent description")
+            .afterAgentCallback(afterAgentCallback)
+            .build();
+    AgentTool agentTool = AgentTool.create(testAgent, /* skipSummarization= */ true);
+    ToolContext toolContext = createToolContext(testAgent);
+
+    assertThat(toolContext.state()).doesNotContainKey("test_key");
+
+    Map<String, Object> unused =
+        agentTool.runAsync(ImmutableMap.of("request", "magic"), toolContext).blockingGet();
+
+    // Verify that stateDelta is propagated to the ToolContext's EventActions, otherwise
+    // Function.buildResponseEvent() will not include it in the response event.
+    assertThat(toolContext.actions().stateDelta()).containsEntry("test_key", "test_value");
+    assertThat(toolContext.actions().skipSummarization()).hasValue(true);
+  }
+
+  @Test
   public void
       declaration_sequentialAgentWithFirstSubAgentInputSchema_returnsDeclarationWithSchema() {
     Schema inputSchema =
