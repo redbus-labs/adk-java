@@ -698,13 +698,13 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
     Event event = eventBuilder.build();
 
-    logger.info("event: {} functionCalls: {}", event, event.functionCalls());
+    logger.debug("event: {} functionCalls: {}", event, event.functionCalls());
 
     if (!event.functionCalls().isEmpty()) {
       Functions.populateClientFunctionCallId(event);
       Set<String> longRunningToolIds =
           Functions.getLongRunningFunctionCalls(event.functionCalls(), llmRequest.tools());
-      logger.info("longRunningToolIds: {}", longRunningToolIds);
+      logger.debug("longRunningToolIds: {}", longRunningToolIds);
       if (!longRunningToolIds.isEmpty()) {
         event.setLongRunningToolIds(Optional.of(longRunningToolIds));
       }
