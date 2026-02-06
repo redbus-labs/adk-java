@@ -18,12 +18,15 @@ package com.google.adk.events;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.BaseAgentState;
 import com.google.adk.sessions.State;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Part;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import javax.annotation.Nullable;
@@ -31,11 +34,12 @@ import javax.annotation.Nullable;
 /** Represents the actions attached to an event. */
 // TODO - b/414081262 make json wire camelCase
 @JsonDeserialize(builder = EventActions.Builder.class)
-public class EventActions {
+public class EventActions extends JsonBaseModel {
 
   private Optional<Boolean> skipSummarization;
   private ConcurrentMap<String, Object> stateDelta;
   private ConcurrentMap<String, Part> artifactDelta;
+  private Set<String> deletedArtifactIds;
   private Optional<String> transferToAgent;
   private Optional<Boolean> escalate;
   private ConcurrentMap<String, ConcurrentMap<String, Object>> requestedAuthConfigs;
@@ -51,6 +55,7 @@ public class EventActions {
     this.skipSummarization = Optional.empty();
     this.stateDelta = new ConcurrentHashMap<>();
     this.artifactDelta = new ConcurrentHashMap<>();
+    this.deletedArtifactIds = new HashSet<>();
     this.transferToAgent = Optional.empty();
     this.escalate = Optional.empty();
     this.requestedAuthConfigs = new ConcurrentHashMap<>();
@@ -66,6 +71,7 @@ public class EventActions {
     this.skipSummarization = builder.skipSummarization;
     this.stateDelta = builder.stateDelta;
     this.artifactDelta = builder.artifactDelta;
+    this.deletedArtifactIds = builder.deletedArtifactIds;
     this.transferToAgent = builder.transferToAgent;
     this.escalate = builder.escalate;
     this.requestedAuthConfigs = builder.requestedAuthConfigs;
@@ -120,6 +126,16 @@ public class EventActions {
 
   public void setArtifactDelta(ConcurrentMap<String, Part> artifactDelta) {
     this.artifactDelta = artifactDelta;
+  }
+
+  @JsonProperty("deletedArtifactIds")
+  @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  public Set<String> deletedArtifactIds() {
+    return deletedArtifactIds;
+  }
+
+  public void setDeletedArtifactIds(Set<String> deletedArtifactIds) {
+    this.deletedArtifactIds = deletedArtifactIds;
   }
 
   @JsonProperty("transferToAgent")
@@ -238,6 +254,7 @@ public class EventActions {
     return Objects.equals(skipSummarization, that.skipSummarization)
         && Objects.equals(stateDelta, that.stateDelta)
         && Objects.equals(artifactDelta, that.artifactDelta)
+        && Objects.equals(deletedArtifactIds, that.deletedArtifactIds)
         && Objects.equals(transferToAgent, that.transferToAgent)
         && Objects.equals(escalate, that.escalate)
         && Objects.equals(requestedAuthConfigs, that.requestedAuthConfigs)
@@ -255,6 +272,7 @@ public class EventActions {
         skipSummarization,
         stateDelta,
         artifactDelta,
+        deletedArtifactIds,
         transferToAgent,
         escalate,
         requestedAuthConfigs,
@@ -271,6 +289,7 @@ public class EventActions {
     private Optional<Boolean> skipSummarization;
     private ConcurrentMap<String, Object> stateDelta;
     private ConcurrentMap<String, Part> artifactDelta;
+    private Set<String> deletedArtifactIds;
     private Optional<String> transferToAgent;
     private Optional<Boolean> escalate;
     private ConcurrentMap<String, ConcurrentMap<String, Object>> requestedAuthConfigs;
@@ -285,6 +304,7 @@ public class EventActions {
       this.skipSummarization = Optional.empty();
       this.stateDelta = new ConcurrentHashMap<>();
       this.artifactDelta = new ConcurrentHashMap<>();
+      this.deletedArtifactIds = new HashSet<>();
       this.transferToAgent = Optional.empty();
       this.escalate = Optional.empty();
       this.requestedAuthConfigs = new ConcurrentHashMap<>();
@@ -299,6 +319,7 @@ public class EventActions {
       this.skipSummarization = eventActions.skipSummarization();
       this.stateDelta = new ConcurrentHashMap<>(eventActions.stateDelta());
       this.artifactDelta = new ConcurrentHashMap<>(eventActions.artifactDelta());
+      this.deletedArtifactIds = new HashSet<>(eventActions.deletedArtifactIds());
       this.transferToAgent = eventActions.transferToAgent();
       this.escalate = eventActions.escalate();
       this.requestedAuthConfigs = new ConcurrentHashMap<>(eventActions.requestedAuthConfigs());
@@ -329,6 +350,13 @@ public class EventActions {
     @JsonProperty("artifactDelta")
     public Builder artifactDelta(ConcurrentMap<String, Part> value) {
       this.artifactDelta = value;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    @JsonProperty("deletedArtifactIds")
+    public Builder deletedArtifactIds(Set<String> value) {
+      this.deletedArtifactIds = value;
       return this;
     }
 
@@ -401,6 +429,7 @@ public class EventActions {
       other.skipSummarization().ifPresent(this::skipSummarization);
       this.stateDelta.putAll(other.stateDelta());
       this.artifactDelta.putAll(other.artifactDelta());
+      this.deletedArtifactIds.addAll(other.deletedArtifactIds());
       other.transferToAgent().ifPresent(this::transferToAgent);
       other.escalate().ifPresent(this::escalate);
       this.requestedAuthConfigs.putAll(other.requestedAuthConfigs());

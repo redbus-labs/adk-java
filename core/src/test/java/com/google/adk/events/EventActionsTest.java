@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.adk.sessions.State;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import java.util.concurrent.ConcurrentHashMap;
@@ -44,7 +45,11 @@ public final class EventActionsTest {
   @Test
   public void toBuilder_createsBuilderWithSameValues() {
     EventActions eventActionsWithSkipSummarization =
-        EventActions.builder().skipSummarization(true).compaction(COMPACTION).build();
+        EventActions.builder()
+            .skipSummarization(true)
+            .compaction(COMPACTION)
+            .deletedArtifactIds(ImmutableSet.of("d1"))
+            .build();
 
     EventActions eventActionsAfterRebuild = eventActionsWithSkipSummarization.toBuilder().build();
 
@@ -59,6 +64,7 @@ public final class EventActionsTest {
             .skipSummarization(true)
             .stateDelta(new ConcurrentHashMap<>(ImmutableMap.of("key1", "value1")))
             .artifactDelta(new ConcurrentHashMap<>(ImmutableMap.of("artifact1", PART)))
+            .deletedArtifactIds(ImmutableSet.of("deleted1"))
             .requestedAuthConfigs(
                 new ConcurrentHashMap<>(
                     ImmutableMap.of("config1", new ConcurrentHashMap<>(ImmutableMap.of("k", "v")))))
@@ -70,6 +76,7 @@ public final class EventActionsTest {
         EventActions.builder()
             .stateDelta(new ConcurrentHashMap<>(ImmutableMap.of("key2", "value2")))
             .artifactDelta(new ConcurrentHashMap<>(ImmutableMap.of("artifact2", PART)))
+            .deletedArtifactIds(ImmutableSet.of("deleted2"))
             .transferToAgent("agentId")
             .escalate(true)
             .requestedAuthConfigs(
@@ -85,6 +92,7 @@ public final class EventActionsTest {
     assertThat(merged.skipSummarization()).hasValue(true);
     assertThat(merged.stateDelta()).containsExactly("key1", "value1", "key2", "value2");
     assertThat(merged.artifactDelta()).containsExactly("artifact1", PART, "artifact2", PART);
+    assertThat(merged.deletedArtifactIds()).containsExactly("deleted1", "deleted2");
     assertThat(merged.transferToAgent()).hasValue("agentId");
     assertThat(merged.escalate()).hasValue(true);
     assertThat(merged.requestedAuthConfigs())
@@ -106,5 +114,20 @@ public final class EventActionsTest {
     eventActions.removeStateByKey("key1");
 
     assertThat(eventActions.stateDelta()).containsExactly("key1", State.REMOVED);
+  }
+
+  @Test
+  public void jsonSerialization_works() throws Exception {
+    EventActions eventActions =
+        EventActions.builder()
+            .deletedArtifactIds(ImmutableSet.of("d1", "d2"))
+            .stateDelta(new ConcurrentHashMap<>(ImmutableMap.of("k", "v")))
+            .build();
+
+    String json = eventActions.toJson();
+    EventActions deserialized = EventActions.fromJsonString(json, EventActions.class);
+
+    assertThat(deserialized).isEqualTo(eventActions);
+    assertThat(deserialized.deletedArtifactIds()).containsExactly("d1", "d2");
   }
 }

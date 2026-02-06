@@ -31,6 +31,7 @@ import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.InlineMe;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -367,6 +368,31 @@ public class InvocationContext {
   /** Returns whether the current invocation is resumable. */
   public boolean isResumable() {
     return resumabilityConfig.isResumable();
+  }
+
+  /** Returns ResumabilityConfig for this invocation. */
+  public ResumabilityConfig resumabilityConfig() {
+    return resumabilityConfig;
+  }
+
+  /**
+   * Populates agentStates and endOfAgents maps by reading session events for this invocation id.
+   */
+  public void populateAgentStates(List<Event> events) {
+    events.stream()
+        .filter(event -> invocationId().equals(event.invocationId()))
+        .forEach(
+            event -> {
+              if (event.actions() != null) {
+                if (event.actions().agentState() != null
+                    && !event.actions().agentState().isEmpty()) {
+                  agentStates.putAll(event.actions().agentState());
+                }
+                if (event.actions().endOfAgent()) {
+                  endOfAgents.put(event.author(), true);
+                }
+              }
+            });
   }
 
   /** Returns the events compaction configuration for the current agent run. */

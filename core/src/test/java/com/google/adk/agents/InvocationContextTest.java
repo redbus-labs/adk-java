@@ -22,6 +22,7 @@ import static org.mockito.Mockito.mock;
 import com.google.adk.apps.ResumabilityConfig;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.plugins.PluginManager;
@@ -150,7 +151,7 @@ public final class InvocationContextTest {
   }
 
   @Test
-  public void testCopyOf() {
+  public void testToBuilder() {
     InvocationContext originalContext =
         InvocationContext.builder()
             .sessionService(mockSessionService)
@@ -932,5 +933,57 @@ public final class InvocationContextTest {
     assertThat(context.userContent()).hasValue(userContent);
     assertThat(context.runConfig()).isEqualTo(runConfig);
     assertThat(context.endInvocation()).isTrue();
+  }
+
+  @Test
+  public void populateAgentStates_populatesAgentStatesAndEndOfAgents() {
+    InvocationContext context =
+        InvocationContext.builder()
+            .sessionService(mockSessionService)
+            .artifactService(mockArtifactService)
+            .agent(mockAgent)
+            .session(session)
+            .invocationId(testInvocationId)
+            .build();
+
+    BaseAgentState agent1State = mock(BaseAgentState.class);
+    ConcurrentHashMap<String, BaseAgentState> agent1StateMap = new ConcurrentHashMap<>();
+    agent1StateMap.put("agent1", agent1State);
+    Event event1 =
+        Event.builder()
+            .invocationId(testInvocationId)
+            .author("agent1")
+            .actions(EventActions.builder().agentState(agent1StateMap).endOfAgent(true).build())
+            .build();
+    Event event2 =
+        Event.builder()
+            .invocationId("other-invocation-id")
+            .author("agent2")
+            .actions(EventActions.builder().endOfAgent(true).build())
+            .build();
+    Event event3 =
+        Event.builder()
+            .invocationId(testInvocationId)
+            .author("agent3")
+            .actions(EventActions.builder().endOfAgent(false).build())
+            .build();
+    BaseAgentState agent4State = mock(BaseAgentState.class);
+    ConcurrentHashMap<String, BaseAgentState> agent4StateMap = new ConcurrentHashMap<>();
+    agent4StateMap.put("agent4", agent4State);
+    Event event4 =
+        Event.builder()
+            .invocationId(testInvocationId)
+            .author("agent4")
+            .actions(EventActions.builder().agentState(agent4StateMap).endOfAgent(false).build())
+            .build();
+    Event event5 = Event.builder().invocationId(testInvocationId).author("agent5").build();
+
+    context.populateAgentStates(ImmutableList.of(event1, event2, event3, event4, event5));
+
+    assertThat(context.agentStates()).hasSize(2);
+    assertThat(context.agentStates()).containsEntry("agent1", agent1State);
+    assertThat(context.agentStates()).containsEntry("agent4", agent4State);
+    assertThat(context.endOfAgents()).hasSize(1);
+    assertThat(context.endOfAgents()).containsEntry("agent1", true);
   }
 }
