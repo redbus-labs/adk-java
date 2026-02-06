@@ -56,6 +56,7 @@ public class InvocationContext {
   private final ResumabilityConfig resumabilityConfig;
   @Nullable private final EventsCompactionConfig eventsCompactionConfig;
   private final InvocationCostManager invocationCostManager;
+  private final Map<String, Object> callbackContextData;
 
   private Optional<String> branch;
   private BaseAgent agent;
@@ -80,6 +81,7 @@ public class InvocationContext {
     this.resumabilityConfig = builder.resumabilityConfig;
     this.eventsCompactionConfig = builder.eventsCompactionConfig;
     this.invocationCostManager = builder.invocationCostManager;
+    this.callbackContextData = builder.callbackContextData;
   }
 
   /**
@@ -306,6 +308,14 @@ public class InvocationContext {
     return runConfig;
   }
 
+  /**
+   * Returns a map for storing temporary context data that can be shared between different parts of
+   * the invocation (e.g., before/on/after model callbacks).
+   */
+  public Map<String, Object> callbackContextData() {
+    return callbackContextData;
+  }
+
   /** Returns agent-specific state saved within this invocation. */
   public Map<String, BaseAgentState> agentStates() {
     return agentStates;
@@ -437,6 +447,7 @@ public class InvocationContext {
       this.resumabilityConfig = context.resumabilityConfig;
       this.eventsCompactionConfig = context.eventsCompactionConfig;
       this.invocationCostManager = context.invocationCostManager;
+      this.callbackContextData = context.callbackContextData;
     }
 
     private BaseSessionService sessionService;
@@ -457,6 +468,7 @@ public class InvocationContext {
     private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
     @Nullable private EventsCompactionConfig eventsCompactionConfig;
     private InvocationCostManager invocationCostManager = new InvocationCostManager();
+    private Map<String, Object> callbackContextData = new ConcurrentHashMap<>();
 
     /**
      * Sets the session service for managing session state.
@@ -693,6 +705,18 @@ public class InvocationContext {
     }
 
     /**
+     * Sets the callback context data for the invocation.
+     *
+     * @param callbackContextData the callback context data.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder callbackContextData(Map<String, Object> callbackContextData) {
+      this.callbackContextData = callbackContextData;
+      return this;
+    }
+
+    /**
      * Builds the {@link InvocationContext} instance.
      *
      * @throws IllegalStateException if any required parameters are missing.
@@ -728,7 +752,8 @@ public class InvocationContext {
         && Objects.equals(endOfAgents, that.endOfAgents)
         && Objects.equals(resumabilityConfig, that.resumabilityConfig)
         && Objects.equals(eventsCompactionConfig, that.eventsCompactionConfig)
-        && Objects.equals(invocationCostManager, that.invocationCostManager);
+        && Objects.equals(invocationCostManager, that.invocationCostManager)
+        && Objects.equals(callbackContextData, that.callbackContextData);
   }
 
   @Override
@@ -751,6 +776,7 @@ public class InvocationContext {
         endOfAgents,
         resumabilityConfig,
         eventsCompactionConfig,
-        invocationCostManager);
+        invocationCostManager,
+        callbackContextData);
   }
 }

@@ -25,6 +25,7 @@ import static com.google.adk.testing.TestUtils.createTestLlm;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.adk.agents.Callbacks;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.RequestProcessor.RequestProcessingResult;
@@ -42,6 +43,7 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Map;
@@ -412,6 +414,82 @@ public final class BaseLlmFlowTest {
 
     assertThat(processor1CallCount.get()).isEqualTo(1);
     assertThat(processor2CallCount.get()).isEqualTo(1);
+  }
+
+  @Test
+  public void run_sharingcallbackContextDataBetweenCallbacks() {
+    Content content = Content.fromParts(Part.fromText("LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(content));
+
+    Callbacks.BeforeModelCallback beforeCallback =
+        (ctx, req) -> {
+          ctx.invocationContext().callbackContextData().put("key", "value_from_before");
+          return Maybe.empty();
+        };
+
+    Callbacks.AfterModelCallback afterCallback =
+        (ctx, resp) -> {
+          String value = (String) ctx.invocationContext().callbackContextData().get("key");
+          LlmResponse modifiedResp =
+              resp.toBuilder().content(Content.fromParts(Part.fromText("Saw: " + value))).build();
+          return Maybe.just(modifiedResp);
+        };
+
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .beforeModelCallback(beforeCallback)
+                .afterModelCallback(afterCallback)
+                .build());
+
+    BaseLlmFlow baseLlmFlow = createBaseLlmFlowWithoutProcessors();
+
+    List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).stringifyContent()).isEqualTo("Saw: value_from_before");
+  }
+
+  @Test
+  public void run_sharingcallbackContextDataAcrossContextCopies() {
+    Content content = Content.fromParts(Part.fromText("LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(content));
+
+    Callbacks.BeforeModelCallback beforeCallback =
+        (ctx, req) -> {
+          ctx.invocationContext().callbackContextData().put("key", "value_from_before");
+          return Maybe.empty();
+        };
+
+    Callbacks.AfterModelCallback afterCallback =
+        (ctx, resp) -> {
+          String value = (String) ctx.invocationContext().callbackContextData().get("key");
+          LlmResponse modifiedResp =
+              resp.toBuilder().content(Content.fromParts(Part.fromText("Saw: " + value))).build();
+          return Maybe.just(modifiedResp);
+        };
+
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .beforeModelCallback(beforeCallback)
+                .afterModelCallback(afterCallback)
+                .build());
+
+    BaseLlmFlow baseLlmFlow =
+        new BaseLlmFlow(ImmutableList.of(), ImmutableList.of()) {
+          @Override
+          public Flowable<Event> run(InvocationContext context) {
+            // Force a context copy
+            InvocationContext copiedContext = context.toBuilder().build();
+            return super.run(copiedContext);
+          }
+        };
+
+    List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).stringifyContent()).isEqualTo("Saw: value_from_before");
   }
 
   private static BaseLlmFlow createBaseLlmFlowWithoutProcessors() {
