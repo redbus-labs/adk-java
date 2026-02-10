@@ -181,7 +181,7 @@ public final class Functions {
                 Span mergedSpan =
                     tracer.spanBuilder("tool_response").setParent(Context.current()).startSpan();
                 try (Scope scope = mergedSpan.makeCurrent()) {
-                  Tracing.traceToolResponse(invocationContext, mergedEvent.id(), mergedEvent);
+                  Tracing.traceToolResponse(mergedEvent.id(), mergedEvent);
                 } finally {
                   mergedSpan.end();
                 }
@@ -571,7 +571,8 @@ public final class Functions {
                   .setParent(parentContext)
                   .startSpan();
           try (Scope scope = span.makeCurrent()) {
-            Tracing.traceToolCall(args);
+            Tracing.traceToolCall(
+                tool.name(), tool.description(), tool.getClass().getSimpleName(), args);
             return tool.runAsync(args, toolContext)
                 .toMaybe()
                 .doOnError(span::recordException)
@@ -620,7 +621,7 @@ public final class Functions {
               .content(Content.builder().role("user").parts(partFunctionResponse).build())
               .actions(toolContext.eventActions())
               .build();
-      Tracing.traceToolResponse(invocationContext, event.id(), event);
+      Tracing.traceToolResponse(event.id(), event);
       return event;
     } finally {
       span.end();

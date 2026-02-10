@@ -304,14 +304,11 @@ public abstract class BaseAgent {
     Tracer tracer = Tracing.getTracer();
     return Flowable.defer(
         () -> {
-          Span span =
-              tracer
-                  .spanBuilder("agent_run [" + name() + "]")
-                  .setParent(Context.current())
-                  .startSpan();
-          Context spanContext = Context.current().with(span);
-
           InvocationContext invocationContext = createInvocationContext(parentContext);
+          Span span =
+              tracer.spanBuilder("invoke_agent " + name()).setParent(Context.current()).startSpan();
+          Tracing.traceAgentInvocation(span, name(), description(), invocationContext);
+          Context spanContext = Context.current().with(span);
 
           return Tracing.traceFlowable(
               spanContext,
@@ -443,16 +440,41 @@ public abstract class BaseAgent {
     Tracer tracer = Tracing.getTracer();
     return Flowable.defer(
         () -> {
+          InvocationContext invocationContext = createInvocationContext(parentContext);
           Span span =
-              tracer
-                  .spanBuilder("agent_run [" + name() + "]")
-                  .setParent(Context.current())
-                  .startSpan();
+              tracer.spanBuilder("invoke_agent " + name()).setParent(Context.current()).startSpan();
+          Tracing.traceAgentInvocation(span, name(), description(), invocationContext);
           Context spanContext = Context.current().with(span);
 
-          InvocationContext invocationContext = createInvocationContext(parentContext);
+          return Tracing.traceFlowable(
+              spanContext,
+              span,
+              () ->
+                  callCallback(
+                          beforeCallbacksToFunctions(
+                              invocationContext.pluginManager(), beforeAgentCallback),
+                          invocationContext)
+                      .flatMapPublisher(
+                          beforeEventOpt -> {
+                            if (invocationContext.endInvocation()) {
+                              return Flowable.fromOptional(beforeEventOpt);
+                            }
 
-          return Tracing.traceFlowable(spanContext, span, () -> runLiveImpl(invocationContext));
+                            Flowable<Event> beforeEvents = Flowable.fromOptional(beforeEventOpt);
+                            Flowable<Event> mainEvents =
+                                Flowable.defer(() -> runLiveImpl(invocationContext));
+                            Flowable<Event> afterEvents =
+                                Flowable.defer(
+                                    () ->
+                                        callCallback(
+                                                afterCallbacksToFunctions(
+                                                    invocationContext.pluginManager(),
+                                                    afterAgentCallback),
+                                                invocationContext)
+                                            .flatMapPublisher(Flowable::fromOptional));
+
+                            return Flowable.concat(beforeEvents, mainEvents, afterEvents);
+                          }));
         });
   }
 

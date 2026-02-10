@@ -94,6 +94,21 @@ public final class BaseAgentTest {
     assertThat(subSubAgent.rootAgent()).isEqualTo(agent);
     assertThat(subAgent.rootAgent()).isEqualTo(agent);
     assertThat(agent.rootAgent()).isEqualTo(agent);
+    assertThat(subSubAgent.parentAgent()).isEqualTo(subAgent);
+    assertThat(subAgent.parentAgent()).isEqualTo(agent);
+    assertThat(agent.parentAgent()).isNull();
+  }
+
+  @Test
+  public void subAgents_returnsSubAgents() {
+    TestBaseAgent subAgent1 =
+        new TestBaseAgent("subAgent1", "subAgent1", null, ImmutableList.of(), null, null);
+    TestBaseAgent subAgent2 =
+        new TestBaseAgent("subAgent2", "subAgent2", null, ImmutableList.of(), null, null);
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            "agent", "description", null, ImmutableList.of(subAgent1, subAgent2), null, null);
+    assertThat(agent.subAgents()).containsExactly(subAgent1, subAgent2).inOrder();
   }
 
   @Test
@@ -355,6 +370,199 @@ public final class BaseAgentTest {
   }
 
   @Test
+  public void
+      runLive_beforeAgentCallbackReturnsContent_endsInvocationAndSkipsRunLiveImplAndAfterCallback() {
+    var runLiveImpl = TestCallback.<Void>returningEmpty();
+    Content callbackContent = Content.fromParts(Part.fromText("before_callback_output"));
+    var beforeCallback = TestCallback.returning(callbackContent);
+    var afterCallback = TestCallback.<Content>returningEmpty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(beforeCallback.asBeforeAgentCallback()),
+            ImmutableList.of(afterCallback.asAfterAgentCallback()),
+            runLiveImpl.asRunLiveImplSupplier("main_output"));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+
+    List<Event> results = agent.runLive(invocationContext).toList().blockingGet();
+
+    assertThat(results).hasSize(1);
+    assertThat(results.get(0).content()).hasValue(callbackContent);
+    assertThat(runLiveImpl.wasCalled()).isFalse();
+    assertThat(beforeCallback.wasCalled()).isTrue();
+    assertThat(afterCallback.wasCalled()).isFalse();
+  }
+
+  @Test
+  public void runLive_firstBeforeCallbackReturnsContent_skipsSecondBeforeCallback() {
+    Content callbackContent = Content.fromParts(Part.fromText("before_callback_output"));
+    var beforeCallback1 = TestCallback.returning(callbackContent);
+    var beforeCallback2 = TestCallback.<Content>returningEmpty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(
+                beforeCallback1.asBeforeAgentCallback(), beforeCallback2.asBeforeAgentCallback()),
+            ImmutableList.of(),
+            TestCallback.<Void>returningEmpty().asRunLiveImplSupplier("main_output"));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+    var unused = agent.runLive(invocationContext).toList().blockingGet();
+    assertThat(beforeCallback1.wasCalled()).isTrue();
+    assertThat(beforeCallback2.wasCalled()).isFalse();
+  }
+
+  @Test
+  public void
+      runLive_beforeCallbackReturnsEmptyAndAfterCallbackReturnsEmpty_invokesRunLiveImplAndAfterCallbacks() {
+    var runLiveImpl = TestCallback.<Void>returningEmpty();
+    Content runLiveImplContent = Content.fromParts(Part.fromText("main_output"));
+    var beforeCallback = TestCallback.<Content>returningEmpty();
+    var afterCallback = TestCallback.<Content>returningEmpty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(beforeCallback.asBeforeAgentCallback()),
+            ImmutableList.of(afterCallback.asAfterAgentCallback()),
+            runLiveImpl.asRunLiveImplSupplier(runLiveImplContent));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+
+    List<Event> results = agent.runLive(invocationContext).toList().blockingGet();
+
+    assertThat(results).hasSize(1);
+    assertThat(results.get(0).content()).hasValue(runLiveImplContent);
+    assertThat(runLiveImpl.wasCalled()).isTrue();
+    assertThat(beforeCallback.wasCalled()).isTrue();
+    assertThat(afterCallback.wasCalled()).isTrue();
+  }
+
+  @Test
+  public void
+      runLive_afterCallbackReturnsContent_invokesRunLiveImplAndAfterCallbacksAndReturnsAllContent() {
+    var runLiveImpl = TestCallback.<Void>returningEmpty();
+    Content runLiveImplContent = Content.fromParts(Part.fromText("main_output"));
+    Content afterCallbackContent = Content.fromParts(Part.fromText("after_callback_output"));
+    var beforeCallback = TestCallback.<Content>returningEmpty();
+    var afterCallback = TestCallback.returning(afterCallbackContent);
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(beforeCallback.asBeforeAgentCallback()),
+            ImmutableList.of(afterCallback.asAfterAgentCallback()),
+            runLiveImpl.asRunLiveImplSupplier(runLiveImplContent));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+
+    List<Event> results = agent.runLive(invocationContext).toList().blockingGet();
+
+    assertThat(results).hasSize(2);
+    assertThat(results.get(0).content()).hasValue(runLiveImplContent);
+    assertThat(results.get(1).content()).hasValue(afterCallbackContent);
+    assertThat(runLiveImpl.wasCalled()).isTrue();
+    assertThat(beforeCallback.wasCalled()).isTrue();
+    assertThat(afterCallback.wasCalled()).isTrue();
+  }
+
+  @Test
+  public void
+      runLive_beforeCallbackMutatesStateAndReturnsEmpty_invokesRunLiveImplAndReturnsStateEvent() {
+    var runLiveImpl = TestCallback.<Void>returningEmpty();
+    Content runLiveImplContent = Content.fromParts(Part.fromText("main_output"));
+    BeforeAgentCallback beforeCallback =
+        new BeforeAgentCallback() {
+          @Override
+          public Maybe<Content> call(CallbackContext context) {
+            context.state().put("key", "value");
+            return Maybe.empty();
+          }
+        };
+    var afterCallback = TestCallback.<Content>returningEmpty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(beforeCallback),
+            ImmutableList.of(afterCallback.asAfterAgentCallback()),
+            runLiveImpl.asRunLiveImplSupplier(runLiveImplContent));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+
+    List<Event> results = agent.runLive(invocationContext).toList().blockingGet();
+
+    assertThat(results).hasSize(2);
+    // State event from before callback
+    assertThat(results.get(0).content()).isEmpty();
+    assertThat(results.get(0).actions().stateDelta()).containsEntry("key", "value");
+    // Content event from runLiveImpl
+    assertThat(results.get(1).content()).hasValue(runLiveImplContent);
+    assertThat(runLiveImpl.wasCalled()).isTrue();
+    assertThat(afterCallback.wasCalled()).isTrue();
+  }
+
+  @Test
+  public void
+      runLive_afterCallbackMutatesStateAndReturnsEmpty_invokesRunLiveImplAndReturnsStateEvent() {
+    var runLiveImpl = TestCallback.<Void>returningEmpty();
+    Content runLiveImplContent = Content.fromParts(Part.fromText("main_output"));
+    var beforeCallback = TestCallback.<Content>returningEmpty();
+    AfterAgentCallback afterCallback =
+        new AfterAgentCallback() {
+          @Override
+          public Maybe<Content> call(CallbackContext context) {
+            context.state().put("key", "value");
+            return Maybe.empty();
+          }
+        };
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(beforeCallback.asBeforeAgentCallback()),
+            ImmutableList.of(afterCallback),
+            runLiveImpl.asRunLiveImplSupplier(runLiveImplContent));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+
+    List<Event> results = agent.runLive(invocationContext).toList().blockingGet();
+
+    assertThat(results).hasSize(2);
+    // Content event from runLiveImpl
+    assertThat(results.get(0).content()).hasValue(runLiveImplContent);
+    // State event from after callback
+    assertThat(results.get(1).content()).isEmpty();
+    assertThat(results.get(1).actions().stateDelta()).containsEntry("key", "value");
+    assertThat(runLiveImpl.wasCalled()).isTrue();
+    assertThat(beforeCallback.wasCalled()).isTrue();
+  }
+
+  @Test
+  public void runLive_firstAfterCallbackReturnsContent_skipsSecondAfterCallback() {
+    var runLiveImpl = TestCallback.<Void>returningEmpty();
+    Content runLiveImplContent = Content.fromParts(Part.fromText("main_output"));
+    Content afterCallbackContent = Content.fromParts(Part.fromText("after_callback_output"));
+    var afterCallback1 = TestCallback.returning(afterCallbackContent);
+    var afterCallback2 = TestCallback.<Content>returningEmpty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(),
+            ImmutableList.of(
+                afterCallback1.asAfterAgentCallback(), afterCallback2.asAfterAgentCallback()),
+            runLiveImpl.asRunLiveImplSupplier(runLiveImplContent));
+    InvocationContext invocationContext = TestUtils.createInvocationContext(agent);
+
+    List<Event> results = agent.runLive(invocationContext).toList().blockingGet();
+
+    assertThat(results).hasSize(2);
+    assertThat(results.get(0).content()).hasValue(runLiveImplContent);
+    assertThat(results.get(1).content()).hasValue(afterCallbackContent);
+    assertThat(runLiveImpl.wasCalled()).isTrue();
+    assertThat(afterCallback1.wasCalled()).isTrue();
+    assertThat(afterCallback2.wasCalled()).isFalse();
+  }
+
+  @Test
   public void constructor_invalidName_throwsIllegalArgumentException() {
     assertThrows(
         IllegalArgumentException.class,
@@ -377,6 +585,12 @@ public final class BaseAgentTest {
         () ->
             new TestBaseAgent(
                 "agent", "description", null, ImmutableList.of(subAgent1, subAgent2), null, null));
+  }
+
+  @Test
+  @SuppressWarnings("DoNotCall")
+  public void fromConfig_throwsUnsupportedOperationException() {
+    assertThrows(UnsupportedOperationException.class, () -> BaseAgent.fromConfig(null, null));
   }
 
   @Test
