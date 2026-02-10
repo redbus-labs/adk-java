@@ -56,6 +56,7 @@ public class InvocationContext {
   private final Map<String, Boolean> endOfAgents;
   private final ResumabilityConfig resumabilityConfig;
   @Nullable private final EventsCompactionConfig eventsCompactionConfig;
+  @Nullable private final ContextCacheConfig contextCacheConfig;
   private final InvocationCostManager invocationCostManager;
   private final Map<String, Object> callbackContextData;
 
@@ -81,6 +82,7 @@ public class InvocationContext {
     this.endOfAgents = builder.endOfAgents;
     this.resumabilityConfig = builder.resumabilityConfig;
     this.eventsCompactionConfig = builder.eventsCompactionConfig;
+    this.contextCacheConfig = builder.contextCacheConfig;
     this.invocationCostManager = builder.invocationCostManager;
     this.callbackContextData = builder.callbackContextData;
   }
@@ -400,6 +402,11 @@ public class InvocationContext {
     return Optional.ofNullable(eventsCompactionConfig);
   }
 
+  /** Returns the context cache configuration for the current agent run. */
+  public Optional<ContextCacheConfig> contextCacheConfig() {
+    return Optional.ofNullable(contextCacheConfig);
+  }
+
   /** Returns whether to pause the invocation right after this [event]. */
   public boolean shouldPauseInvocation(Event event) {
     if (!isResumable()) {
@@ -472,6 +479,7 @@ public class InvocationContext {
       this.endOfAgents = new ConcurrentHashMap<>(context.endOfAgents);
       this.resumabilityConfig = context.resumabilityConfig;
       this.eventsCompactionConfig = context.eventsCompactionConfig;
+      this.contextCacheConfig = context.contextCacheConfig;
       this.invocationCostManager = context.invocationCostManager;
       this.callbackContextData = context.callbackContextData;
     }
@@ -493,6 +501,7 @@ public class InvocationContext {
     private Map<String, Boolean> endOfAgents = new ConcurrentHashMap<>();
     private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
     @Nullable private EventsCompactionConfig eventsCompactionConfig;
+    @Nullable private ContextCacheConfig contextCacheConfig;
     private InvocationCostManager invocationCostManager = new InvocationCostManager();
     private Map<String, Object> callbackContextData = new ConcurrentHashMap<>();
 
@@ -731,6 +740,18 @@ public class InvocationContext {
     }
 
     /**
+     * Sets the context cache configuration for the current agent run.
+     *
+     * @param contextCacheConfig the context cache configuration.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder contextCacheConfig(@Nullable ContextCacheConfig contextCacheConfig) {
+      this.contextCacheConfig = contextCacheConfig;
+      return this;
+    }
+
+    /**
      * Sets the callback context data for the invocation.
      *
      * @param callbackContextData the callback context data.
@@ -778,6 +799,7 @@ public class InvocationContext {
         && Objects.equals(endOfAgents, that.endOfAgents)
         && Objects.equals(resumabilityConfig, that.resumabilityConfig)
         && Objects.equals(eventsCompactionConfig, that.eventsCompactionConfig)
+        && Objects.equals(contextCacheConfig, that.contextCacheConfig)
         && Objects.equals(invocationCostManager, that.invocationCostManager)
         && Objects.equals(callbackContextData, that.callbackContextData);
   }
@@ -802,6 +824,7 @@ public class InvocationContext {
         endOfAgents,
         resumabilityConfig,
         eventsCompactionConfig,
+        contextCacheConfig,
         invocationCostManager,
         callbackContextData);
   }
