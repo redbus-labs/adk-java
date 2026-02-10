@@ -32,9 +32,11 @@ import com.google.genai.types.Content;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
+import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -106,6 +108,17 @@ public abstract class BaseAgent {
     for (BaseAgent subAgent : this.subAgents) {
       subAgent.parentAgent(this);
     }
+  }
+
+  /**
+   * Closes all sub-agents.
+   *
+   * @return a {@link Completable} that completes when all sub-agents are closed.
+   */
+  public Completable close() {
+    List<Completable> completables = new ArrayList<>();
+    this.subAgents.forEach(subAgent -> completables.add(subAgent.close()));
+    return Completable.mergeDelayError(completables);
   }
 
   /**

@@ -42,17 +42,20 @@ import com.google.adk.sessions.Session;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils.EchoTool;
 import com.google.adk.tools.BaseTool;
+import com.google.adk.tools.BaseToolset;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
+import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -60,6 +63,20 @@ import org.junit.runners.JUnit4;
 /** Unit tests for {@link LlmAgent}. */
 @RunWith(JUnit4.class)
 public final class LlmAgentTest {
+
+  private static class ClosableToolset implements BaseToolset {
+    final AtomicBoolean closed = new AtomicBoolean(false);
+
+    @Override
+    public Flowable<BaseTool> getTools(ReadonlyContext readonlyContext) {
+      return Flowable.empty();
+    }
+
+    @Override
+    public void close() {
+      closed.set(true);
+    }
+  }
 
   @Test
   public void testRun_withNoCallbacks() {
@@ -440,5 +457,43 @@ public final class LlmAgentTest {
     LlmRequest request2 = testLlm2.getRequests().get(0);
     assertThat(request2.getFirstSystemInstruction().get())
         .contains("Instruction for Agent2 based on Agent1 output: value1");
+  }
+
+  @Test
+  public void close_closesToolsets() throws Exception {
+    ClosableToolset toolset1 = new ClosableToolset();
+    ClosableToolset toolset2 = new ClosableToolset();
+    LlmAgent agent =
+        createTestAgentBuilder(createTestLlm(LlmResponse.builder().build()))
+            .tools(toolset1, toolset2)
+            .build();
+    agent.close().blockingAwait();
+    assertThat(toolset1.closed.get()).isTrue();
+    assertThat(toolset2.closed.get()).isTrue();
+  }
+
+  @Test
+  public void close_closesToolsetsOnException() throws Exception {
+    ClosableToolset toolset1 =
+        new ClosableToolset() {
+          @Override
+          public Flowable<BaseTool> getTools(ReadonlyContext readonlyContext) {
+            return Flowable.empty();
+          }
+
+          @Override
+          public void close() {
+            super.close();
+            throw new RuntimeException("toolset1 failed to close");
+          }
+        };
+    ClosableToolset toolset2 = new ClosableToolset();
+    LlmAgent agent =
+        createTestAgentBuilder(createTestLlm(LlmResponse.builder().build()))
+            .tools(toolset1, toolset2)
+            .build();
+    agent.close().test().assertError(RuntimeException.class);
+    assertThat(toolset1.closed.get()).isTrue();
+    assertThat(toolset2.closed.get()).isTrue();
   }
 }

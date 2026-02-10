@@ -324,6 +324,14 @@ public class Runner {
     return this.pluginManager;
   }
 
+  /** Closes all plugins, code executors, and releases any resources. */
+  public Completable close() {
+    List<Completable> completables = new ArrayList<>();
+    completables.add(agent.close());
+    completables.add(this.pluginManager.close());
+    return Completable.mergeDelayError(completables);
+  }
+
   /**
    * Appends a new user message to the session history with optional state delta.
    *

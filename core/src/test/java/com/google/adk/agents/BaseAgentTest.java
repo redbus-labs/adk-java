@@ -28,8 +28,10 @@ import com.google.adk.testing.TestUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -39,6 +41,20 @@ public final class BaseAgentTest {
 
   private static final String TEST_AGENT_NAME = "testAgent";
   private static final String TEST_AGENT_DESCRIPTION = "A test agent";
+
+  private static class ClosableTestAgent extends TestBaseAgent {
+    final AtomicBoolean closed = new AtomicBoolean(false);
+
+    ClosableTestAgent(String name, String description, List<BaseAgent> subAgents) {
+      super(name, description, null, subAgents, null, null);
+    }
+
+    @Override
+    public Completable close() {
+      closed.set(true);
+      return super.close();
+    }
+  }
 
   @Test
   public void constructor_setsNameAndDescription() {
@@ -361,5 +377,40 @@ public final class BaseAgentTest {
         () ->
             new TestBaseAgent(
                 "agent", "description", null, ImmutableList.of(subAgent1, subAgent2), null, null));
+  }
+
+  @Test
+  public void close_noSubAgents_completesSuccessfully() {
+    ClosableTestAgent agent = new ClosableTestAgent("agent", "description", ImmutableList.of());
+    agent.close().blockingAwait();
+    assertThat(agent.closed.get()).isTrue();
+  }
+
+  @Test
+  public void close_oneLevelSubAgents_closesAllSubAgents() {
+    ClosableTestAgent subAgent1 = new ClosableTestAgent("sub1", "sub1", ImmutableList.of());
+    ClosableTestAgent subAgent2 = new ClosableTestAgent("sub2", "sub2", ImmutableList.of());
+    ClosableTestAgent agent =
+        new ClosableTestAgent("agent", "description", ImmutableList.of(subAgent1, subAgent2));
+
+    agent.close().blockingAwait();
+
+    assertThat(agent.closed.get()).isTrue();
+    assertThat(subAgent1.closed.get()).isTrue();
+    assertThat(subAgent2.closed.get()).isTrue();
+  }
+
+  @Test
+  public void close_twoLevelsSubAgents_closesAllSubAgents() {
+    ClosableTestAgent subSubAgent = new ClosableTestAgent("subSub", "subSub", ImmutableList.of());
+    ClosableTestAgent subAgent = new ClosableTestAgent("sub", "sub", ImmutableList.of(subSubAgent));
+    ClosableTestAgent agent =
+        new ClosableTestAgent("agent", "description", ImmutableList.of(subAgent));
+
+    agent.close().blockingAwait();
+
+    assertThat(agent.closed.get()).isTrue();
+    assertThat(subAgent.closed.get()).isTrue();
+    assertThat(subSubAgent.closed.get()).isTrue();
   }
 }
