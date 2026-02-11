@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-// MODIFIED BY Sandeep Belgavi, 2026-02-11
 package com.google.adk.models.sarvamai;
 
 /**

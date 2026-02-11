@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-// MODIFIED BY Sandeep Belgavi, 2026-02-11
 package com.google.adk.models.sarvamai;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -44,6 +43,12 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+/**
+ * Tests for SarvamAi.
+ *
+ * @author Sandeep Belgavi
+ * @since 2026-02-11
+ */
 @ExtendWith(MockitoExtension.class)
 public class SarvamAiTest {
 
