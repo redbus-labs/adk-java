@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+// MODIFIED BY Sandeep Belgavi, 2026-02-11
 package com.google.adk.models;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,7 +40,12 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
-/** Sarvam AI LLM implementation. Uses the OpenAI-compatible chat completion endpoint. */
+/**
+ * Sarvam AI LLM implementation. Uses the OpenAI-compatible chat completion endpoint.
+ *
+ * @author Sandeep Belgavi
+ * @since 2026-02-11
+ */
 public class SarvamLlm extends BaseLlm {
 
   private static final String API_URL = "https://api.sarvam.ai/chat/completions";

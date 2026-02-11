@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+// MODIFIED BY Sandeep Belgavi, 2026-02-11
 package com.google.adk.transcription.strategy;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -41,7 +42,12 @@ import okhttp3.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Sarvam AI transcription service implementation. */
+/**
+ * Sarvam AI transcription service implementation.
+ *
+ * @author Sandeep Belgavi
+ * @since 2026-02-11
+ */
 public class SarvamTranscriptionService implements TranscriptionService {
   private static final Logger logger = LoggerFactory.getLogger(SarvamTranscriptionService.class);
   private static final String API_URL = "https://api.sarvam.ai/speech-to-text";
