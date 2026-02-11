@@ -84,6 +84,9 @@ public class TranscriptionServiceFactory {
     ServiceType serviceType = determineServiceType(config);
 
     switch (serviceType) {
+      case SARVAM:
+        return new SarvamTranscriptionService(config.getApiKey().orElse(null));
+
       case WHISPER:
         return createWhisperService(config);
 
