@@ -28,6 +28,7 @@ import com.google.adk.events.EventActions;
 import com.google.adk.events.EventCompaction;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.Model;
+import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -53,7 +54,8 @@ public final class ContentsTest {
   private static final String AGENT = "agent";
   private static final String OTHER_AGENT = "other_agent";
 
-  private final Contents contentsProcessor = new Contents();
+  private static final Contents contentsProcessor = new Contents();
+  private static final InMemorySessionService sessionService = new InMemorySessionService();
 
   @Test
   public void rearrangeLatest_emptyList_returnsEmptyList() {
@@ -900,6 +902,7 @@ public final class ContentsTest {
             .invocationId("test-invocation")
             .agent(agent)
             .session(session)
+            .sessionService(sessionService)
             .build();
 
     LlmRequest initialRequest = LlmRequest.builder().build();
@@ -929,6 +932,7 @@ public final class ContentsTest {
             .invocationId("test-invocation")
             .agent(agent)
             .session(session)
+            .sessionService(sessionService)
             .build();
 
     LlmRequest initialRequest = LlmRequest.builder().build();
