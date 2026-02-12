@@ -22,7 +22,6 @@ import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.BaseAgentState;
 import com.google.adk.sessions.State;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import com.google.genai.types.Part;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -38,7 +37,7 @@ public class EventActions extends JsonBaseModel {
 
   private Optional<Boolean> skipSummarization;
   private ConcurrentMap<String, Object> stateDelta;
-  private ConcurrentMap<String, Part> artifactDelta;
+  private ConcurrentMap<String, Integer> artifactDelta;
   private Set<String> deletedArtifactIds;
   private Optional<String> transferToAgent;
   private Optional<Boolean> escalate;
@@ -117,11 +116,11 @@ public class EventActions extends JsonBaseModel {
   }
 
   @JsonProperty("artifactDelta")
-  public ConcurrentMap<String, Part> artifactDelta() {
+  public ConcurrentMap<String, Integer> artifactDelta() {
     return artifactDelta;
   }
 
-  public void setArtifactDelta(ConcurrentMap<String, Part> artifactDelta) {
+  public void setArtifactDelta(ConcurrentMap<String, Integer> artifactDelta) {
     this.artifactDelta = artifactDelta;
   }
 
@@ -294,7 +293,7 @@ public class EventActions extends JsonBaseModel {
   public static class Builder {
     private Optional<Boolean> skipSummarization;
     private ConcurrentMap<String, Object> stateDelta;
-    private ConcurrentMap<String, Part> artifactDelta;
+    private ConcurrentMap<String, Integer> artifactDelta;
     private Set<String> deletedArtifactIds;
     private Optional<String> transferToAgent;
     private Optional<Boolean> escalate;
@@ -351,7 +350,7 @@ public class EventActions extends JsonBaseModel {
 
     @CanIgnoreReturnValue
     @JsonProperty("artifactDelta")
-    public Builder artifactDelta(ConcurrentMap<String, Part> value) {
+    public Builder artifactDelta(ConcurrentMap<String, Integer> value) {
       this.artifactDelta = value;
       return this;
     }
