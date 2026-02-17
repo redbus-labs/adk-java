@@ -14,26 +14,22 @@
  * limitations under the License.
  */
 
-package com.google.adk.agents;
+package com.google.adk.flows.llmflows;
 
-import com.google.adk.JsonBaseModel;
+import static com.google.common.truth.Truth.assertThat;
 
-/** Base class for all agent states. */
-public class BaseAgentState extends JsonBaseModel {
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
-  protected BaseAgentState() {}
+@RunWith(JUnit4.class)
+public final class SingleFlowTest {
 
-  /** Returns a new {@link Builder} for creating {@link BaseAgentState} instances. */
-  public static Builder builder() {
-    return new Builder();
-  }
-
-  /** Builder for {@link BaseAgentState}. */
-  public static class Builder {
-    private Builder() {}
-
-    public BaseAgentState build() {
-      return new BaseAgentState();
-    }
+  @Test
+  public void requestProcessors_containsCompaction() {
+    boolean hasCompaction =
+        SingleFlow.REQUEST_PROCESSORS.stream()
+            .anyMatch(processor -> processor instanceof Compaction);
+    assertThat(hasCompaction).isTrue();
   }
 }
