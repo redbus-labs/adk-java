@@ -16,18 +16,18 @@
 
 package com.google.adk.runner;
 
-import com.google.adk.Telemetry;
 import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
+import com.google.adk.apps.App;
+import com.google.adk.apps.ResumabilityConfig;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
-import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.Model;
 import com.google.adk.plugins.BasePlugin;
@@ -38,9 +38,11 @@ import com.google.adk.sessions.Session;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.adk.summarizer.LlmEventSummarizer;
 import com.google.adk.summarizer.SlidingWindowEventCompactor;
+import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.AudioTranscriptionConfig;
@@ -76,23 +78,31 @@ public class Runner {
 
   /** Builder for {@link Runner}. */
   public static class Builder {
+    private App app;
     private BaseAgent agent;
     private String appName;
     private BaseArtifactService artifactService = new InMemoryArtifactService();
     private BaseSessionService sessionService = new InMemorySessionService();
     @Nullable private BaseMemoryService memoryService = null;
     private List<BasePlugin> plugins = ImmutableList.of();
-    private ResumabilityConfig resumabilityConfig = new ResumabilityConfig();
-    @Nullable private EventsCompactionConfig eventsCompactionConfig;
+
+    @CanIgnoreReturnValue
+    public Builder app(App app) {
+      Preconditions.checkState(this.agent == null, "app() cannot be called when agent() is set.");
+      this.app = app;
+      return this;
+    }
 
     @CanIgnoreReturnValue
     public Builder agent(BaseAgent agent) {
+      Preconditions.checkState(this.app == null, "agent() cannot be called when app is set.");
       this.agent = agent;
       return this;
     }
 
     @CanIgnoreReturnValue
     public Builder appName(String appName) {
+      Preconditions.checkState(this.app == null, "appName() cannot be called when app is set.");
       this.appName = appName;
       return this;
     }
@@ -117,28 +127,46 @@ public class Runner {
 
     @CanIgnoreReturnValue
     public Builder plugins(List<BasePlugin> plugins) {
+      Preconditions.checkState(this.app == null, "plugins() cannot be called when app is set.");
       this.plugins = plugins;
       return this;
     }
 
-    @CanIgnoreReturnValue
-    public Builder resumabilityConfig(ResumabilityConfig resumabilityConfig) {
-      this.resumabilityConfig = resumabilityConfig;
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder eventsCompactionConfig(EventsCompactionConfig eventsCompactionConfig) {
-      this.eventsCompactionConfig = eventsCompactionConfig;
-      return this;
-    }
-
     public Runner build() {
-      if (agent == null) {
-        throw new IllegalStateException("Agent must be provided.");
+      BaseAgent buildAgent;
+      String buildAppName;
+      List<BasePlugin> buildPlugins;
+      ResumabilityConfig buildResumabilityConfig;
+      EventsCompactionConfig buildEventsCompactionConfig;
+
+      if (this.app != null) {
+        if (this.agent != null) {
+          throw new IllegalStateException("agent() cannot be called when app() is called.");
+        }
+        if (!this.plugins.isEmpty()) {
+          throw new IllegalStateException("plugins() cannot be called when app() is called.");
+        }
+        buildAgent = this.app.rootAgent();
+        buildPlugins = this.app.plugins();
+        buildAppName = this.appName == null ? this.app.name() : this.appName;
+        buildResumabilityConfig =
+            this.app.resumabilityConfig() != null
+                ? this.app.resumabilityConfig()
+                : new ResumabilityConfig();
+        buildEventsCompactionConfig = this.app.eventsCompactionConfig();
+      } else {
+        buildAgent = this.agent;
+        buildAppName = this.appName;
+        buildPlugins = this.plugins;
+        buildResumabilityConfig = new ResumabilityConfig();
+        buildEventsCompactionConfig = null;
       }
-      if (appName == null) {
-        throw new IllegalStateException("App name must be provided.");
+
+      if (buildAgent == null) {
+        throw new IllegalStateException("Agent must be provided via app() or agent().");
+      }
+      if (buildAppName == null) {
+        throw new IllegalStateException("App name must be provided via app() or appName().");
       }
       if (artifactService == null) {
         throw new IllegalStateException("Artifact service must be provided.");
@@ -147,14 +175,14 @@ public class Runner {
         throw new IllegalStateException("Session service must be provided.");
       }
       return new Runner(
-          agent,
-          appName,
+          buildAgent,
+          buildAppName,
           artifactService,
           sessionService,
           memoryService,
-          plugins,
-          resumabilityConfig,
-          eventsCompactionConfig);
+          buildPlugins,
+          buildResumabilityConfig,
+          buildEventsCompactionConfig);
     }
   }
 
@@ -422,7 +450,7 @@ public class Runner {
       RunConfig runConfig,
       @Nullable Map<String, Object> stateDelta) {
     Span span =
-        Telemetry.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
+        Tracing.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
     Context spanContext = Context.current().with(span);
 
     try {
@@ -437,7 +465,7 @@ public class Runner {
               .userContent(newMessage)
               .build();
 
-      return Telemetry.traceFlowable(
+      return Tracing.traceFlowable(
           spanContext,
           span,
           () ->
@@ -617,7 +645,7 @@ public class Runner {
   public Flowable<Event> runLive(
       Session session, LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
     Span span =
-        Telemetry.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
+        Tracing.getTracer().spanBuilder("invocation").setParent(Context.current()).startSpan();
     Context spanContext = Context.current().with(span);
 
     try {
@@ -640,7 +668,7 @@ public class Runner {
 
       return invocationContextSingle.flatMapPublisher(
           updatedInvocationContext ->
-              Telemetry.traceFlowable(
+              Tracing.traceFlowable(
                   spanContext,
                   span,
                   () ->

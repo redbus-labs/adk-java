@@ -24,6 +24,8 @@ import com.google.genai.types.GoogleSearchRetrieval;
 import com.google.genai.types.Tool;
 import io.reactivex.rxjava3.core.Completable;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A built-in tool that is automatically invoked by Gemini 2 models to retrieve search results from
@@ -41,6 +43,7 @@ import java.util.List;
  * }</pre>
  */
 public final class GoogleSearchTool extends BaseTool {
+  private static final Logger logger = LoggerFactory.getLogger(GoogleSearchTool.class);
   public static final GoogleSearchTool INSTANCE = new GoogleSearchTool();
 
   public GoogleSearchTool() {
@@ -65,7 +68,7 @@ public final class GoogleSearchTool extends BaseTool {
     String model = llmRequestBuilder.build().model().get();
     if (model != null && model.startsWith("gemini-1")) {
       if (!updatedToolsBuilder.build().isEmpty()) {
-        System.out.println(configBuilder.build().tools().get());
+        logger.error("Tools already present: {}", configBuilder.build().tools().get());
         return Completable.error(
             new IllegalArgumentException(
                 "Google search tool cannot be used with other tools in Gemini 1.x."));

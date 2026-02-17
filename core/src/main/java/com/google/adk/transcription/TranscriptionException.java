@@ -13,17 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.adk.flows.llmflows;
+
+package com.google.adk.transcription;
 
 /**
- * An app contains Resumability configuration for the agents.
+ * Exception thrown when transcription operations fail.
  *
- * @param isResumable Whether the app is resumable.
+ * @author Sandeep Belgavi
+ * @since 2026-01-24
  */
-public record ResumabilityConfig(boolean isResumable) {
+public class TranscriptionException extends Exception {
 
-  /** Creates a new {@code ResumabilityConfig} with resumability disabled. */
-  public ResumabilityConfig() {
-    this(false);
+  public TranscriptionException(String message) {
+    super(message);
+  }
+
+  public TranscriptionException(String message, Throwable cause) {
+    super(message, cause);
+  }
+
+  public TranscriptionException(Throwable cause) {
+    super(cause);
   }
 }

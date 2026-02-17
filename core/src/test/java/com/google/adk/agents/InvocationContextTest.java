@@ -19,9 +19,9 @@ package com.google.adk.agents;
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.Mockito.mock;
 
+import com.google.adk.apps.ResumabilityConfig;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
-import com.google.adk.flows.llmflows.ResumabilityConfig;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;

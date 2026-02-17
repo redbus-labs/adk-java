@@ -20,7 +20,6 @@ package com.google.adk.flows.llmflows;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 
-import com.google.adk.Telemetry;
 import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.Callbacks.AfterToolCallback;
 import com.google.adk.agents.Callbacks.BeforeToolCallback;
@@ -31,6 +30,7 @@ import com.google.adk.agents.RunConfig.ToolExecutionMode;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
 import com.google.adk.events.ToolConfirmation;
+import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.tools.ToolContext;
@@ -178,11 +178,11 @@ public final class Functions {
               var mergedEvent = maybeMergedEvent.get();
 
               if (events.size() > 1) {
-                Tracer tracer = Telemetry.getTracer();
+                Tracer tracer = Tracing.getTracer();
                 Span mergedSpan =
                     tracer.spanBuilder("tool_response").setParent(Context.current()).startSpan();
                 try (Scope scope = mergedSpan.makeCurrent()) {
-                  Telemetry.traceToolResponse(invocationContext, mergedEvent.id(), mergedEvent);
+                  Tracing.traceToolResponse(invocationContext, mergedEvent.id(), mergedEvent);
                 } finally {
                   mergedSpan.end();
                 }
@@ -552,7 +552,7 @@ public final class Functions {
 
   private static Maybe<Map<String, Object>> callTool(
       BaseTool tool, Map<String, Object> args, ToolContext toolContext) {
-    Tracer tracer = Telemetry.getTracer();
+    Tracer tracer = Tracing.getTracer();
     return Maybe.defer(
         () -> {
           Span span =
@@ -561,7 +561,7 @@ public final class Functions {
                   .setParent(Context.current())
                   .startSpan();
           try (Scope scope = span.makeCurrent()) {
-            Telemetry.traceToolCall(args);
+            Tracing.traceToolCall(args);
             return tool.runAsync(args, toolContext)
                 .toMaybe()
                 .doOnError(span::recordException)
@@ -579,7 +579,7 @@ public final class Functions {
       Map<String, Object> response,
       ToolContext toolContext,
       InvocationContext invocationContext) {
-    Tracer tracer = Telemetry.getTracer();
+    Tracer tracer = Tracing.getTracer();
     Span span =
         tracer
             .spanBuilder("tool_response [" + tool.name() + "]")
@@ -615,7 +615,7 @@ public final class Functions {
                           .build()))
               .actions(toolContext.eventActions())
               .build();
-      Telemetry.traceToolResponse(invocationContext, event.id(), event);
+      Tracing.traceToolResponse(invocationContext, event.id(), event);
       return event;
     } finally {
       span.end();
