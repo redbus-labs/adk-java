@@ -46,7 +46,7 @@ import okhttp3.Response;
  * @author Sandeep Belgavi
  * @since 2026-02-11
  */
-public class SarvamLlm extends BaseLlm {
+public class Sarvam extends BaseLlm {
 
   private static final String API_URL = "https://api.sarvam.ai/chat/completions";
   private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -55,11 +55,11 @@ public class SarvamLlm extends BaseLlm {
   private final OkHttpClient client;
   private final ObjectMapper objectMapper;
 
-  public SarvamLlm(String model) {
+  public Sarvam(String model) {
     this(model, null);
   }
 
-  public SarvamLlm(String model, String apiKey) {
+  public Sarvam(String model, String apiKey) {
     super(model);
     if (Strings.isNullOrEmpty(apiKey)) {
       this.apiKey = System.getenv("SARVAM_API_KEY");
