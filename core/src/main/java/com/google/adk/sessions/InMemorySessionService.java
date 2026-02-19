@@ -96,8 +96,8 @@ public final class InMemorySessionService implements BaseSessionService {
             .build();
 
     sessions
-        .computeIfAbsent(appName, k -> new ConcurrentHashMap<>())
-        .computeIfAbsent(userId, k -> new ConcurrentHashMap<>())
+        .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+        .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
         .put(resolvedSessionId, newSession);
 
     // Create a mutable copy for the return value
@@ -116,8 +116,8 @@ public final class InMemorySessionService implements BaseSessionService {
 
     Session storedSession =
         sessions
-            .getOrDefault(appName, new ConcurrentHashMap<>())
-            .getOrDefault(userId, new ConcurrentHashMap<>())
+            .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+            .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
             .get(sessionId);
 
     if (storedSession == null) {
@@ -166,7 +166,7 @@ public final class InMemorySessionService implements BaseSessionService {
     Objects.requireNonNull(userId, "userId cannot be null");
 
     Map<String, Session> userSessionsMap =
-        sessions.getOrDefault(appName, new ConcurrentHashMap<>()).get(userId);
+        sessions.computeIfAbsent(appName, unused -> new ConcurrentHashMap<>()).get(userId);
 
     if (userSessionsMap == null || userSessionsMap.isEmpty()) {
       return Single.just(ListSessionsResponse.builder().build());
@@ -185,11 +185,12 @@ public final class InMemorySessionService implements BaseSessionService {
     Objects.requireNonNull(userId, "userId cannot be null");
     Objects.requireNonNull(sessionId, "sessionId cannot be null");
 
-    ConcurrentMap<String, Session> userSessionsMap =
-        sessions.getOrDefault(appName, new ConcurrentHashMap<>()).get(userId);
-
-    if (userSessionsMap != null) {
-      userSessionsMap.remove(sessionId);
+    ConcurrentMap<String, ConcurrentMap<String, Session>> appSessionsMap = sessions.get(appName);
+    if (appSessionsMap != null) {
+      ConcurrentMap<String, Session> userSessionsMap = appSessionsMap.get(userId);
+      if (userSessionsMap != null) {
+        userSessionsMap.remove(sessionId);
+      }
     }
     return Completable.complete();
   }
@@ -202,8 +203,8 @@ public final class InMemorySessionService implements BaseSessionService {
 
     Session storedSession =
         sessions
-            .getOrDefault(appName, new ConcurrentHashMap<>())
-            .getOrDefault(userId, new ConcurrentHashMap<>())
+            .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+            .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
             .get(sessionId);
 
     if (storedSession == null) {
@@ -236,17 +237,34 @@ public final class InMemorySessionService implements BaseSessionService {
             (key, value) -> {
               if (key.startsWith(State.APP_PREFIX)) {
                 String appStateKey = key.substring(State.APP_PREFIX.length());
-                appState
-                    .computeIfAbsent(appName, k -> new ConcurrentHashMap<>())
-                    .put(appStateKey, value);
+                if (value == State.REMOVED) {
+                  appState
+                      .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+                      .remove(appStateKey);
+                } else {
+                  appState
+                      .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+                      .put(appStateKey, value);
+                }
               } else if (key.startsWith(State.USER_PREFIX)) {
                 String userStateKey = key.substring(State.USER_PREFIX.length());
-                userState
-                    .computeIfAbsent(appName, k -> new ConcurrentHashMap<>())
-                    .computeIfAbsent(userId, k -> new ConcurrentHashMap<>())
-                    .put(userStateKey, value);
+                if (value == State.REMOVED) {
+                  userState
+                      .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+                      .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
+                      .remove(userStateKey);
+                } else {
+                  userState
+                      .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+                      .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
+                      .put(userStateKey, value);
+                }
               } else {
-                session.state().put(key, value);
+                if (value == State.REMOVED) {
+                  session.state().remove(key);
+                } else {
+                  session.state().put(key, value);
+                }
               }
             });
       }
@@ -257,8 +275,8 @@ public final class InMemorySessionService implements BaseSessionService {
 
     // --- Update the session stored in this service ---
     sessions
-        .computeIfAbsent(appName, k -> new ConcurrentHashMap<>())
-        .computeIfAbsent(userId, k -> new ConcurrentHashMap<>())
+        .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+        .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
         .put(sessionId, session);
 
     mergeWithGlobalState(appName, userId, session);
@@ -307,12 +325,12 @@ public final class InMemorySessionService implements BaseSessionService {
 
     // Merge App State directly into the session's state map
     appState
-        .getOrDefault(appName, new ConcurrentHashMap<String, Object>())
+        .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
         .forEach((key, value) -> sessionState.put(State.APP_PREFIX + key, value));
 
     userState
-        .getOrDefault(appName, new ConcurrentHashMap<>())
-        .getOrDefault(userId, new ConcurrentHashMap<>())
+        .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+        .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
         .forEach((key, value) -> sessionState.put(State.USER_PREFIX + key, value));
 
     return session;
