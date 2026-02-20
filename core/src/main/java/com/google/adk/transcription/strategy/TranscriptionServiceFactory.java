@@ -84,6 +84,11 @@ public class TranscriptionServiceFactory {
     ServiceType serviceType = determineServiceType(config);
 
     switch (serviceType) {
+      case SARVAM:
+        throw new UnsupportedOperationException(
+            "Sarvam STT has moved to the contrib/sarvam-ai module. "
+                + "Use SarvamSttService from com.google.adk.models.sarvamai.stt instead.");
+
       case WHISPER:
         return createWhisperService(config);
 
