@@ -85,7 +85,9 @@ public class TranscriptionServiceFactory {
 
     switch (serviceType) {
       case SARVAM:
-        return new SarvamTranscriptionService(config.getApiKey().orElse(null));
+        throw new UnsupportedOperationException(
+            "Sarvam STT has moved to the contrib/sarvam-ai module. "
+                + "Use SarvamSttService from com.google.adk.models.sarvamai.stt instead.");
 
       case WHISPER:
         return createWhisperService(config);

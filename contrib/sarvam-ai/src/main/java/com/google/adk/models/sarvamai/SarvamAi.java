@@ -16,149 +16,275 @@
 
 package com.google.adk.models.sarvamai;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.sarvamai.chat.ChatRequest;
+import com.google.adk.models.sarvamai.chat.ChatResponse;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import java.io.BufferedReader;
 import java.io.IOException;
-import okhttp3.Call;
-import okhttp3.Callback;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
-import okhttp3.ResponseBody;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * This class is the main entry point for the Sarvam AI API.
+ * Sarvam AI LLM integration for the Agent Development Kit.
  *
- * @author Sandeep Belgavi
- * @since 2026-02-11
+ * <p>Provides chat completion (blocking and streaming) via the Sarvam {@code sarvam-m} model using
+ * the OpenAI-compatible {@code /v1/chat/completions} endpoint. Authentication uses the {@code
+ * api-subscription-key} header per Sarvam API specification.
+ *
+ * <p>Follows the same architectural patterns as {@link com.google.adk.models.Gemini}, including
+ * Builder construction, immutable configuration, and RxJava-based streaming.
+ *
+ * <p>Usage:
+ *
+ * <pre>{@code
+ * SarvamAi sarvam = SarvamAi.builder()
+ *     .modelName("sarvam-m")
+ *     .config(SarvamAiConfig.builder()
+ *         .apiKey("your-key")
+ *         .temperature(0.7)
+ *         .build())
+ *     .build();
+ * }</pre>
  */
 public class SarvamAi extends BaseLlm {
 
-  private static final String API_ENDPOINT = "https://api.sarvam.ai/v1/chat/completions";
+  private static final Logger logger = LoggerFactory.getLogger(SarvamAi.class);
+  private static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
+
+  private final SarvamAiConfig config;
   private final OkHttpClient httpClient;
-  private final String apiKey;
   private final ObjectMapper objectMapper;
 
-  public SarvamAi(String modelName, SarvamAiConfig config) {
+  SarvamAi(String modelName, SarvamAiConfig config, OkHttpClient httpClient) {
     super(modelName);
-    this.httpClient = new OkHttpClient();
-    this.apiKey = config.getApiKey();
+    this.config = Objects.requireNonNull(config, "config must not be null");
+    this.httpClient = Objects.requireNonNull(httpClient, "httpClient must not be null");
     this.objectMapper = new ObjectMapper();
+  }
+
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  /** Returns the active configuration. */
+  public SarvamAiConfig config() {
+    return config;
+  }
+
+  /** Returns the shared OkHttpClient for subservices (STT, TTS, Vision). */
+  OkHttpClient httpClient() {
+    return httpClient;
+  }
+
+  /** Returns the shared ObjectMapper. */
+  ObjectMapper objectMapper() {
+    return objectMapper;
   }
 
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
     if (stream) {
-      return stream(llmRequest);
-    } else {
-      return Flowable.fromCallable(
-          () -> {
-            String requestBody =
-                objectMapper.writeValueAsString(new SarvamAiRequest(this.model(), llmRequest));
-            Request request =
-                new Request.Builder()
-                    .url(API_ENDPOINT)
-                    .addHeader("Authorization", "Bearer " + apiKey)
-                    .post(RequestBody.create(requestBody, MediaType.get("application/json")))
-                    .build();
-            Response response = httpClient.newCall(request).execute();
-            if (!response.isSuccessful()) {
-              throw new IOException("Unexpected code " + response);
-            }
-            ResponseBody responseBody = response.body();
-            if (responseBody != null) {
-              String responseBodyString = responseBody.string();
-              SarvamAiResponse sarvamAiResponse =
-                  objectMapper.readValue(responseBodyString, SarvamAiResponse.class);
-              return toLlmResponse(sarvamAiResponse);
-            } else {
-              throw new IOException("Response body is null");
-            }
-          });
+      return streamContent(llmRequest);
     }
+
+    return Flowable.fromCallable(
+        () -> {
+          ChatRequest chatRequest = ChatRequest.fromLlmRequest(model(), llmRequest, config, false);
+          String body = objectMapper.writeValueAsString(chatRequest);
+          logger.debug("Sending chat completion request to {}", config.chatEndpoint());
+          logger.trace("Request body: {}", body);
+
+          Request request = buildHttpRequest(config.chatEndpoint(), body);
+
+          try (Response response = httpClient.newCall(request).execute()) {
+            handleErrorResponse(response);
+            String responseBody = response.body().string();
+            logger.trace("Response body: {}", responseBody);
+            ChatResponse chatResponse = objectMapper.readValue(responseBody, ChatResponse.class);
+            return toLlmResponse(chatResponse);
+          }
+        });
   }
 
-  private Flowable<LlmResponse> stream(LlmRequest llmRequest) {
+  private Flowable<LlmResponse> streamContent(LlmRequest llmRequest) {
     return Flowable.create(
         emitter -> {
           try {
-            String requestBody =
-                objectMapper.writeValueAsString(new SarvamAiRequest(this.model(), llmRequest));
-            Request request =
-                new Request.Builder()
-                    .url(API_ENDPOINT)
-                    .addHeader("Authorization", "Bearer " + apiKey)
-                    .post(RequestBody.create(requestBody, MediaType.get("application/json")))
-                    .build();
-            httpClient
-                .newCall(request)
-                .enqueue(
-                    new Callback() {
-                      @Override
-                      public void onFailure(Call call, IOException e) {
-                        emitter.onError(e);
-                      }
+            ChatRequest chatRequest = ChatRequest.fromLlmRequest(model(), llmRequest, config, true);
+            String body = objectMapper.writeValueAsString(chatRequest);
+            logger.debug("Sending streaming chat request to {}", config.chatEndpoint());
 
-                      @Override
-                      public void onResponse(Call call, Response response) throws IOException {
-                        if (!response.isSuccessful()) {
-                          emitter.onError(new IOException("Unexpected code " + response));
-                          return;
-                        }
-                        ResponseBody responseBody = response.body();
-                        if (responseBody != null) {
-                          try (var reader = new BufferedReader(responseBody.charStream())) {
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                              if (line.startsWith("data: ")) {
-                                String data = line.substring(6);
-                                if (data.equals("[DONE]")) {
-                                  emitter.onComplete();
-                                  return;
-                                }
-                                SarvamAiResponse sarvamAiResponse =
-                                    objectMapper.readValue(data, SarvamAiResponse.class);
-                                emitter.onNext(toLlmResponse(sarvamAiResponse));
-                              }
-                            }
-                            emitter.onComplete();
-                          }
-                        } else {
-                          emitter.onError(new IOException("Response body is null"));
-                        }
+            Request request = buildHttpRequest(config.chatEndpoint(), body);
+
+            try (Response response = httpClient.newCall(request).execute()) {
+              handleErrorResponse(response);
+
+              if (response.body() == null) {
+                emitter.onError(new SarvamAiException("Response body is null"));
+                return;
+              }
+
+              try (BufferedReader reader = new BufferedReader(response.body().charStream())) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                  if (emitter.isCancelled()) {
+                    break;
+                  }
+                  if (!line.startsWith("data: ")) {
+                    continue;
+                  }
+                  String data = line.substring(6).trim();
+                  if ("[DONE]".equals(data)) {
+                    break;
+                  }
+                  try {
+                    JsonNode chunk = objectMapper.readTree(data);
+                    JsonNode choices = chunk.path("choices");
+                    if (choices.isArray() && !choices.isEmpty()) {
+                      JsonNode delta = choices.get(0).path("delta");
+                      if (delta.has("content")) {
+                        String textChunk = delta.get("content").asText();
+                        Content content =
+                            Content.builder().role("model").parts(Part.fromText(textChunk)).build();
+                        emitter.onNext(
+                            LlmResponse.builder().content(content).partial(true).build());
                       }
-                    });
-          } catch (IOException e) {
-            emitter.onError(e);
+                    }
+                  } catch (Exception parseError) {
+                    logger.trace("Skipping unparseable SSE line: {}", data);
+                  }
+                }
+              }
+              emitter.onComplete();
+            }
+          } catch (Exception e) {
+            if (!emitter.isCancelled()) {
+              emitter.onError(e);
+            }
           }
         },
-        io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
-  }
-
-  private LlmResponse toLlmResponse(SarvamAiResponse sarvamAiResponse) {
-    Content content =
-        Content.builder()
-            .role("model")
-            .parts(
-                java.util.Collections.singletonList(
-                    Part.fromText(sarvamAiResponse.getChoices().get(0).getMessage().getContent())))
-            .build();
-    return LlmResponse.builder().content(content).build();
+        BackpressureStrategy.BUFFER);
   }
 
   @Override
   public BaseLlmConnection connect(LlmRequest llmRequest) {
-    // TODO: Implement this method
-    throw new UnsupportedOperationException(
-        "Live connection is not supported for Sarvam AI models.");
+    logger.debug("Establishing Sarvam AI live connection");
+    return new SarvamAiLlmConnection(this, llmRequest);
+  }
+
+  Request buildHttpRequest(String url, String jsonBody) {
+    return new Request.Builder()
+        .url(url)
+        .addHeader("api-subscription-key", config.apiKey())
+        .addHeader("Content-Type", "application/json")
+        .post(RequestBody.create(jsonBody, JSON_MEDIA_TYPE))
+        .build();
+  }
+
+  void handleErrorResponse(Response response) throws IOException {
+    if (response.isSuccessful()) {
+      return;
+    }
+    String errorBody = response.body() != null ? response.body().string() : "";
+    String errorCode = null;
+    String requestId = null;
+    String message = "Sarvam API error " + response.code();
+
+    try {
+      JsonNode errorJson = objectMapper.readTree(errorBody);
+      JsonNode error = errorJson.path("error");
+      if (!error.isMissingNode()) {
+        message = error.path("message").asText(message);
+        errorCode = error.path("code").asText(null);
+        requestId = error.path("request_id").asText(null);
+      }
+    } catch (Exception ignored) {
+      // Use raw error body as message fallback
+      if (!errorBody.isEmpty()) {
+        message = message + ": " + errorBody;
+      }
+    }
+
+    throw new SarvamAiException(message, response.code(), errorCode, requestId);
+  }
+
+  private LlmResponse toLlmResponse(ChatResponse chatResponse) {
+    if (chatResponse.getChoices() == null || chatResponse.getChoices().isEmpty()) {
+      throw new SarvamAiException("Empty choices in response");
+    }
+    var choice = chatResponse.getChoices().get(0);
+    var effectiveMsg = choice.effectiveMessage();
+    if (effectiveMsg == null || effectiveMsg.getContent() == null) {
+      throw new SarvamAiException("No content in response choice");
+    }
+
+    Content content =
+        Content.builder().role("model").parts(Part.fromText(effectiveMsg.getContent())).build();
+    return LlmResponse.builder().content(content).build();
+  }
+
+  /** Builder for {@link SarvamAi}. Mirrors the Gemini builder pattern. */
+  public static final class Builder {
+    private String modelName;
+    private SarvamAiConfig config;
+    private OkHttpClient httpClient;
+
+    private Builder() {}
+
+    @CanIgnoreReturnValue
+    public Builder modelName(String modelName) {
+      this.modelName = modelName;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder config(SarvamAiConfig config) {
+      this.config = config;
+      return this;
+    }
+
+    /**
+     * Provides a custom OkHttpClient. If not set, a default client is created with retry
+     * interceptor and timeouts from the config.
+     */
+    @CanIgnoreReturnValue
+    public Builder httpClient(OkHttpClient httpClient) {
+      this.httpClient = httpClient;
+      return this;
+    }
+
+    public SarvamAi build() {
+      Objects.requireNonNull(modelName, "modelName must be set");
+      Objects.requireNonNull(config, "config must be set");
+
+      OkHttpClient client = this.httpClient;
+      if (client == null) {
+        client =
+            new OkHttpClient.Builder()
+                .connectTimeout(config.connectTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                .readTimeout(config.readTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                .addInterceptor(new SarvamRetryInterceptor(config.maxRetries()))
+                .build();
+      }
+
+      return new SarvamAi(modelName, config, client);
+    }
   }
 }

@@ -17,142 +17,196 @@
 package com.google.adk.models.sarvamai;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
-import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.io.IOException;
-import java.util.List;
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.MediaType;
+import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 import okhttp3.OkHttpClient;
-import okhttp3.Protocol;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-/**
- * Tests for SarvamAi.
- *
- * @author Sandeep Belgavi
- * @since 2026-02-11
- */
-@ExtendWith(MockitoExtension.class)
-public class SarvamAiTest {
+class SarvamAiTest {
 
-  private static final String API_KEY = "test-api-key";
-  private static final String MODEL_NAME = "test-model";
-  private static final String COMPLETION_TEXT = "Hello, world!";
-  private static final String STREAMING_CHUNK_1 =
-      "data: {\"choices\": [{\"message\": {\"content\": \"Hello,\"}}]}";
-  private static final String STREAMING_CHUNK_2 =
-      "data: {\"choices\": [{\"message\": {\"content\": \" world!\"}}]}";
-  private static final String STREAMING_DONE = "data: [DONE]";
-
-  @Mock private OkHttpClient mockHttpClient;
-  @Mock private Call mockCall;
-  @Mock private SarvamAiConfig mockConfig;
-
-  @Captor private ArgumentCaptor<Request> requestCaptor;
-  @Captor private ArgumentCaptor<Callback> callbackCaptor;
-
+  private MockWebServer server;
   private SarvamAi sarvamAi;
-  private ObjectMapper objectMapper;
 
-  @Before
-  public void setUp() {
-    when(mockConfig.getApiKey()).thenReturn(API_KEY);
-    sarvamAi = new SarvamAi(MODEL_NAME, mockConfig);
-    objectMapper = new ObjectMapper();
+  @BeforeEach
+  void setUp() throws IOException {
+    server = new MockWebServer();
+    server.start();
 
-    when(mockHttpClient.newCall(requestCaptor.capture())).thenReturn(mockCall);
+    SarvamAiConfig config =
+        SarvamAiConfig.builder()
+            .apiKey("test-api-key")
+            .chatEndpoint(server.url("/v1/chat/completions").toString())
+            .build();
+
+    sarvamAi =
+        SarvamAi.builder()
+            .modelName("sarvam-m")
+            .config(config)
+            .httpClient(new OkHttpClient())
+            .build();
+  }
+
+  @AfterEach
+  void tearDown() throws IOException {
+    server.shutdown();
   }
 
   @Test
-  public void generateContent_blockingCall_returnsLlmResponse() throws IOException {
-    String mockResponseBody = createMockSarvamAiResponseBody(COMPLETION_TEXT);
-    Response mockResponse =
-        new Response.Builder()
-            .request(new Request.Builder().url("http://localhost").build())
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .body(ResponseBody.create(mockResponseBody, MediaType.get("application/json")))
-            .build();
+  void generateContent_nonStreaming_returnsContent() {
+    String jsonResponse =
+        "{\"id\":\"chatcmpl-abc\",\"object\":\"chat.completion\",\"created\":1699000000,"
+            + "\"model\":\"sarvam-m\",\"choices\":[{\"index\":0,"
+            + "\"message\":{\"role\":\"assistant\",\"content\":\"Hello world\"},"
+            + "\"finish_reason\":\"stop\"}],"
+            + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}";
+    server.enqueue(new MockResponse().setBody(jsonResponse));
 
-    when(mockCall.execute()).thenReturn(mockResponse);
+    LlmRequest request = buildUserRequest("Hi");
+    TestSubscriber<LlmResponse> subscriber = sarvamAi.generateContent(request, false).test();
 
-    LlmRequest llmRequest =
-        LlmRequest.builder()
-            .contents(
-                List.of(Content.builder().parts(List.of(Part.fromText("test query"))).build()))
-            .build();
-    Flowable<LlmResponse> responseFlowable = sarvamAi.generateContent(llmRequest, false);
+    subscriber.awaitDone(5, TimeUnit.SECONDS);
+    subscriber.assertNoErrors();
+    subscriber.assertValueCount(1);
 
-    LlmResponse llmResponse = responseFlowable.blockingFirst();
-
-    assertThat(llmResponse.content().get().parts().get().get(0).text()).isEqualTo(COMPLETION_TEXT);
+    LlmResponse response = subscriber.values().get(0);
+    assertThat(response.content().flatMap(Content::parts).get().get(0).text().get())
+        .isEqualTo("Hello world");
   }
 
   @Test
-  public void generateContent_streamingCall_returnsLlmResponses() throws IOException {
-    ResponseBody mockStreamingBody =
-        createMockStreamingResponseBody(
-            List.of(STREAMING_CHUNK_1, STREAMING_CHUNK_2, STREAMING_DONE));
+  void generateContent_streaming_returnsChunks() {
+    String chunk1 = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n";
+    String chunk2 = "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n";
+    String done = "data: [DONE]\n\n";
 
-    Response mockResponse =
-        new Response.Builder()
-            .request(new Request.Builder().url("http://localhost").build())
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .body(mockStreamingBody)
-            .build();
+    server.enqueue(new MockResponse().setBody(chunk1 + chunk2 + done));
 
-    when(mockCall.execute())
-        .thenThrow(new IllegalStateException("Should not be called for streaming"));
+    LlmRequest request = buildUserRequest("Hi");
+    TestSubscriber<LlmResponse> subscriber = sarvamAi.generateContent(request, true).test();
 
-    LlmRequest llmRequest =
+    subscriber.awaitDone(5, TimeUnit.SECONDS);
+    subscriber.assertNoErrors();
+    subscriber.assertValueCount(2);
+
+    assertThat(
+            subscriber.values().get(0).content().flatMap(Content::parts).get().get(0).text().get())
+        .isEqualTo("Hello");
+    assertThat(
+            subscriber.values().get(1).content().flatMap(Content::parts).get().get(0).text().get())
+        .isEqualTo(" world");
+  }
+
+  @Test
+  void generateContent_streamingChunksAreMarkedPartial() {
+    server.enqueue(
+        new MockResponse()
+            .setBody(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"test\"}}]}\n\ndata: [DONE]\n\n"));
+
+    LlmRequest request = buildUserRequest("Hi");
+    TestSubscriber<LlmResponse> subscriber = sarvamAi.generateContent(request, true).test();
+
+    subscriber.awaitDone(5, TimeUnit.SECONDS);
+    subscriber.assertNoErrors();
+    LlmResponse response = subscriber.values().get(0);
+    assertThat(response.partial().orElse(false)).isTrue();
+  }
+
+  @Test
+  void generateContent_serverError_propagatesException() {
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(500)
+            .setBody(
+                "{\"error\":{\"message\":\"Internal error\",\"code\":\"internal_server_error\"}}"));
+
+    LlmRequest request = buildUserRequest("Hi");
+    TestSubscriber<LlmResponse> subscriber = sarvamAi.generateContent(request, false).test();
+
+    subscriber.awaitDone(5, TimeUnit.SECONDS);
+    subscriber.assertError(SarvamAiException.class);
+  }
+
+  @Test
+  void generateContent_usesCorrectAuthHeader() throws InterruptedException {
+    server.enqueue(
+        new MockResponse()
+            .setBody("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}"));
+
+    sarvamAi.generateContent(buildUserRequest("Hi"), false).blockingSubscribe();
+
+    RecordedRequest recorded = server.takeRequest(5, TimeUnit.SECONDS);
+    assertThat(recorded).isNotNull();
+    assertThat(recorded.getHeader("api-subscription-key")).isEqualTo("test-api-key");
+  }
+
+  @Test
+  void generateContent_setsStreamFlagInBody() throws InterruptedException {
+    String chunk = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n";
+    server.enqueue(new MockResponse().setBody(chunk));
+
+    sarvamAi.generateContent(buildUserRequest("Hello"), true).blockingSubscribe();
+
+    RecordedRequest recorded = server.takeRequest(5, TimeUnit.SECONDS);
+    assertThat(recorded).isNotNull();
+    String body = recorded.getBody().readUtf8();
+    assertThat(body).contains("\"stream\":true");
+  }
+
+  @Test
+  void generateContent_mapsModelRoleToAssistant() throws InterruptedException {
+    server.enqueue(
+        new MockResponse()
+            .setBody("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"}}]}"));
+
+    LlmRequest request =
         LlmRequest.builder()
             .contents(
-                List.of(Content.builder().parts(List.of(Part.fromText("test query"))).build()))
+                java.util.List.of(
+                    Content.builder().role("user").parts(Part.fromText("Hi")).build(),
+                    Content.builder().role("model").parts(Part.fromText("Hello")).build(),
+                    Content.builder().role("user").parts(Part.fromText("How?")).build()))
             .build();
-    Flowable<LlmResponse> responseFlowable = sarvamAi.generateContent(llmRequest, true);
 
-    // Simulate the asynchronous callback
-    Callback capturedCallback = callbackCaptor.getValue();
-    capturedCallback.onResponse(mockCall, mockResponse);
+    sarvamAi.generateContent(request, false).blockingSubscribe();
 
-    List<LlmResponse> responses = responseFlowable.toList().blockingGet();
-
-    assertThat(responses).hasSize(2);
-    assertThat(responses.get(0).content().get().parts().get().get(0).text()).isEqualTo("Hello,");
-    assertThat(responses.get(1).content().get().parts().get().get(0).text()).isEqualTo(" world!");
+    RecordedRequest recorded = server.takeRequest(5, TimeUnit.SECONDS);
+    String body = recorded.getBody().readUtf8();
+    assertThat(body).contains("\"role\":\"assistant\"");
+    assertThat(body).doesNotContain("\"role\":\"model\"");
   }
 
-  // Helper method to create a mock SarvamAi response body
-  private String createMockSarvamAiResponseBody(String text) {
-    return String.format("{\"choices\": [{\"message\": {\"content\": \"%s\"}}]}", text);
+  @Test
+  void builder_requiresModelName() {
+    assertThrows(
+        NullPointerException.class,
+        () -> SarvamAi.builder().config(SarvamAiConfig.builder().apiKey("key").build()).build());
   }
 
-  // Helper method to create a mock streaming response body
-  private ResponseBody createMockStreamingResponseBody(List<String> chunks) {
-    StringBuilder bodyBuilder = new StringBuilder();
-    for (String chunk : chunks) {
-      bodyBuilder.append(chunk).append("\n\n");
-    }
-    return ResponseBody.create(bodyBuilder.toString(), MediaType.get("text/event-stream"));
+  @Test
+  void builder_requiresConfig() {
+    assertThrows(
+        NullPointerException.class, () -> SarvamAi.builder().modelName("sarvam-m").build());
+  }
+
+  private LlmRequest buildUserRequest(String text) {
+    return LlmRequest.builder()
+        .contents(
+            Collections.singletonList(
+                Content.builder().role("user").parts(Part.fromText(text)).build()))
+        .build();
   }
 }
