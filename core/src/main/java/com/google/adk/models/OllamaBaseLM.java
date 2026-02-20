@@ -828,7 +828,7 @@ public class OllamaBaseLM extends BaseLlm {
     try {
 
       float temperature = config.temperature().isPresent() ? config.temperature().get() : 0.7f;
- 
+
       JSONObject responseJ = new JSONObject();
       // API endpoint URL //OLLAMA_API_BASE
       String apiUrl = D_URL != null ? D_URL : System.getenv(OLLAMA_EP);

@@ -786,7 +786,7 @@ public class BedrockBaseLM extends BaseLlm {
       }
 
       int responseCode = connection.getResponseCode();
-      System.out.println("Bedrock Response Code: " + responseCode);
+      //System.out.println("Bedrock Response Code: " + responseCode);
 
       if (responseCode >= 200 && responseCode < 300) {
         return new BufferedReader(new InputStreamReader(connection.getInputStream(), "UTF-8"));
@@ -908,14 +908,14 @@ public class BedrockBaseLM extends BaseLlm {
       try (OutputStream outputStream = connection.getOutputStream();
           OutputStreamWriter writer = new OutputStreamWriter(outputStream, "UTF-8")) {
         writer.write(jsonString);
-        System.out.println("Bedrock Base LM => " + jsonString);
+       // System.out.println("Bedrock Base LM => " + jsonString);
         writer.flush();
       } catch (IOException ex) {
         java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
       }
 
       int responseCode = connection.getResponseCode();
-      System.out.println("Response Code: " + responseCode);
+      //System.out.println("Response Code: " + responseCode);
 
       InputStream inputStream =
           (responseCode < 400) ? connection.getInputStream() : connection.getErrorStream();
@@ -975,7 +975,7 @@ public class BedrockBaseLM extends BaseLlm {
       String jsonString = payload.toString();
       URL url = new URL(apiUrl);
       HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-      System.out.print("HTTP Connection to Ollama API: " + apiUrl.toString());
+      //System.out.print("HTTP Connection to Ollama API: " + apiUrl.toString());
       connection.setRequestMethod("POST");
       connection.setRequestProperty("Content-Type", "application/json");
       connection.setRequestProperty("Authorization", "Bearer " + AWS_BEARER_TOKEN_BEDROCK);
@@ -983,11 +983,11 @@ public class BedrockBaseLM extends BaseLlm {
       connection.setFixedLengthStreamingMode(jsonString.getBytes().length);
       try (DataOutputStream outputStream = new DataOutputStream(connection.getOutputStream())) {
         outputStream.writeBytes(jsonString);
-        System.out.println("Bedrock Base LM => " + jsonString);
+       // System.out.println("Bedrock Base LM => " + jsonString);
         outputStream.flush();
       }
       int responseCode = connection.getResponseCode();
-      System.out.println("Response Code: " + responseCode);
+      //System.out.println("Response Code: " + responseCode);
       try (BufferedReader reader =
           new BufferedReader(new InputStreamReader(connection.getInputStream()))) {
         StringBuilder response = new StringBuilder();
@@ -1009,10 +1009,10 @@ public class BedrockBaseLM extends BaseLlm {
             streamOutput.append(responseText);
 
             // Display the parsed data
-            System.out.println("Model: " + model);
-            System.out.println("Response Text: " + responseText);
-            System.out.println("Done: " + done);
-            System.out.println("----------");
+//            System.out.println("Model: " + model);
+//            System.out.println("Response Text: " + responseText);
+//            System.out.println("Done: " + done);
+//            System.out.println("----------");
 
             // Break if response is marked as done
             if (done) {
@@ -1033,7 +1033,7 @@ public class BedrockBaseLM extends BaseLlm {
             response.append(line);
           }
           String responseBody = response.toString();
-          System.out.println("Response Body: " + responseBody);
+          //System.out.println("Response Body: " + responseBody);
 
           responseJ = new JSONObject(responseBody);
         }
