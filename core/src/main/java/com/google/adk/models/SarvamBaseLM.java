@@ -6,7 +6,6 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
-import com.google.adk.tools.BaseTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.genai.types.Content;
@@ -69,11 +68,23 @@ public class SarvamBaseLM extends BaseLlm {
   public SarvamBaseLM(String model) {
     super(model);
     this.baseUrl = null;
+    warnIfApiKeyMissing();
   }
 
   public SarvamBaseLM(String model, String baseUrl) {
     super(model);
     this.baseUrl = baseUrl;
+    warnIfApiKeyMissing();
+  }
+
+  private void warnIfApiKeyMissing() {
+    String apiKey = System.getenv(SARVAM_API_KEY_ENV);
+    if (apiKey == null || apiKey.isBlank()) {
+      logger.warn(
+          "SARVAM_API_KEY environment variable is not set. "
+              + "Sarvam API calls for model '{}' will fail with 401 Unauthorized.",
+          model());
+    }
   }
 
   private String resolveBaseUrl() {
@@ -137,10 +148,7 @@ public class SarvamBaseLM extends BaseLlm {
     if (hasFunctionCall) {
       Part fcPart = parts.stream().filter(p -> p.functionCall().isPresent()).findFirst().get();
       responseBuilder.content(
-          Content.builder()
-              .role("model")
-              .parts(ImmutableList.of(fcPart))
-              .build());
+          Content.builder().role("model").parts(ImmutableList.of(fcPart)).build());
     } else {
       responseBuilder.content(
           Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
@@ -161,9 +169,7 @@ public class SarvamBaseLM extends BaseLlm {
     JSONArray functions = buildTools(llmRequest);
 
     boolean lastRespToolExecuted =
-        Iterables.getLast(Iterables.getLast(contents).parts().get())
-            .functionResponse()
-            .isPresent();
+        Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
 
     float temperature =
         llmRequest.config().flatMap(GenerateContentConfig::temperature).orElse(0.7f);
@@ -196,8 +202,13 @@ public class SarvamBaseLM extends BaseLlm {
             String line = reader.readLine();
             if (line == null) {
               emitFinalStreamResponse(
-                  emitter, accumulatedText, inFunctionCall, functionCallName, functionCallArgs,
-                  inputTokens.get(), outputTokens.get());
+                  emitter,
+                  accumulatedText,
+                  inFunctionCall,
+                  functionCallName,
+                  functionCallArgs,
+                  inputTokens.get(),
+                  outputTokens.get());
               emitter.onComplete();
               return;
             }
@@ -209,8 +220,13 @@ public class SarvamBaseLM extends BaseLlm {
             if (line.equals("data: [DONE]")) {
               streamCompleted.set(true);
               emitFinalStreamResponse(
-                  emitter, accumulatedText, inFunctionCall, functionCallName, functionCallArgs,
-                  inputTokens.get(), outputTokens.get());
+                  emitter,
+                  accumulatedText,
+                  inFunctionCall,
+                  functionCallName,
+                  functionCallArgs,
+                  inputTokens.get(),
+                  outputTokens.get());
               emitter.onComplete();
               return;
             }
@@ -307,8 +323,7 @@ public class SarvamBaseLM extends BaseLlm {
 
         LlmResponse.Builder builder =
             LlmResponse.builder()
-                .content(
-                    Content.builder().role("model").parts(ImmutableList.of(part)).build());
+                .content(Content.builder().role("model").parts(ImmutableList.of(part)).build());
         if (usageMetadata != null) {
           builder.usageMetadata(usageMetadata);
         }
@@ -384,9 +399,7 @@ public class SarvamBaseLM extends BaseLlm {
       if (firstPart.functionResponse().isPresent()) {
         JSONObject msg = new JSONObject();
         msg.put("role", "tool");
-        msg.put(
-            "tool_call_id",
-            firstPart.functionResponse().get().name().orElse("call_unknown"));
+        msg.put("tool_call_id", firstPart.functionResponse().get().name().orElse("call_unknown"));
         msg.put(
             "content",
             new JSONObject(firstPart.functionResponse().get().response().get()).toString());
@@ -528,8 +541,7 @@ public class SarvamBaseLM extends BaseLlm {
         }
 
         if (responseCode >= 400) {
-          logger.error(
-              "Sarvam API error: status={} body={}", responseCode, sb);
+          logger.error("Sarvam API error: status={} body={}", responseCode, sb);
           return new JSONObject().put("error", sb.toString());
         }
 
@@ -595,8 +607,7 @@ public class SarvamBaseLM extends BaseLlm {
           while ((errorLine = errorReader.readLine()) != null) {
             errorResponse.append(errorLine);
           }
-          logger.error(
-              "Sarvam streaming failed: status={} body={}", responseCode, errorResponse);
+          logger.error("Sarvam streaming failed: status={} body={}", responseCode, errorResponse);
         }
         conn.disconnect();
         return null;
@@ -672,8 +683,8 @@ public class SarvamBaseLM extends BaseLlm {
   }
 
   /**
-   * Converts an OpenAI-format message JSON to ADK Part(s).
-   * Handles both text content and tool_calls in a single message.
+   * Converts an OpenAI-format message JSON to ADK Part(s). Handles both text content and tool_calls
+   * in a single message.
    */
   static List<Part> openAiMessageToParts(JSONObject message) {
     List<Part> parts = new ArrayList<>();
