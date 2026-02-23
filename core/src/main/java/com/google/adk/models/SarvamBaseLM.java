@@ -53,6 +53,11 @@ public class SarvamBaseLM extends BaseLlm {
   public static final String SARVAM_API_BASE_ENV = "SARVAM_API_BASE";
   public static final String SARVAM_API_KEY_ENV = "SARVAM_API_KEY";
   private static final String DEFAULT_BASE_URL = "https://api.sarvam.ai/v1";
+  private static final int CONNECT_TIMEOUT_MS = 30_000;
+  private static final int READ_TIMEOUT_MS = 120_000;
+
+  private static final ObjectMapper OBJECT_MAPPER =
+      new ObjectMapper().registerModule(new Jdk8Module());
 
   private final String baseUrl;
   private static final Logger logger = LoggerFactory.getLogger(SarvamBaseLM.class);
@@ -89,15 +94,10 @@ public class SarvamBaseLM extends BaseLlm {
       return generateContentStream(llmRequest);
     }
 
-    List<Content> contents = llmRequest.contents();
-    if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
-      Content userContent = Content.fromParts(Part.fromText(CONTINUE_OUTPUT_MESSAGE));
-      contents =
-          Stream.concat(contents.stream(), Stream.of(userContent)).collect(toImmutableList());
-    }
+    List<Content> contents = ensureLastContentIsUser(llmRequest.contents());
 
     String systemText = extractSystemText(llmRequest);
-    JSONArray messages = buildMessages(systemText, llmRequest.contents());
+    JSONArray messages = buildMessages(systemText, contents);
     JSONArray functions = buildTools(llmRequest);
 
     boolean lastRespToolExecuted =
@@ -105,6 +105,8 @@ public class SarvamBaseLM extends BaseLlm {
 
     float temperature =
         llmRequest.config().flatMap(GenerateContentConfig::temperature).orElse(0.7f);
+    Optional<Integer> maxTokens =
+        llmRequest.config().flatMap(GenerateContentConfig::maxOutputTokens);
 
     JSONObject response =
         callChatCompletions(
@@ -112,6 +114,7 @@ public class SarvamBaseLM extends BaseLlm {
             messages,
             lastRespToolExecuted ? null : (functions.length() > 0 ? functions : null),
             temperature,
+            maxTokens.orElse(-1),
             false);
 
     GenerateContentResponseUsageMetadata usageMetadata = extractUsageMetadata(response);
@@ -126,19 +129,21 @@ public class SarvamBaseLM extends BaseLlm {
     }
 
     JSONObject message = choices.getJSONObject(0).getJSONObject("message");
-    Part part = openAiMessageToPart(message);
+    List<Part> parts = openAiMessageToParts(message);
 
     LlmResponse.Builder responseBuilder = LlmResponse.builder();
 
-    if (part.functionCall().isPresent()) {
+    boolean hasFunctionCall = parts.stream().anyMatch(p -> p.functionCall().isPresent());
+    if (hasFunctionCall) {
+      Part fcPart = parts.stream().filter(p -> p.functionCall().isPresent()).findFirst().get();
       responseBuilder.content(
           Content.builder()
               .role("model")
-              .parts(ImmutableList.of(Part.builder().functionCall(part.functionCall().get()).build()))
+              .parts(ImmutableList.of(fcPart))
               .build());
     } else {
       responseBuilder.content(
-          Content.builder().role("model").parts(ImmutableList.of(part)).build());
+          Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
     }
 
     if (usageMetadata != null) {
@@ -149,25 +154,21 @@ public class SarvamBaseLM extends BaseLlm {
   }
 
   private Flowable<LlmResponse> generateContentStream(LlmRequest llmRequest) {
-    List<Content> contents = llmRequest.contents();
-    if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
-      Content userContent = Content.fromParts(Part.fromText(CONTINUE_OUTPUT_MESSAGE));
-      contents =
-          Stream.concat(contents.stream(), Stream.of(userContent)).collect(toImmutableList());
-    }
+    List<Content> contents = ensureLastContentIsUser(llmRequest.contents());
 
     String systemText = extractSystemText(llmRequest);
-    JSONArray messages = buildMessages(systemText, llmRequest.contents());
+    JSONArray messages = buildMessages(systemText, contents);
     JSONArray functions = buildTools(llmRequest);
 
-    final List<Content> finalContents = contents;
     boolean lastRespToolExecuted =
-        Iterables.getLast(Iterables.getLast(finalContents).parts().get())
+        Iterables.getLast(Iterables.getLast(contents).parts().get())
             .functionResponse()
             .isPresent();
 
     float temperature =
         llmRequest.config().flatMap(GenerateContentConfig::temperature).orElse(0.7f);
+    Optional<Integer> maxTokens =
+        llmRequest.config().flatMap(GenerateContentConfig::maxOutputTokens);
 
     final StringBuilder accumulatedText = new StringBuilder();
     final StringBuilder functionCallName = new StringBuilder();
@@ -183,7 +184,8 @@ public class SarvamBaseLM extends BaseLlm {
                 this.model(),
                 messages,
                 lastRespToolExecuted ? null : (functions.length() > 0 ? functions : null),
-                temperature),
+                temperature,
+                maxTokens.orElse(-1)),
         (reader, emitter) -> {
           try {
             if (reader == null || streamCompleted.get()) {
@@ -193,56 +195,23 @@ public class SarvamBaseLM extends BaseLlm {
 
             String line = reader.readLine();
             if (line == null) {
-              if (accumulatedText.length() > 0) {
-                emitter.onNext(createTextResponse(accumulatedText.toString(), false));
-              }
+              emitFinalStreamResponse(
+                  emitter, accumulatedText, inFunctionCall, functionCallName, functionCallArgs,
+                  inputTokens.get(), outputTokens.get());
               emitter.onComplete();
               return;
             }
 
-            if (line.isEmpty() || line.equals("data: [DONE]")) {
-              if (line.equals("data: [DONE]")) {
-                streamCompleted.set(true);
-                GenerateContentResponseUsageMetadata usageMetadata =
-                    buildUsageMetadata(inputTokens.get(), outputTokens.get());
+            if (line.isEmpty()) {
+              return;
+            }
 
-                if (inFunctionCall.get() && functionCallName.length() > 0) {
-                  try {
-                    Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
-                    FunctionCall fc =
-                        FunctionCall.builder().name(functionCallName.toString()).args(args).build();
-                    Part part = Part.builder().functionCall(fc).build();
-
-                    LlmResponse.Builder funcResponseBuilder =
-                        LlmResponse.builder()
-                            .content(
-                                Content.builder()
-                                    .role("model")
-                                    .parts(ImmutableList.of(part))
-                                    .build());
-                    if (usageMetadata != null) {
-                      funcResponseBuilder.usageMetadata(usageMetadata);
-                    }
-                    emitter.onNext(funcResponseBuilder.build());
-                  } catch (Exception funcEx) {
-                    logger.error("Error creating function call response", funcEx);
-                  }
-                } else if (accumulatedText.length() > 0) {
-                  LlmResponse.Builder finalBuilder =
-                      LlmResponse.builder()
-                          .content(
-                              Content.builder()
-                                  .role("model")
-                                  .parts(Part.fromText(accumulatedText.toString()))
-                                  .build())
-                          .partial(false);
-                  if (usageMetadata != null) {
-                    finalBuilder.usageMetadata(usageMetadata);
-                  }
-                  emitter.onNext(finalBuilder.build());
-                }
-                emitter.onComplete();
-              }
+            if (line.equals("data: [DONE]")) {
+              streamCompleted.set(true);
+              emitFinalStreamResponse(
+                  emitter, accumulatedText, inFunctionCall, functionCallName, functionCallArgs,
+                  inputTokens.get(), outputTokens.get());
+              emitter.onComplete();
               return;
             }
 
@@ -259,7 +228,7 @@ public class SarvamBaseLM extends BaseLlm {
               return;
             }
 
-            if (chunk.has("usage")) {
+            if (chunk.has("usage") && !chunk.isNull("usage")) {
               JSONObject usage = chunk.getJSONObject("usage");
               inputTokens.set(usage.optInt("prompt_tokens", 0));
               outputTokens.set(usage.optInt("completion_tokens", 0));
@@ -316,22 +285,76 @@ public class SarvamBaseLM extends BaseLlm {
         });
   }
 
-  private String extractSystemText(LlmRequest llmRequest) {
-    Optional<GenerateContentConfig> configOpt = llmRequest.config();
-    if (configOpt.isPresent()) {
-      Optional<Content> systemInstructionOpt = configOpt.get().systemInstruction();
-      if (systemInstructionOpt.isPresent()) {
-        String text =
-            systemInstructionOpt.get().parts().orElse(ImmutableList.of()).stream()
-                .filter(p -> p.text().isPresent())
-                .map(p -> p.text().get())
-                .collect(Collectors.joining("\n"));
-        if (!text.isEmpty()) {
-          return text;
+  private void emitFinalStreamResponse(
+      io.reactivex.rxjava3.core.Emitter<LlmResponse> emitter,
+      StringBuilder accumulatedText,
+      AtomicBoolean inFunctionCall,
+      StringBuilder functionCallName,
+      StringBuilder functionCallArgs,
+      int promptTokens,
+      int completionTokens) {
+
+    GenerateContentResponseUsageMetadata usageMetadata =
+        buildUsageMetadata(promptTokens, completionTokens);
+
+    if (inFunctionCall.get() && functionCallName.length() > 0) {
+      try {
+        String argsString = functionCallArgs.length() > 0 ? functionCallArgs.toString() : "{}";
+        Map<String, Object> args = new JSONObject(argsString).toMap();
+        FunctionCall fc =
+            FunctionCall.builder().name(functionCallName.toString()).args(args).build();
+        Part part = Part.builder().functionCall(fc).build();
+
+        LlmResponse.Builder builder =
+            LlmResponse.builder()
+                .content(
+                    Content.builder().role("model").parts(ImmutableList.of(part)).build());
+        if (usageMetadata != null) {
+          builder.usageMetadata(usageMetadata);
         }
+        emitter.onNext(builder.build());
+      } catch (Exception funcEx) {
+        logger.error("Error creating function call response from stream", funcEx);
       }
+    } else if (accumulatedText.length() > 0) {
+      LlmResponse.Builder builder =
+          LlmResponse.builder()
+              .content(
+                  Content.builder()
+                      .role("model")
+                      .parts(Part.fromText(accumulatedText.toString()))
+                      .build())
+              .partial(false);
+      if (usageMetadata != null) {
+        builder.usageMetadata(usageMetadata);
+      }
+      emitter.onNext(builder.build());
     }
-    return "";
+  }
+
+  // ========== Request Building ==========
+
+  private List<Content> ensureLastContentIsUser(List<Content> contents) {
+    if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
+      Content userContent = Content.fromParts(Part.fromText(CONTINUE_OUTPUT_MESSAGE));
+      return Stream.concat(contents.stream(), Stream.of(userContent)).collect(toImmutableList());
+    }
+    return contents;
+  }
+
+  private String extractSystemText(LlmRequest llmRequest) {
+    return llmRequest
+        .config()
+        .flatMap(GenerateContentConfig::systemInstruction)
+        .flatMap(Content::parts)
+        .map(
+            parts ->
+                parts.stream()
+                    .filter(p -> p.text().isPresent())
+                    .map(p -> p.text().get())
+                    .collect(Collectors.joining("\n")))
+        .filter(text -> !text.isEmpty())
+        .orElse("");
   }
 
   private JSONArray buildMessages(String systemText, List<Content> contents) {
@@ -345,25 +368,54 @@ public class SarvamBaseLM extends BaseLlm {
     }
 
     for (Content item : contents) {
-      JSONObject msg = new JSONObject();
       String role = item.role().orElse("user");
-      msg.put("role", role.equals("model") ? "assistant" : role);
+      List<Part> parts = item.parts().orElse(ImmutableList.of());
 
-      if (item.parts().isPresent() && !item.parts().get().isEmpty()) {
-        Part firstPart = item.parts().get().get(0);
-        if (firstPart.functionResponse().isPresent()) {
-          msg.put(
-              "content",
-              new JSONObject(firstPart.functionResponse().get().response().get()).toString());
-          msg.put("role", "tool");
-          msg.put("tool_call_id", firstPart.functionResponse().get().name().orElse("unknown"));
-        } else {
-          msg.put("content", item.text());
-        }
-      } else {
+      if (parts.isEmpty()) {
+        JSONObject msg = new JSONObject();
+        msg.put("role", role.equals("model") ? "assistant" : role);
         msg.put("content", item.text());
+        messages.put(msg);
+        continue;
       }
-      messages.put(msg);
+
+      Part firstPart = parts.get(0);
+
+      if (firstPart.functionResponse().isPresent()) {
+        JSONObject msg = new JSONObject();
+        msg.put("role", "tool");
+        msg.put(
+            "tool_call_id",
+            firstPart.functionResponse().get().name().orElse("call_unknown"));
+        msg.put(
+            "content",
+            new JSONObject(firstPart.functionResponse().get().response().get()).toString());
+        messages.put(msg);
+      } else if (firstPart.functionCall().isPresent()) {
+        // Assistant message that previously requested a tool call
+        FunctionCall fc = firstPart.functionCall().get();
+        JSONObject msg = new JSONObject();
+        msg.put("role", "assistant");
+        msg.put("content", JSONObject.NULL);
+
+        JSONArray toolCalls = new JSONArray();
+        JSONObject toolCall = new JSONObject();
+        toolCall.put("id", "call_" + fc.name().orElse("unknown"));
+        toolCall.put("type", "function");
+        JSONObject function = new JSONObject();
+        function.put("name", fc.name().orElse(""));
+        function.put("arguments", new JSONObject(fc.args().orElse(Map.of())).toString());
+        toolCall.put("function", function);
+        toolCalls.put(toolCall);
+        msg.put("tool_calls", toolCalls);
+
+        messages.put(msg);
+      } else {
+        JSONObject msg = new JSONObject();
+        msg.put("role", role.equals("model") ? "assistant" : role);
+        msg.put("content", item.text());
+        messages.put(msg);
+      }
     }
     return messages;
   }
@@ -394,15 +446,12 @@ public class SarvamBaseLM extends BaseLlm {
                 Optional<Map<String, Schema>> propsOpt = paramsSchema.properties();
                 if (propsOpt.isPresent()) {
                   Map<String, Object> propsMap = new HashMap<>();
-                  ObjectMapper mapper = new ObjectMapper();
-                  mapper.registerModule(new Jdk8Module());
-
                   propsOpt
                       .get()
                       .forEach(
                           (key, schema) -> {
                             Map<String, Object> schemaMap =
-                                mapper.convertValue(
+                                OBJECT_MAPPER.convertValue(
                                     schema, new TypeReference<Map<String, Object>>() {});
                             normalizeTypeStrings(schemaMap);
                             propsMap.put(key, schemaMap);
@@ -424,8 +473,15 @@ public class SarvamBaseLM extends BaseLlm {
     return functions;
   }
 
+  // ========== HTTP Transport ==========
+
   private JSONObject callChatCompletions(
-      String model, JSONArray messages, JSONArray tools, float temperature, boolean stream) {
+      String model,
+      JSONArray messages,
+      JSONArray tools,
+      float temperature,
+      int maxTokens,
+      boolean stream) {
     try {
       String apiUrl = resolveBaseUrl() + "/chat/completions";
       String apiKey = resolveApiKey();
@@ -436,22 +492,19 @@ public class SarvamBaseLM extends BaseLlm {
       payload.put("temperature", temperature);
       payload.put("stream", stream);
 
+      if (maxTokens > 0) {
+        payload.put("max_tokens", maxTokens);
+      }
+
       if (tools != null && tools.length() > 0) {
         payload.put("tools", tools);
         payload.put("tool_choice", "auto");
       }
 
       String jsonString = payload.toString();
-      logger.debug("Sarvam request: {}", jsonString);
+      logger.debug("Sarvam request payload size: {} bytes", jsonString.length());
 
-      URL url = new URL(apiUrl);
-      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-      conn.setRequestMethod("POST");
-      conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-      if (apiKey != null && !apiKey.isEmpty()) {
-        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-      }
-      conn.setDoOutput(true);
+      HttpURLConnection conn = openConnection(apiUrl, apiKey);
       conn.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
 
       try (OutputStream os = conn.getOutputStream();
@@ -465,6 +518,7 @@ public class SarvamBaseLM extends BaseLlm {
 
       InputStream inputStream =
           (responseCode < 400) ? conn.getInputStream() : conn.getErrorStream();
+
       try (BufferedReader reader =
           new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) {
         StringBuilder sb = new StringBuilder();
@@ -472,6 +526,13 @@ public class SarvamBaseLM extends BaseLlm {
         while ((line = reader.readLine()) != null) {
           sb.append(line);
         }
+
+        if (responseCode >= 400) {
+          logger.error(
+              "Sarvam API error: status={} body={}", responseCode, sb);
+          return new JSONObject().put("error", sb.toString());
+        }
+
         JSONObject responseJson = new JSONObject(sb.toString());
         conn.disconnect();
         return responseJson;
@@ -483,7 +544,7 @@ public class SarvamBaseLM extends BaseLlm {
   }
 
   private BufferedReader callChatCompletionsStream(
-      String model, JSONArray messages, JSONArray tools, float temperature) {
+      String model, JSONArray messages, JSONArray tools, float temperature, int maxTokens) {
     try {
       String apiUrl = resolveBaseUrl() + "/chat/completions";
       String apiKey = resolveApiKey();
@@ -494,6 +555,15 @@ public class SarvamBaseLM extends BaseLlm {
       payload.put("temperature", temperature);
       payload.put("stream", true);
 
+      // Request token usage in streaming responses
+      JSONObject streamOptions = new JSONObject();
+      streamOptions.put("include_usage", true);
+      payload.put("stream_options", streamOptions);
+
+      if (maxTokens > 0) {
+        payload.put("max_tokens", maxTokens);
+      }
+
       if (tools != null && tools.length() > 0) {
         payload.put("tools", tools);
         payload.put("tool_choice", "auto");
@@ -501,15 +571,8 @@ public class SarvamBaseLM extends BaseLlm {
 
       String jsonString = payload.toString();
 
-      URL url = new URL(apiUrl);
-      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-      conn.setRequestMethod("POST");
-      conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+      HttpURLConnection conn = openConnection(apiUrl, apiKey);
       conn.setRequestProperty("Accept", "text/event-stream");
-      if (apiKey != null && !apiKey.isEmpty()) {
-        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-      }
-      conn.setDoOutput(true);
       conn.setFixedLengthStreamingMode(jsonString.getBytes("UTF-8").length);
 
       try (OutputStream os = conn.getOutputStream();
@@ -533,9 +596,7 @@ public class SarvamBaseLM extends BaseLlm {
             errorResponse.append(errorLine);
           }
           logger.error(
-              "Sarvam streaming request failed: status={} body={}",
-              responseCode,
-              errorResponse);
+              "Sarvam streaming failed: status={} body={}", responseCode, errorResponse);
         }
         conn.disconnect();
         return null;
@@ -545,6 +606,22 @@ public class SarvamBaseLM extends BaseLlm {
       return null;
     }
   }
+
+  private HttpURLConnection openConnection(String apiUrl, String apiKey) throws IOException {
+    URL url = new URL(apiUrl);
+    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+    conn.setRequestMethod("POST");
+    conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+    conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+    conn.setReadTimeout(READ_TIMEOUT_MS);
+    conn.setDoOutput(true);
+    if (apiKey != null && !apiKey.isEmpty()) {
+      conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+    }
+    return conn;
+  }
+
+  // ========== Response Parsing ==========
 
   private LlmResponse createTextResponse(String text, boolean partial) {
     return LlmResponse.builder()
@@ -565,7 +642,7 @@ public class SarvamBaseLM extends BaseLlm {
 
       if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
         logger.info(
-            "Sarvam token counts: prompt={}, completion={}, total={}",
+            "Sarvam token usage: prompt={}, completion={}, total={}",
             promptTokens,
             completionTokens,
             totalTokens);
@@ -594,7 +671,13 @@ public class SarvamBaseLM extends BaseLlm {
     return null;
   }
 
-  static Part openAiMessageToPart(JSONObject message) {
+  /**
+   * Converts an OpenAI-format message JSON to ADK Part(s).
+   * Handles both text content and tool_calls in a single message.
+   */
+  static List<Part> openAiMessageToParts(JSONObject message) {
+    List<Part> parts = new ArrayList<>();
+
     if (message.has("tool_calls")) {
       JSONArray toolCalls = message.optJSONArray("tool_calls");
       if (toolCalls != null && toolCalls.length() > 0) {
@@ -606,39 +689,38 @@ public class SarvamBaseLM extends BaseLlm {
           if (name != null) {
             Map<String, Object> args = new JSONObject(argsStr).toMap();
             FunctionCall fc = FunctionCall.builder().name(name).args(args).build();
-            return Part.builder().functionCall(fc).build();
+            parts.add(Part.builder().functionCall(fc).build());
+            return parts;
           }
         }
       }
     }
 
     if (message.has("content") && !message.isNull("content")) {
-      return Part.builder().text(message.getString("content")).build();
+      parts.add(Part.builder().text(message.getString("content")).build());
+    } else {
+      parts.add(Part.builder().text("").build());
     }
 
-    return Part.builder().text("").build();
+    return parts;
   }
 
+  @SuppressWarnings("unchecked")
   private void normalizeTypeStrings(Map<String, Object> valueDict) {
     if (valueDict == null) {
       return;
     }
-    if (valueDict.containsKey("type")) {
+    if (valueDict.containsKey("type") && valueDict.get("type") instanceof String) {
       valueDict.put("type", ((String) valueDict.get("type")).toLowerCase());
     }
-    if (valueDict.containsKey("items")) {
-      Object items = valueDict.get("items");
-      if (items instanceof Map) {
-        normalizeTypeStrings((Map<String, Object>) items);
-        Map<String, Object> itemsMap = (Map<String, Object>) items;
-        if (itemsMap.containsKey("properties")) {
-          Map<String, Object> properties = (Map<String, Object>) itemsMap.get("properties");
-          if (properties != null) {
-            for (Object value : properties.values()) {
-              if (value instanceof Map) {
-                normalizeTypeStrings((Map<String, Object>) value);
-              }
-            }
+    if (valueDict.containsKey("items") && valueDict.get("items") instanceof Map) {
+      Map<String, Object> itemsMap = (Map<String, Object>) valueDict.get("items");
+      normalizeTypeStrings(itemsMap);
+      if (itemsMap.containsKey("properties") && itemsMap.get("properties") instanceof Map) {
+        Map<String, Object> properties = (Map<String, Object>) itemsMap.get("properties");
+        for (Object value : properties.values()) {
+          if (value instanceof Map) {
+            normalizeTypeStrings((Map<String, Object>) value);
           }
         }
       }
