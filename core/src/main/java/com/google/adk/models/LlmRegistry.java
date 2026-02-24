@@ -37,7 +37,9 @@ public final class LlmRegistry {
   /** Registers default LLM factories, e.g. for Gemini models. */
   static {
     registerLlm("gemini-.*", modelName -> Gemini.builder().modelName(modelName).build());
+    registerLlm("gemma-.*", modelName -> Gemma.builder().modelName(modelName).build());
     registerLlm("apigee/.*", modelName -> ApigeeLlm.builder().modelName(modelName).build());
+    registerLlm("gpt-oss-.*", modelName -> GptOssLlm.builder().modelName(modelName).build());
   }
 
   /**
