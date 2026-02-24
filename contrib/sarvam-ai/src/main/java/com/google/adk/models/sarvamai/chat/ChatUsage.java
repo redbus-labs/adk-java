@@ -19,7 +19,11 @@ package com.google.adk.models.sarvamai.chat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-/** Token usage metadata from Sarvam AI API response. */
+/**
+ * Token usage metadata from Sarvam AI API response.
+ *
+ * @author Sandeep Belgavi
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class ChatUsage {
 

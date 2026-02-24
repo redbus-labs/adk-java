@@ -56,6 +56,8 @@ import org.slf4j.LoggerFactory;
  *   <li><b>WebSocket streaming</b> ({@link #transcribeStream}): Real-time streaming via WebSocket
  *       with VAD support, delivering partial and final transcription events.
  * </ul>
+ *
+ * @author Sandeep Belgavi
  */
 public final class SarvamSttService implements TranscriptionService {
 

@@ -19,7 +19,11 @@ package com.google.adk.models.sarvamai.tts;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-/** Request body for the Sarvam AI text-to-speech REST endpoint. */
+/**
+ * Request body for the Sarvam AI text-to-speech REST endpoint.
+ *
+ * @author Sandeep Belgavi
+ */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class TtsRequest {
 

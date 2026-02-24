@@ -62,6 +62,8 @@ import org.slf4j.LoggerFactory;
  *         .build())
  *     .build();
  * }</pre>
+ *
+ * @author Sandeep Belgavi
  */
 public class SarvamAi extends BaseLlm {
 

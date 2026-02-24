@@ -51,6 +51,8 @@ import org.slf4j.LoggerFactory;
  *   <li>{@link #getJobStatus} - Poll for completion
  *   <li>{@link #downloadResults} - Retrieve the processed output
  * </ol>
+ *
+ * @author Sandeep Belgavi
  */
 public final class SarvamVisionService {
 

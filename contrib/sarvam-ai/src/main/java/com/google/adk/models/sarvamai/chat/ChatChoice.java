@@ -22,6 +22,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * A choice in the Sarvam AI chat completion response. Handles both non-streaming ({@code message})
  * and streaming ({@code delta}) response formats.
+ *
+ * @author Sandeep Belgavi
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class ChatChoice {

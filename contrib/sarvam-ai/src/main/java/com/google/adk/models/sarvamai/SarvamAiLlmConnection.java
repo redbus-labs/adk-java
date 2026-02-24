@@ -37,6 +37,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Maintains conversation history and streams responses token-by-token using SSE. Accumulates the
  * full model response into history after each turn to support multi-turn context.
+ *
+ * @author Sandeep Belgavi
  */
 final class SarvamAiLlmConnection implements BaseLlmConnection {
 

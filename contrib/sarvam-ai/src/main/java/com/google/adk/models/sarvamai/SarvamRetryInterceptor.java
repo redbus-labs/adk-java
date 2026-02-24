@@ -26,6 +26,8 @@ import org.slf4j.LoggerFactory;
 /**
  * OkHttp interceptor that implements exponential backoff with jitter for retryable Sarvam API
  * errors (429 rate limit, 5xx server errors).
+ *
+ * @author Sandeep Belgavi
  */
 final class SarvamRetryInterceptor implements Interceptor {
 

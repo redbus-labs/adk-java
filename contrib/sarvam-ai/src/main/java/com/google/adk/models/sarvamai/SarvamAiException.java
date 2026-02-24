@@ -21,6 +21,8 @@ import java.util.Optional;
 /**
  * Domain exception for Sarvam AI API errors. Carries structured error information from the API
  * response for programmatic error handling.
+ *
+ * @author Sandeep Belgavi
  */
 public class SarvamAiException extends RuntimeException {
 

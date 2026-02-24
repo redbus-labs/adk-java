@@ -20,7 +20,11 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-/** A message in the Sarvam AI chat completion API (request or response). */
+/**
+ * A message in the Sarvam AI chat completion API (request or response).
+ *
+ * @author Sandeep Belgavi
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class ChatMessage {

@@ -45,6 +45,8 @@ import org.slf4j.LoggerFactory;
  * <p>WebSocket streaming mode ({@link #synthesizeStream}): Opens a persistent WebSocket connection
  * for progressive audio chunk delivery with low latency. Audio chunks are emitted as they are
  * synthesized, enabling real-time playback.
+ *
+ * @author Sandeep Belgavi
  */
 public final class SarvamTtsService {
 

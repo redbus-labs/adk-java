@@ -28,6 +28,8 @@ import java.util.List;
 /**
  * Request body for the Sarvam AI chat completions endpoint. Constructed from the ADK {@link
  * LlmRequest} and {@link SarvamAiConfig}.
+ *
+ * @author Sandeep Belgavi
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public final class ChatRequest {

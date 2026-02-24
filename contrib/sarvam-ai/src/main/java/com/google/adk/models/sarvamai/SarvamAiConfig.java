@@ -31,6 +31,8 @@ import java.util.OptionalInt;
  * Builder pattern for safe, incremental construction with sensible defaults.
  *
  * <p>API key resolution order: explicit value > {@code SARVAM_API_KEY} environment variable.
+ *
+ * @author Sandeep Belgavi
  */
 public final class SarvamAiConfig {
 

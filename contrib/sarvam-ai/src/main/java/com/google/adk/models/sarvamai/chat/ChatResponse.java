@@ -23,6 +23,8 @@ import java.util.List;
 /**
  * Response from the Sarvam AI chat completions endpoint. Supports both non-streaming and streaming
  * (SSE chunk) formats.
+ *
+ * @author Sandeep Belgavi
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class ChatResponse {

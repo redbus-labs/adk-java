@@ -20,7 +20,11 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
-/** Response from the Sarvam AI text-to-speech REST endpoint. */
+/**
+ * Response from the Sarvam AI text-to-speech REST endpoint.
+ *
+ * @author Sandeep Belgavi
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class TtsResponse {
 
