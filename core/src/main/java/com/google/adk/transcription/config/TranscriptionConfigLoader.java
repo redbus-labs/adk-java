@@ -23,19 +23,11 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Loads transcription configuration from environment variables. Follows 12-Factor App principles.
- *
- * <p>Transcription is an optional feature. If ADK_TRANSCRIPTION_ENDPOINT is not set, this returns
- * Optional.empty(), allowing the framework to work without transcription.
- *
- * @author Sandeep Belgavi
- * @since 2026-01-24
- */
+/** Loads transcription configuration from environment variables or system properties. */
 public class TranscriptionConfigLoader {
   private static final Logger logger = LoggerFactory.getLogger(TranscriptionConfigLoader.class);
 
-  // Environment variable names
+  // Variable names
   private static final String ENDPOINT_ENV = "ADK_TRANSCRIPTION_ENDPOINT";
   private static final String API_KEY_ENV = "ADK_TRANSCRIPTION_API_KEY";
   private static final String LANGUAGE_ENV = "ADK_TRANSCRIPTION_LANGUAGE";
@@ -44,16 +36,23 @@ public class TranscriptionConfigLoader {
   private static final String SERVICE_TYPE_ENV = "ADK_TRANSCRIPTION_SERVICE_TYPE";
   private static final String CHUNK_SIZE_ENV = "ADK_TRANSCRIPTION_CHUNK_SIZE_MS";
 
-  /**
-   * Loads configuration from environment variables. Returns Optional.empty() if transcription is
-   * not configured (optional feature).
-   *
-   * @return Optional containing TranscriptionConfig if configured
-   */
-  public static Optional<TranscriptionConfig> loadFromEnvironment() {
-    String endpoint = System.getenv(ENDPOINT_ENV);
+  private static String getValue(String key) {
+    String val = System.getProperty(key);
+    if (val == null || val.isEmpty()) {
+      val = System.getenv(key);
+    }
+    return val;
+  }
 
-    // Transcription is optional - return empty if not configured
+  public static Optional<TranscriptionConfig> loadFromEnvironment() {
+    String endpoint = getValue(ENDPOINT_ENV);
+
+    // For Sarvam, we can default the endpoint if service type is sarvam
+    String serviceType = getValue(SERVICE_TYPE_ENV);
+    if ("sarvam".equalsIgnoreCase(serviceType) && (endpoint == null || endpoint.isEmpty())) {
+      endpoint = "https://api.sarvam.ai/speech-to-text";
+    }
+
     if (endpoint == null || endpoint.isEmpty()) {
       logger.debug("Transcription not configured ({} not set)", ENDPOINT_ENV);
       return Optional.empty();
@@ -61,20 +60,23 @@ public class TranscriptionConfigLoader {
 
     TranscriptionConfig.Builder builder = TranscriptionConfig.builder().endpoint(endpoint);
 
-    // Optional: API Key
-    String apiKey = System.getenv(API_KEY_ENV);
+    String apiKey = getValue(API_KEY_ENV);
+    if (apiKey == null || apiKey.isEmpty()) {
+      apiKey = getValue("SARVAM_API_KEY");
+    }
+
     if (apiKey != null && !apiKey.isEmpty()) {
       builder.apiKey(apiKey);
     }
 
-    // Optional: Language (default: auto)
-    String language = System.getenv(LANGUAGE_ENV);
+    String language = getValue(LANGUAGE_ENV);
     if (language != null && !language.isEmpty()) {
       builder.language(language);
+    } else if ("sarvam".equalsIgnoreCase(serviceType)) {
+      builder.language("hi-IN"); // Default for Sarvam POC
     }
 
-    // Optional: Timeout (default: 30 seconds)
-    String timeoutStr = System.getenv(TIMEOUT_ENV);
+    String timeoutStr = getValue(TIMEOUT_ENV);
     if (timeoutStr != null) {
       try {
         int timeoutSeconds = Integer.parseInt(timeoutStr);
@@ -86,43 +88,12 @@ public class TranscriptionConfigLoader {
       }
     }
 
-    // Optional: Max retries (default: 3)
-    String maxRetriesStr = System.getenv(MAX_RETRIES_ENV);
-    if (maxRetriesStr != null) {
-      try {
-        int maxRetries = Integer.parseInt(maxRetriesStr);
-        if (maxRetries >= 0) {
-          builder.maxRetries(maxRetries);
-        }
-      } catch (NumberFormatException e) {
-        logger.warn("Invalid max retries value: {}, using default", maxRetriesStr);
-      }
-    }
-
-    // Optional: Chunk size (default: 500ms)
-    String chunkSizeStr = System.getenv(CHUNK_SIZE_ENV);
-    if (chunkSizeStr != null) {
-      try {
-        int chunkSizeMs = Integer.parseInt(chunkSizeStr);
-        if (chunkSizeMs > 0) {
-          builder.chunkSizeMs(chunkSizeMs);
-        }
-      } catch (NumberFormatException e) {
-        logger.warn("Invalid chunk size value: {}, using default", chunkSizeStr);
-      }
-    }
-
-    // Audio format (default: PCM 16kHz Mono)
     builder.audioFormat(AudioFormat.PCM_16KHZ_MONO);
-
-    // Enable partial results for real-time streaming
     builder.enablePartialResults(true);
 
     TranscriptionConfig config = builder.build();
     logger.info(
-        "Loaded transcription config: endpoint={}, service={}",
-        config.getEndpoint(),
-        System.getenv(SERVICE_TYPE_ENV));
+        "Loaded transcription config: endpoint={}, service={}", config.getEndpoint(), serviceType);
 
     return Optional.of(config);
   }
