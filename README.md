@@ -32,7 +32,7 @@ Of course. Here is the table with the 4th column for "Bedrock API" added.
 | :--- | :--- | :--- | :--- | 
 | **MapDB** | ✅ | ✅ | ✅ |  
 | **MongoDB** | ✅ | ✅ | ❌ |  
-| **Postgres** | ✅ | ✅ | ❌ |  
+| **Postgres** | ✅ | ✅ | ✅ |  
 
 ### MapDbSessionService("map.db")
 
