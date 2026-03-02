@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.1.0](https://github.com/redbus-labs/adk-java/compare/v1.0.0...v1.1.0) (2026-02-25)
+
+
+### Features
+
+* Add ComputerUse tool ([d733a48](https://github.com/redbus-labs/adk-java/commit/d733a480a7a787cb7c32fd3470ab978ca3eb574c))
+* Extend url_context support to Gemini 3 in Java ADK ([2c9d4dd](https://github.com/redbus-labs/adk-java/commit/2c9d4dd5eafe8efe3a2fb099b58e2d0f1d9cad98))
+* Extend url_context support to Gemini 3 in Java ADK ([5f5869f](https://github.com/redbus-labs/adk-java/commit/5f5869f67200831dcbb7ac10ad0d7f44410bc096))
+* Update AgentExecutor so it builds new runner on execute and there is no need to pass the runner instance ([7218295](https://github.com/redbus-labs/adk-java/commit/72182958586e59ccb3d7490cd207ec2837c5b577))
+
+
+### Bug Fixes
+
+* deep-merge stateDelta maps when merging EventActions ([ff07474](https://github.com/redbus-labs/adk-java/commit/ff07474035baec910f0c3fa83b7b1646d8409ffd))
+* drop explicit gemini-1 model version check in GoogleMapsTool ([7953503](https://github.com/redbus-labs/adk-java/commit/7953503e61c547e40a1e1abbece73a99910766c1))
+* include usage_metadata events in live postprocessing ([8137d66](https://github.com/redbus-labs/adk-java/commit/8137d661d7b29eab066c23b7f302068f82423eb7))
+* remove client-side function call IDs from LlmRequest ([99b5fc2](https://github.com/redbus-labs/adk-java/commit/99b5fc26d791175e4dad2c818191c8c31e4269f6))
+
+
+### Documentation
+
+* Update a parameter name in a comment ([5262d4a](https://github.com/redbus-labs/adk-java/commit/5262d4ae3eca533e1a695e6e2e71c5845055ed5d))
+
 ## [1.0.0](https://github.com/redbus-labs/adk-java/compare/v0.5.0...v1.0.0) (2026-02-17)
 
 
