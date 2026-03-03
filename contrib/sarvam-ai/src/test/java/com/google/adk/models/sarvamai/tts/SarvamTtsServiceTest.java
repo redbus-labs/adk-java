@@ -32,7 +32,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** @author Sandeep Belgavi */
+/**
+ * @author Sandeep Belgavi
+ */
 class SarvamTtsServiceTest {
 
   private MockWebServer server;

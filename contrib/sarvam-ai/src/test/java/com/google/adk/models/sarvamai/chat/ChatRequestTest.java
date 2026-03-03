@@ -27,7 +27,9 @@ import com.google.genai.types.Part;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** @author Sandeep Belgavi */
+/**
+ * @author Sandeep Belgavi
+ */
 class ChatRequestTest {
 
   private final ObjectMapper objectMapper = new ObjectMapper();
