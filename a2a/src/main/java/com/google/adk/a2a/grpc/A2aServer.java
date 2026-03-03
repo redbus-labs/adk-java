@@ -1,4 +1,6 @@
-/** Author: Sandeep Belgavi Date: January 16, 2026 */
+/**
+ * @author Sandeep Belgavi
+ */
 package com.google.adk.a2a.grpc;
 
 import com.google.gson.Gson;
