@@ -96,7 +96,7 @@ public class A2aAgentExecutor {
     for (Event event : inputEvents) {
       if (event.content().isPresent()) {
         Content content = event.content().get();
-        if ("user".equals(content.role())) {
+        if (content.role().isPresent() && "user".equals(content.role().get())) {
           userContent = content;
           break;
         }

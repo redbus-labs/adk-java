@@ -4,6 +4,7 @@ package com.google.adk.a2a.grpc;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -102,7 +103,7 @@ class A2aServiceEnhancedTest {
     serviceWithExecutor.sendMessage(request, mockResponseObserver);
 
     // Verify
-    verify(mockResponseObserver).onNext(any(SendMessageResponse.class));
+    verify(mockResponseObserver, atLeastOnce()).onNext(any(SendMessageResponse.class));
     verify(mockResponseObserver).onCompleted();
   }
 
