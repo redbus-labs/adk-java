@@ -41,6 +41,7 @@
     <java.version>17</java.version>
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.checkstyle.plugin.version>3.6.0</maven.checkstyle.plugin.version>
 
     <auto-value.version>1.11.1</auto-value.version>
     <spring-boot.version>3.4.1</spring-boot.version>
@@ -290,6 +291,11 @@
     <pluginManagement>
       <plugins>
         <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-checkstyle-plugin</artifactId>
+          <version>${maven.checkstyle.plugin.version}</version>
+        </plugin>
+        <plugin>
           <artifactId>maven-clean-plugin</artifactId>
           <version>3.1.0</version>
         </plugin>
@@ -464,6 +470,40 @@
     </plugins>
   </build>
   <profiles>
+    <profile>
+      <id>illegal-optional-check</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-checkstyle-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>illegal-optional-check</id>
+                <goals>
+                  <goal>check</goal>
+                </goals>
+                <phase>compile</phase>
+                <configuration>
+                  <checkstyleRules>
+                    <module name="Checker">
+                      <module name="TreeWalker">
+                        <module name="SuppressWarningsHolder" />
+                        <module name="IllegalType">
+                          <property name="illegalClassNames" value="java.util.Optional" />
+                          <property name="tokens" value="PARAMETER_DEF" />
+                        </module>
+                      </module>
+                      <module name="SuppressWarningsFilter" />
+                    </module>
+                  </checkstyleRules>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <profile>
       <id>release-sonatype</id>
       <build>
