@@ -81,70 +81,6 @@ public class InvocationContext {
   /**
    * @deprecated Use {@link #builder()} instead.
    */
-  @Deprecated(forRemoval = true)
-  public InvocationContext(
-      BaseSessionService sessionService,
-      BaseArtifactService artifactService,
-      BaseMemoryService memoryService,
-      Plugin pluginManager,
-      Optional<LiveRequestQueue> liveRequestQueue,
-      Optional<String> branch,
-      String invocationId,
-      BaseAgent agent,
-      Session session,
-      Optional<Content> userContent,
-      RunConfig runConfig,
-      boolean endInvocation) {
-    this(
-        builder()
-            .sessionService(sessionService)
-            .artifactService(artifactService)
-            .memoryService(memoryService)
-            .pluginManager(pluginManager)
-            .liveRequestQueue(liveRequestQueue)
-            .branch(branch)
-            .invocationId(invocationId)
-            .agent(agent)
-            .session(session)
-            .userContent(userContent)
-            .runConfig(runConfig)
-            .endInvocation(endInvocation));
-  }
-
-  /**
-   * @deprecated Use {@link #builder()} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public InvocationContext(
-      BaseSessionService sessionService,
-      BaseArtifactService artifactService,
-      BaseMemoryService memoryService,
-      Optional<LiveRequestQueue> liveRequestQueue,
-      Optional<String> branch,
-      String invocationId,
-      BaseAgent agent,
-      Session session,
-      Optional<Content> userContent,
-      RunConfig runConfig,
-      boolean endInvocation) {
-    this(
-        builder()
-            .sessionService(sessionService)
-            .artifactService(artifactService)
-            .memoryService(memoryService)
-            .liveRequestQueue(liveRequestQueue)
-            .branch(branch)
-            .invocationId(invocationId)
-            .agent(agent)
-            .session(session)
-            .userContent(userContent)
-            .runConfig(runConfig)
-            .endInvocation(endInvocation));
-  }
-
-  /**
-   * @deprecated Use {@link #builder()} instead.
-   */
   @InlineMe(
       replacement =
           "InvocationContext.builder()"
@@ -483,40 +419,10 @@ public class InvocationContext {
      *
      * @param liveRequestQueue the queue for managing live requests.
      * @return this builder instance for chaining.
-     * @deprecated Use {@link #liveRequestQueue(LiveRequestQueue)} instead.
-     */
-    // TODO: b/462140921 - Builders should not accept Optional parameters.
-    @Deprecated(forRemoval = true)
-    @CanIgnoreReturnValue
-    public Builder liveRequestQueue(Optional<LiveRequestQueue> liveRequestQueue) {
-      this.liveRequestQueue = liveRequestQueue.orElse(null);
-      return this;
-    }
-
-    /**
-     * Sets the queue for managing live requests.
-     *
-     * @param liveRequestQueue the queue for managing live requests.
-     * @return this builder instance for chaining.
      */
     @CanIgnoreReturnValue
     public Builder liveRequestQueue(@Nullable LiveRequestQueue liveRequestQueue) {
       this.liveRequestQueue = liveRequestQueue;
-      return this;
-    }
-
-    /**
-     * Sets the branch ID for the invocation.
-     *
-     * @param branch the branch ID for the invocation.
-     * @return this builder instance for chaining.
-     * @deprecated Use {@link #branch(String)} instead.
-     */
-    // TODO: b/462140921 - Builders should not accept Optional parameters.
-    @Deprecated(forRemoval = true)
-    @CanIgnoreReturnValue
-    public Builder branch(Optional<String> branch) {
-      this.branch = branch.orElse(null);
       return this;
     }
 
@@ -565,16 +471,6 @@ public class InvocationContext {
     @CanIgnoreReturnValue
     public Builder session(Session session) {
       this.session = session;
-      return this;
-    }
-
-    /**
-     * @deprecated Use {@link #userContent(Content)} instead.
-     */
-    @CanIgnoreReturnValue
-    @Deprecated
-    public Builder userContent(Optional<Content> userContent) {
-      this.userContent = userContent.orElse(null);
       return this;
     }
 
