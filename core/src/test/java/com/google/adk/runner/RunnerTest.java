@@ -1188,6 +1188,14 @@ public final class RunnerTest {
     verify(plugin).close();
   }
 
+  @Test
+  public void buildRunnerWithPlugins_success() {
+    BasePlugin plugin1 = mockPlugin("test1");
+    BasePlugin plugin2 = mockPlugin("test2");
+    Runner runner = Runner.builder().agent(agent).appName("test").plugins(plugin1, plugin2).build();
+    assertThat(runner.pluginManager().getPlugins()).containsExactly(plugin1, plugin2);
+  }
+
   public static class Tools {
     private Tools() {}
 

@@ -132,6 +132,13 @@ public class Runner {
       return this;
     }
 
+    @CanIgnoreReturnValue
+    public Builder plugins(Plugin... plugins) {
+      Preconditions.checkState(this.app == null, "plugins() cannot be called when app is set.");
+      this.plugins = ImmutableList.copyOf(plugins);
+      return this;
+    }
+
     public Runner build() {
       BaseAgent buildAgent;
       String buildAppName;
