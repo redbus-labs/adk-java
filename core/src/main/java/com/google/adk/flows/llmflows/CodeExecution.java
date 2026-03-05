@@ -303,7 +303,7 @@ public final class CodeExecution {
     }
     String codeStr = codeStrOptional.get();
     responseContent = responseContentBuilder.build();
-    llmResponseBuilder.content(Optional.empty());
+    llmResponseBuilder.content((Content) null);
 
     Event codeEvent =
         Event.builder()
