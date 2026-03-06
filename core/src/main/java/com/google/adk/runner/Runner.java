@@ -591,9 +591,9 @@ public class Runner {
    * @return invocation context configured for a live run.
    */
   private InvocationContext newInvocationContextForLive(
-      Session session, Optional<LiveRequestQueue> liveRequestQueue, RunConfig runConfig) {
+      Session session, @Nullable LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
     RunConfig.Builder runConfigBuilder = RunConfig.builder(runConfig);
-    if (liveRequestQueue.isPresent()) {
+    if (liveRequestQueue != null) {
       // Default to AUDIO modality if not specified.
       if (CollectionUtils.isNullOrEmpty(runConfig.responseModalities())) {
         runConfigBuilder.setResponseModalities(
@@ -614,8 +614,9 @@ public class Runner {
     InvocationContext.Builder builder =
         newInvocationContextBuilder(session)
             .runConfig(runConfigBuilder.build())
-            .userContent(Content.fromParts());
-    liveRequestQueue.ifPresent(builder::liveRequestQueue);
+            .userContent(Content.fromParts())
+            .liveRequestQueue(liveRequestQueue);
+
     return builder.build();
   }
 
@@ -643,7 +644,7 @@ public class Runner {
     return Flowable.defer(
             () -> {
               InvocationContext invocationContext =
-                  newInvocationContextForLive(session, Optional.of(liveRequestQueue), runConfig);
+                  newInvocationContextForLive(session, liveRequestQueue, runConfig);
 
               Single<InvocationContext> invocationContextSingle;
               if (invocationContext.agent() instanceof LlmAgent agent) {
