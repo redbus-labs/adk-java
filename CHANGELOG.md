@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/redbus-labs/adk-java/compare/v1.1.0...v1.2.0) (2026-03-03)
+
+
+### Features
+
+* Add a2a/webservice module and a2a_remote sample to build ([d08a2bc](https://github.com/redbus-labs/adk-java/commit/d08a2bc359442df8dc0ec0b616d54c91095c724a))
+* Add additional A2A files (A2ASendMessageExecutor, webservice, a2a_remote sample) ([22b1a89](https://github.com/redbus-labs/adk-java/commit/22b1a89bd48214eb84f0a16e9f2e795785a5d028))
+
+
+### Bug Fixes
+
+* Resolve cyclic dependency and adapt A2A tests for current codebase ([c23d95c](https://github.com/redbus-labs/adk-java/commit/c23d95c121f7074cae0f3ca7e5d3708a2360c63c))
+
 ## [1.1.0](https://github.com/redbus-labs/adk-java/compare/v1.0.0...v1.1.0) (2026-02-25)
 
 
