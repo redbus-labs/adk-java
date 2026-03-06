@@ -122,7 +122,7 @@ public final class Functions {
                       new IllegalStateException(
                           "Content role is missing in event: " + modelResponseEvent.id()));
       Content newContent = Content.builder().role(role).parts(newParts).build();
-      modelResponseEvent.setContent(Optional.of(newContent));
+      modelResponseEvent.setContent(newContent);
     }
   }
 
@@ -468,8 +468,8 @@ public final class Functions {
             .id(Event.generateEventId())
             .invocationId(baseEvent.invocationId())
             .author(baseEvent.author())
-            .branch(baseEvent.branch())
-            .content(Optional.of(Content.builder().role("user").parts(mergedParts).build()))
+            .branch(baseEvent.branch().orElse(null))
+            .content(Content.builder().role("user").parts(mergedParts).build())
             .actions(mergedActionsBuilder.build())
             .timestamp(baseEvent.timestamp())
             .build());
@@ -624,7 +624,7 @@ public final class Functions {
         .id(Event.generateEventId())
         .invocationId(invocationContext.invocationId())
         .author(invocationContext.agent().name())
-        .branch(invocationContext.branch())
+        .branch(invocationContext.branch().orElse(null))
         .content(Content.builder().role("user").parts(partFunctionResponse).build())
         .actions(toolContext.eventActions())
         .build();
@@ -684,7 +684,7 @@ public final class Functions {
         Event.builder()
             .invocationId(invocationContext.invocationId())
             .author(invocationContext.agent().name())
-            .branch(invocationContext.branch())
+            .branch(invocationContext.branch().orElse(null))
             .content(contentBuilder.build())
             .longRunningToolIds(longRunningToolIds)
             .build());

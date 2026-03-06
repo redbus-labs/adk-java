@@ -229,7 +229,7 @@ public final class CodeExecution {
                   Event.builder()
                       .invocationId(invocationContext.invocationId())
                       .author(llmAgent.name())
-                      .content(Optional.of(codeContent))
+                      .content(codeContent)
                       .build();
 
               return Flowable.defer(
@@ -309,7 +309,7 @@ public final class CodeExecution {
         Event.builder()
             .invocationId(invocationContext.invocationId())
             .author(llmAgent.name())
-            .content(Optional.of(responseContent))
+            .content(responseContent)
             .actions(EventActions.builder().build())
             .build();
 
@@ -456,7 +456,7 @@ public final class CodeExecution {
               return Event.builder()
                   .invocationId(invocationContext.invocationId())
                   .author(invocationContext.agent().name())
-                  .content(Optional.of(resultContent))
+                  .content(resultContent)
                   .actions(eventActionsBuilder.build())
                   .build();
             });

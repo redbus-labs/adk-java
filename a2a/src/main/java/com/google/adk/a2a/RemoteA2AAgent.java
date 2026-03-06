@@ -436,7 +436,7 @@ public class RemoteA2AAgent extends BaseAgent {
       }
       Content aggregatedContent = Content.builder().role("model").parts(parts).build();
 
-      event.setContent(Optional.of(aggregatedContent));
+      event.setContent(aggregatedContent);
 
       ImmutableList.Builder<CustomMetadata> newMetadata = ImmutableList.builder();
       event.customMetadata().ifPresent(newMetadata::addAll);

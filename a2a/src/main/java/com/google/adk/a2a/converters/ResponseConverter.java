@@ -76,7 +76,7 @@ public final class ResponseConverter {
       boolean isLastChunk = Objects.equals(artifactEvent.isLastChunk(), true);
 
       Event eventPart = artifactToEvent(artifactEvent.getArtifact(), context);
-      eventPart.setPartial(Optional.of(isAppend || !isLastChunk));
+      eventPart.setPartial(isAppend || !isLastChunk);
       // append=true, lastChunk=false: emit as partial, update aggregation
       // append=false, lastChunk=false: emit as partial, reset aggregation
       // append=true, lastChunk=true: emit as partial, update aggregation and emit as non-partial

@@ -784,7 +784,7 @@ public final class ContentsTest {
     return Event.builder()
         .id(id)
         .author(USER)
-        .content(Optional.of(Content.fromParts(Part.fromText(text))))
+        .content(Content.fromParts(Part.fromText(text)))
         .invocationId("invocationId")
         .build();
   }
@@ -794,7 +794,7 @@ public final class ContentsTest {
     return Event.builder()
         .id(id)
         .author(USER)
-        .content(Optional.of(Content.fromParts(Part.fromText(text))))
+        .content(Content.fromParts(Part.fromText(text)))
         .invocationId(invocationId)
         .timestamp(timestamp)
         .build();

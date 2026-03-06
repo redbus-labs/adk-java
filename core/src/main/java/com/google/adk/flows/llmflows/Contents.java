@@ -760,9 +760,7 @@ public final class Contents implements RequestProcessor {
     }
 
     return baseEvent.toBuilder()
-        .content(
-            Optional.of(
-                Content.builder().role(baseContent.role().get()).parts(partsInMergedEvent).build()))
+        .content(Content.builder().role(baseContent.role().get()).parts(partsInMergedEvent).build())
         .build();
   }
 
