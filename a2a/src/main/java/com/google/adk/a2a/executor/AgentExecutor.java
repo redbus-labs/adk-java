@@ -308,16 +308,8 @@ public class AgentExecutor implements io.a2a.server.agentexecution.AgentExecutor
                 "Agent returned an error: " + event.errorCode().get(),
                 null));
       }
-      ImmutableList<Part<?>> parts = EventConverter.contentToParts(event.content());
-      // Mark all parts as partial if the event is partial.
-      if (event.partial().orElse(false)) {
-        parts.forEach(
-            part -> {
-              Map<String, Object> metadata = part.getMetadata();
-              metadata.put("adk_partial", true);
-            });
-      }
-
+      ImmutableList<Part<?>> parts =
+          EventConverter.contentToParts(event.content(), event.partial().orElse(false));
       Map<String, Object> metadata = new HashMap<>();
       if (event.customMetadata().isPresent()) {
         for (CustomMetadata cm : event.customMetadata().get()) {

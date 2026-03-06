@@ -12,7 +12,6 @@ import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
-import com.google.genai.types.Part;
 import io.a2a.client.MessageEvent;
 import io.a2a.client.TaskUpdateEvent;
 import io.a2a.spec.Artifact;
@@ -25,7 +24,6 @@ import io.a2a.spec.TaskStatusUpdateEvent;
 import io.a2a.spec.TextPart;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.Optional;
-import java.util.UUID;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -64,124 +62,6 @@ public final class ResponseConverterTest {
 
   private static TaskStatusUpdateEvent.Builder testTaskStatusUpdateEvent() {
     return new TaskStatusUpdateEvent.Builder().taskId("task-1").contextId("context-1");
-  }
-
-  @Test
-  public void eventsToMessage_withNullEvents_returnsEmptyAgentMessage() {
-    Message message = ResponseConverter.eventsToMessage(null, "context-1", "task-1");
-    assertThat(message.getContextId()).isEqualTo("context-1");
-    assertThat(message.getRole()).isEqualTo(Message.Role.AGENT);
-    assertThat(message.getParts()).hasSize(1);
-    assertThat(((TextPart) message.getParts().get(0)).getText()).isEmpty();
-  }
-
-  @Test
-  public void eventsToMessage_withEmptyEvents_returnsEmptyAgentMessage() {
-    Message message = ResponseConverter.eventsToMessage(ImmutableList.of(), "context-1", "task-1");
-    assertThat(message.getContextId()).isEqualTo("context-1");
-    assertThat(message.getRole()).isEqualTo(Message.Role.AGENT);
-    assertThat(message.getParts()).hasSize(1);
-    assertThat(((TextPart) message.getParts().get(0)).getText()).isEmpty();
-  }
-
-  @Test
-  public void eventsToMessage_withSingleEvent_returnsMessage() {
-    Event event =
-        Event.builder()
-            .id(UUID.randomUUID().toString())
-            .author("user")
-            .content(
-                Content.builder()
-                    .role("user")
-                    .parts(ImmutableList.of(Part.builder().text("Hello").build()))
-                    .build())
-            .build();
-
-    Message message =
-        ResponseConverter.eventsToMessage(ImmutableList.of(event), "context-1", "task-1");
-
-    assertThat(message.getContextId()).isEqualTo("context-1");
-    assertThat(message.getRole()).isEqualTo(Message.Role.USER);
-    assertThat(message.getParts()).hasSize(1);
-    assertThat(((TextPart) message.getParts().get(0)).getText()).isEqualTo("Hello");
-  }
-
-  @Test
-  public void eventsToMessage_withMultipleEvents_returnsAggregatedMessage() {
-    Event event1 =
-        Event.builder()
-            .id(UUID.randomUUID().toString())
-            .author("agent")
-            .content(
-                Content.builder()
-                    .role("model")
-                    .parts(ImmutableList.of(Part.builder().text("Hello ").build()))
-                    .build())
-            .build();
-    Event event2 =
-        Event.builder()
-            .id(UUID.randomUUID().toString())
-            .author("agent")
-            .content(
-                Content.builder()
-                    .role("model")
-                    .parts(ImmutableList.of(Part.builder().text("World").build()))
-                    .build())
-            .build();
-
-    Message message =
-        ResponseConverter.eventsToMessage(ImmutableList.of(event1, event2), "context-1", "task-1");
-
-    assertThat(message.getMessageId()).isEqualTo("task-1");
-    assertThat(message.getContextId()).isEqualTo("context-1");
-    assertThat(message.getRole()).isEqualTo(Message.Role.AGENT);
-    assertThat(message.getParts()).hasSize(2);
-    assertThat(((TextPart) message.getParts().get(0)).getText()).isEqualTo("Hello ");
-    assertThat(((TextPart) message.getParts().get(1)).getText()).isEqualTo("World");
-  }
-
-  @Test
-  public void eventToMessage_convertsUserEvent() {
-    Event event =
-        Event.builder()
-            .id("event-1")
-            .author("user")
-            .content(
-                Content.builder()
-                    .role("user")
-                    .parts(ImmutableList.of(Part.builder().text("Test").build()))
-                    .build())
-            .build();
-
-    Message message = ResponseConverter.eventToMessage(event, "context-1");
-
-    assertThat(message.getMessageId()).isEqualTo("event-1");
-    assertThat(message.getContextId()).isEqualTo("context-1");
-    assertThat(message.getRole()).isEqualTo(Message.Role.USER);
-    assertThat(message.getParts()).hasSize(1);
-    assertThat(((TextPart) message.getParts().get(0)).getText()).isEqualTo("Test");
-  }
-
-  @Test
-  public void eventToMessage_convertsAgentEvent() {
-    Event event =
-        Event.builder()
-            .id("event-1")
-            .author("agent")
-            .content(
-                Content.builder()
-                    .role("model")
-                    .parts(ImmutableList.of(Part.builder().text("Test").build()))
-                    .build())
-            .build();
-
-    Message message = ResponseConverter.eventToMessage(event, "context-1");
-
-    assertThat(message.getMessageId()).isEqualTo("event-1");
-    assertThat(message.getContextId()).isEqualTo("context-1");
-    assertThat(message.getRole()).isEqualTo(Message.Role.AGENT);
-    assertThat(message.getParts()).hasSize(1);
-    assertThat(((TextPart) message.getParts().get(0)).getText()).isEqualTo("Test");
   }
 
   @Test
