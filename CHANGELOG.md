@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.8.0](https://github.com/google/adk-java/compare/v0.7.0...v0.8.0) (2026-03-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove methods with Optional params from LiveRequest.Builder
+* remove deprecated methods accepting Optional params in InvocationContext
+* remove deprecated BaseToolset.isToolSelected method
+* remove Optional parameters from LlmResponse.Builder's methods
+* remove support for legacy `transferToAgent`, superseded by `transfer_to_agent`
+
+### Features
+
+* add callbacks functionality to the agent executor ([7e8f9dc](https://github.com/google/adk-java/commit/7e8f9dcf82fe7e62aee625fbfaa8673d238ff184))
+* add example on how to expose agent via A2A protocol ([e3ea378](https://github.com/google/adk-java/commit/e3ea378051e5c4e5e5031657467145779e42db55))
+* Adding a Builder for EventsCompactionConfig ([05fbcfc](https://github.com/google/adk-java/commit/05fbcfc933923ae711cd12e7fc9e587fd8e2685c))
+* Adding a SessionKey for typeSafety ([d899f6f](https://github.com/google/adk-java/commit/d899f6f4ad52c84cb4ac8c90d0dc88c22487029c))
+* Adding plugin(Plugin... p) helper methods on App and Runner builders ([dc1a192](https://github.com/google/adk-java/commit/dc1a192a81a92870aa5a4af27a9dc90e81cdaf67))
+* implement partial event aggregation in RemoteA2AAgent ([e064067](https://github.com/google/adk-java/commit/e0640673d212b9849d312953f192f8da51fae85b))
+* remove deprecated BaseToolset.isToolSelected method ([d2f1145](https://github.com/google/adk-java/commit/d2f11456c3a99edd43b3dc0d04743ae7e9390ded))
+* remove deprecated methods accepting Optional params in InvocationContext ([88153c8](https://github.com/google/adk-java/commit/88153c833697a9b9c6ec735a69f48a92cbdfc54b))
+* remove methods with Optional params from LiveRequest.Builder ([84c62a4](https://github.com/google/adk-java/commit/84c62a48ef7b62641722824fe5ba1200606b7b17))
+* remove Optional parameters from LlmResponse.Builder's methods ([a3ac436](https://github.com/google/adk-java/commit/a3ac436bcfa241e90c07485e5da918ec8dbc2b4a))
+
+
+### Bug Fixes
+
+* Allow injecting ObjectMapper in FunctionTool, default to ObjectMapper (re. [#473](https://github.com/google/adk-java/issues/473)) ([71b1070](https://github.com/google/adk-java/commit/71b10701e753bddaa96d5e6579b759d2b9bb3e92))
+* downgrade otel.version to 1.51.0 ([117fedf](https://github.com/google/adk-java/commit/117fedf672bb67c4b078ac75ee81a7710452c5b5))
+* Ensure Gemini 3.1 models have events correctly buffered ([acffdb9](https://github.com/google/adk-java/commit/acffdb96bcd8133af99cb0b9426665ba73a83bbc))
+* Exit from rearrangeEventsForLatestFunctionResponse if size of events is less than 2 ([5bc3ef8](https://github.com/google/adk-java/commit/5bc3ef89e62eb3f32ba7e45657c9e40c88c3a5e9))
+* Fixed issue where events were marked empty if the first part had an empty text; now checks all parts for meaningful content ([a0cba25](https://github.com/google/adk-java/commit/a0cba25d691f4be72bea22b0649ecf2d2c110736))
+* prepare JSON serialization for Jackson 2.20.2 and Spring Boot 4.0.2 upgrades ([8c6591b](https://github.com/google/adk-java/commit/8c6591bc4ad86c376cdd70e1bb64f359fbf22fe9))
+
+
+### Miscellaneous Chores
+
+* revert: switch release please secret to use adk-java-releases-bot's token ([7eafd1b](https://github.com/google/adk-java/commit/7eafd1bd9b16e9ed83dfbc3d0983cfc415c0aaec))
+
+
+### Code Refactoring
+
+* remove support for legacy `transferToAgent`, superseded by `transfer_to_agent` ([c1ccb2e](https://github.com/google/adk-java/commit/c1ccb2e9d375fedcd7dbb594300e66a1a0488a91))
+
 ## [0.7.0](https://github.com/google/adk-java/compare/v0.6.0...v0.7.0) (2026-02-27)
 
 
