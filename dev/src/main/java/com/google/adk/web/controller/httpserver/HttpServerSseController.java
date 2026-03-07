@@ -172,7 +172,11 @@ public class HttpServerSseController implements HttpHandler {
       // Get event stream
       io.reactivex.rxjava3.core.Flowable<com.google.adk.events.Event> eventFlowable =
           runner.runAsync(
-              request.userId, request.sessionId, request.newMessage, runConfig, request.stateDelta);
+              request.userId,
+              request.sessionId,
+              request.getNewMessage(),
+              runConfig,
+              request.stateDelta);
 
       // Use CountDownLatch to wait for stream completion
       java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
