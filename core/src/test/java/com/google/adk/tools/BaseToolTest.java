@@ -2,13 +2,16 @@ package com.google.adk.tools;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.adk.agents.InvocationContext;
+import com.google.adk.agents.LlmAgent;
+import com.google.adk.models.Gemini;
 import com.google.adk.models.LlmRequest;
+import com.google.adk.sessions.InMemorySessionService;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GoogleMaps;
 import com.google.genai.types.GoogleSearch;
-import com.google.genai.types.GoogleSearchRetrieval;
 import com.google.genai.types.Tool;
 import com.google.genai.types.ToolCodeExecution;
 import com.google.genai.types.UrlContext;
@@ -144,25 +147,6 @@ public final class BaseToolTest {
   }
 
   @Test
-  public void processLlmRequestWithGoogleSearchRetrievalToolAddsToolToConfig() {
-    GoogleSearchTool googleSearchTool = new GoogleSearchTool();
-    LlmRequest llmRequest =
-        LlmRequest.builder()
-            .config(GenerateContentConfig.builder().build())
-            .model("gemini-1")
-            .build();
-    LlmRequest.Builder llmRequestBuilder = llmRequest.toBuilder();
-    Completable unused =
-        googleSearchTool.processLlmRequest(llmRequestBuilder, /* toolContext= */ null);
-    LlmRequest updatedLlmRequest = llmRequestBuilder.build();
-    assertThat(updatedLlmRequest.config()).isPresent();
-    assertThat(updatedLlmRequest.config().get().tools()).isPresent();
-    assertThat(updatedLlmRequest.config().get().tools().get())
-        .containsExactly(
-            Tool.builder().googleSearchRetrieval(GoogleSearchRetrieval.builder().build()).build());
-  }
-
-  @Test
   public void processLlmRequestWithUrlContextToolAddsToolToConfig() {
     FunctionDeclaration functionDeclaration =
         FunctionDeclaration.builder().name("test_function").build();
@@ -191,8 +175,40 @@ public final class BaseToolTest {
             Tool.builder().urlContext(UrlContext.builder().build()).build());
   }
 
+  private static InvocationContext.Builder testInvocationContext() {
+    InvocationContext.Builder builder = InvocationContext.builder();
+    builder.agent(testAgent().build());
+    InMemorySessionService inMemorySessionService = new InMemorySessionService();
+    builder.sessionService(inMemorySessionService);
+    builder.session(inMemorySessionService.createSession("test-app", "test-user-id").blockingGet());
+    return builder;
+  }
+
+  private static LlmAgent.Builder testAgent() {
+    return LlmAgent.builder().name("test-agent");
+  }
+
   @Test
-  public void processLlmRequestWithBuiltInCodeExecutionToolAddsToolToConfig() {
+  public void
+      processLlmRequestWithBuiltInCodeExecutionToolAndNonGeminiModelAndNullContextAddsToolToConfig() {
+    BuiltInCodeExecutionTool builtInCodeExecutionTool = new BuiltInCodeExecutionTool();
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .config(GenerateContentConfig.builder().build())
+            .model("text-bison")
+            .build();
+    LlmRequest.Builder llmRequestBuilder = llmRequest.toBuilder();
+    Completable unused =
+        builtInCodeExecutionTool.processLlmRequest(llmRequestBuilder, /* toolContext= */ null);
+    LlmRequest updatedLlmRequest = llmRequestBuilder.build();
+    assertThat(updatedLlmRequest.config()).isPresent();
+    assertThat(updatedLlmRequest.config().get().tools()).isPresent();
+    assertThat(updatedLlmRequest.config().get().tools().get())
+        .containsExactly(Tool.builder().codeExecution(ToolCodeExecution.builder().build()).build());
+  }
+
+  @Test
+  public void processLlmRequestWithBuiltInCodeExecutionToolAndGemini2ModelAddsToolToConfig() {
     BuiltInCodeExecutionTool builtInCodeExecutionTool = new BuiltInCodeExecutionTool();
     LlmRequest llmRequest =
         LlmRequest.builder()
@@ -200,8 +216,13 @@ public final class BaseToolTest {
             .model("gemini-2")
             .build();
     LlmRequest.Builder llmRequestBuilder = llmRequest.toBuilder();
-    Completable unused =
-        builtInCodeExecutionTool.processLlmRequest(llmRequestBuilder, /* toolContext= */ null);
+    ToolContext toolContext =
+        ToolContext.builder(
+                testInvocationContext()
+                    .agent(testAgent().model(new Gemini("gemini-2", "")).build())
+                    .build())
+            .build();
+    Completable unused = builtInCodeExecutionTool.processLlmRequest(llmRequestBuilder, toolContext);
     LlmRequest updatedLlmRequest = llmRequestBuilder.build();
     assertThat(updatedLlmRequest.config()).isPresent();
     assertThat(updatedLlmRequest.config().get().tools()).isPresent();

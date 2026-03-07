@@ -351,7 +351,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                 .id(Event.generateEventId())
                                 .invocationId(context.invocationId())
                                 .author(context.agent().name())
-                                .branch(context.branch())
+                                .branch(context.branch().orElse(null))
                                 .build();
                         mutableEventTemplate.setTimestamp(0L);
 
@@ -535,7 +535,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                   Event.builder()
                       .invocationId(invocationContext.invocationId())
                       .author(invocationContext.agent().name())
-                      .branch(invocationContext.branch());
+                      .branch(invocationContext.branch().orElse(null));
 
               Flowable<Event> receiveFlow =
                   connection
@@ -577,13 +577,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                   .get()
                                   .content(event.content().get());
                             }
-                            if (functionResponses.stream()
-                                    .anyMatch(
-                                        functionResponse ->
-                                            functionResponse
-                                                .name()
-                                                .orElse("")
-                                                .equals("transferToAgent"))
+                            if (event.actions().transferToAgent().isPresent()
                                 || event.actions().endInvocation().orElse(false)) {
                               sendTask.dispose();
                               connection.close();
@@ -645,17 +639,17 @@ public abstract class BaseLlmFlow implements BaseFlow {
       Event baseEventForLlmResponse, LlmRequest llmRequest, LlmResponse llmResponse) {
     Event.Builder eventBuilder =
         baseEventForLlmResponse.toBuilder()
-            .content(llmResponse.content())
-            .partial(llmResponse.partial())
-            .errorCode(llmResponse.errorCode())
-            .errorMessage(llmResponse.errorMessage())
-            .interrupted(llmResponse.interrupted())
-            .turnComplete(llmResponse.turnComplete())
-            .groundingMetadata(llmResponse.groundingMetadata())
-            .avgLogprobs(llmResponse.avgLogprobs())
-            .finishReason(llmResponse.finishReason())
-            .usageMetadata(llmResponse.usageMetadata())
-            .modelVersion(llmResponse.modelVersion());
+            .content(llmResponse.content().orElse(null))
+            .partial(llmResponse.partial().orElse(null))
+            .errorCode(llmResponse.errorCode().orElse(null))
+            .errorMessage(llmResponse.errorMessage().orElse(null))
+            .interrupted(llmResponse.interrupted().orElse(null))
+            .turnComplete(llmResponse.turnComplete().orElse(null))
+            .groundingMetadata(llmResponse.groundingMetadata().orElse(null))
+            .avgLogprobs(llmResponse.avgLogprobs().orElse(null))
+            .finishReason(llmResponse.finishReason().orElse(null))
+            .usageMetadata(llmResponse.usageMetadata().orElse(null))
+            .modelVersion(llmResponse.modelVersion().orElse(null));
 
     Event event = eventBuilder.build();
 
@@ -667,7 +661,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
           Functions.getLongRunningFunctionCalls(event.functionCalls(), llmRequest.tools());
       logger.debug("longRunningToolIds: {}", longRunningToolIds);
       if (!longRunningToolIds.isEmpty()) {
-        event.setLongRunningToolIds(Optional.of(longRunningToolIds));
+        event.setLongRunningToolIds(longRunningToolIds);
       }
     }
     return event;

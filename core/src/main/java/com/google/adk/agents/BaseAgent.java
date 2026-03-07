@@ -409,7 +409,7 @@ public abstract class BaseAgent {
                                 .id(Event.generateEventId())
                                 .invocationId(invocationContext.invocationId())
                                 .author(name())
-                                .branch(invocationContext.branch())
+                                .branch(invocationContext.branch().orElse(null))
                                 .actions(callbackContext.eventActions())
                                 .content(content)
                                 .build());
@@ -426,7 +426,7 @@ public abstract class BaseAgent {
                             .id(Event.generateEventId())
                             .invocationId(invocationContext.invocationId())
                             .author(name())
-                            .branch(invocationContext.branch())
+                            .branch(invocationContext.branch().orElse(null))
                             .actions(callbackContext.eventActions());
 
                     return Single.just(Optional.of(eventBuilder.build()));

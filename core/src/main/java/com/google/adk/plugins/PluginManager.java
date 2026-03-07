@@ -23,6 +23,8 @@ import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.ToolContext;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
@@ -79,6 +81,21 @@ public class PluginManager extends BasePlugin {
    */
   public Optional<Plugin> getPlugin(String pluginName) {
     return plugins.stream().filter(p -> p.getName().equals(pluginName)).findFirst();
+  }
+
+  /**
+   * Returns the list of registered plugins.
+   *
+   * <p>This method is intended for testing purposes only.
+   *
+   * <p>Note that it returns a copy of the plugins list to prevent modification of the original
+   * list.
+   *
+   * @return The list of registered plugins.
+   */
+  @VisibleForTesting
+  public List<Plugin> getPlugins() {
+    return ImmutableList.copyOf(plugins);
   }
 
   // --- Callback Runners ---

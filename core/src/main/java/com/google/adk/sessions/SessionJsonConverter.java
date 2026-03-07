@@ -208,9 +208,12 @@ final class SessionJsonConverter {
             .timestamp(convertToInstant(apiEvent.get("timestamp")).toEpochMilli())
             .errorCode(
                 Optional.ofNullable(apiEvent.get("errorCode"))
-                    .map(value -> new FinishReason((String) value)))
+                    .map(value -> new FinishReason((String) value))
+                    .orElse(null))
             .errorMessage(
-                Optional.ofNullable(apiEvent.get("errorMessage")).map(value -> (String) value))
+                Optional.ofNullable(apiEvent.get("errorMessage"))
+                    .map(value -> (String) value)
+                    .orElse(null))
             .build();
     Map<String, Object> eventMetadata = (Map<String, Object>) apiEvent.get("eventMetadata");
     if (eventMetadata != null) {
@@ -236,7 +239,7 @@ final class SessionJsonConverter {
                   Optional.ofNullable((Boolean) eventMetadata.get("turnComplete")).orElse(false))
               .interrupted(
                   Optional.ofNullable((Boolean) eventMetadata.get("interrupted")).orElse(false))
-              .branch(Optional.ofNullable((String) eventMetadata.get("branch")))
+              .branch((String) eventMetadata.get("branch"))
               .groundingMetadata(groundingMetadata)
               .usageMetadata(usageMetadata)
               .longRunningToolIds(
