@@ -122,7 +122,7 @@ public final class Functions {
                       new IllegalStateException(
                           "Content role is missing in event: " + modelResponseEvent.id()));
       Content newContent = Content.builder().role(role).parts(newParts).build();
-      modelResponseEvent.setContent(Optional.of(newContent));
+      modelResponseEvent.setContent(newContent);
     }
   }
 
@@ -253,7 +253,8 @@ public final class Functions {
                             functionCall.id().map(toolConfirmations::get).orElse(null))
                         .build();
 
-                Map<String, Object> functionArgs = functionCall.args().orElse(new HashMap<>());
+                Map<String, Object> functionArgs =
+                    functionCall.args().map(HashMap::new).orElse(new HashMap<>());
 
                 Maybe<Map<String, Object>> maybeFunctionResult =
                     maybeInvokeBeforeToolCall(invocationContext, tool, functionArgs, toolContext)
@@ -467,8 +468,8 @@ public final class Functions {
             .id(Event.generateEventId())
             .invocationId(baseEvent.invocationId())
             .author(baseEvent.author())
-            .branch(baseEvent.branch())
-            .content(Optional.of(Content.builder().role("user").parts(mergedParts).build()))
+            .branch(baseEvent.branch().orElse(null))
+            .content(Content.builder().role("user").parts(mergedParts).build())
             .actions(mergedActionsBuilder.build())
             .timestamp(baseEvent.timestamp())
             .build());
@@ -482,12 +483,8 @@ public final class Functions {
     if (invocationContext.agent() instanceof LlmAgent) {
       LlmAgent agent = (LlmAgent) invocationContext.agent();
 
-      HashMap<String, Object> mutableFunctionArgs = new HashMap<>(functionArgs);
-
       Maybe<Map<String, Object>> pluginResult =
-          invocationContext
-              .pluginManager()
-              .beforeToolCallback(tool, mutableFunctionArgs, toolContext);
+          invocationContext.pluginManager().beforeToolCallback(tool, functionArgs, toolContext);
 
       List<? extends BeforeToolCallback> callbacks = agent.canonicalBeforeToolCallbacks();
       if (callbacks.isEmpty()) {
@@ -500,8 +497,7 @@ public final class Functions {
                   Flowable.fromIterable(callbacks)
                       .concatMapMaybe(
                           callback ->
-                              callback.call(
-                                  invocationContext, tool, mutableFunctionArgs, toolContext))
+                              callback.call(invocationContext, tool, functionArgs, toolContext))
                       .firstElement());
 
       return pluginResult.switchIfEmpty(callbackResult);
@@ -628,7 +624,7 @@ public final class Functions {
         .id(Event.generateEventId())
         .invocationId(invocationContext.invocationId())
         .author(invocationContext.agent().name())
-        .branch(invocationContext.branch())
+        .branch(invocationContext.branch().orElse(null))
         .content(Content.builder().role("user").parts(partFunctionResponse).build())
         .actions(toolContext.eventActions())
         .build();
@@ -688,7 +684,7 @@ public final class Functions {
         Event.builder()
             .invocationId(invocationContext.invocationId())
             .author(invocationContext.agent().name())
-            .branch(invocationContext.branch())
+            .branch(invocationContext.branch().orElse(null))
             .content(contentBuilder.build())
             .longRunningToolIds(longRunningToolIds)
             .build());

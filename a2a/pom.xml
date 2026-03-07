@@ -5,7 +5,7 @@
   <parent>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk-parent</artifactId>
-    <version>1.2.0</version><!-- {x-version-update:google-adk:current} -->
+    <version>0.8.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
   </parent>
 
   <artifactId>google-adk-a2a</artifactId>
@@ -19,17 +19,22 @@
     <a2a.sdk.version>0.3.2.Final</a2a.sdk.version>
     <google.adk.version>${project.version}</google.adk.version>
     <guava.version>33.0.0-jre</guava.version>
-    <jackson.version>2.19.0</jackson.version>
     <rxjava.version>3.1.5</rxjava.version>
+    <jackson.version>2.19.0</jackson.version>
     <jspecify.version>1.0.0</jspecify.version>
-    <slf4j.version>2.0.17</slf4j.version>
     <errorprone.version>2.38.0</errorprone.version>
+    <grpc.version>1.76.2</grpc.version>
+    <slf4j.version>2.0.17</slf4j.version>
     <truth.version>1.4.4</truth.version>
     <junit4.version>4.13.2</junit4.version>
-    <grpc.version>1.62.2</grpc.version>
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>com.google.adk</groupId>
+      <artifactId>google-adk</artifactId>
+      <version>${google.adk.version}</version>
+    </dependency>
     <dependency>
       <groupId>io.grpc</groupId>
       <artifactId>grpc-netty-shaded</artifactId>
@@ -52,11 +57,6 @@
       <version>2.10.1</version>
     </dependency>
     <dependency>
-      <groupId>com.google.adk</groupId>
-      <artifactId>google-adk</artifactId>
-      <version>${google.adk.version}</version>
-    </dependency>
-    <dependency>
       <groupId>com.google.guava</groupId>
       <artifactId>guava</artifactId>
       <version>${guava.version}</version>
@@ -74,6 +74,11 @@
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jsr310</artifactId>
       <version>${jackson.version}</version>
     </dependency>
     <dependency>
@@ -129,13 +134,13 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-api</artifactId>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.mockito</groupId>
-      <artifactId>mockito-core</artifactId>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -149,7 +154,6 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
-
   <build>
     <extensions>
       <extension>
@@ -159,6 +163,14 @@
       </extension>
     </extensions>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>${java.version}</release>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -187,7 +199,7 @@
           </protocArtifact>
           <pluginId>grpc-java</pluginId>
           <pluginArtifact>
-            io.grpc:protoc-gen-grpc-java:1.48.1:exe:${os.detected.classifier}
+            io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}
           </pluginArtifact>
         </configuration>
         <executions>

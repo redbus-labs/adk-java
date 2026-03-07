@@ -35,6 +35,7 @@ import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
+import com.google.adk.sessions.SessionKey;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.adk.summarizer.LlmEventSummarizer;
 import com.google.adk.summarizer.SlidingWindowEventCompactor;
@@ -128,6 +129,13 @@ public class Runner {
     public Builder plugins(List<? extends Plugin> plugins) {
       Preconditions.checkState(this.app == null, "plugins() cannot be called when app is set.");
       this.plugins = plugins;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder plugins(Plugin... plugins) {
+      Preconditions.checkState(this.app == null, "plugins() cannot be called when app is set.");
+      this.plugins = ImmutableList.copyOf(plugins);
       return this;
     }
 
@@ -332,7 +340,7 @@ public class Runner {
             .id(Event.generateEventId())
             .invocationId(invocationContext.invocationId())
             .author("user")
-            .content(Optional.of(newMessage));
+            .content(newMessage);
 
     // Add state delta if provided
     if (stateDelta != null && !stateDelta.isEmpty()) {
@@ -381,6 +389,25 @@ public class Runner {
                           String.format("Session not found: %s for user %s", sessionId, userId)));
                 }))
         .flatMapPublisher(session -> this.runAsyncImpl(session, newMessage, runConfig, stateDelta));
+  }
+
+  /** See {@link #runAsync(String, String, Content, RunConfig, Map)}. */
+  public Flowable<Event> runAsync(
+      SessionKey sessionKey,
+      Content newMessage,
+      RunConfig runConfig,
+      @Nullable Map<String, Object> stateDelta) {
+    return runAsync(sessionKey.userId(), sessionKey.id(), newMessage, runConfig, stateDelta);
+  }
+
+  /** See {@link #runAsync(String, String, Content, RunConfig, Map)}. */
+  public Flowable<Event> runAsync(SessionKey sessionKey, Content newMessage, RunConfig runConfig) {
+    return runAsync(sessionKey, newMessage, runConfig, /* stateDelta= */ null);
+  }
+
+  /** See {@link #runAsync(String, String, Content, RunConfig, Map)}. */
+  public Flowable<Event> runAsync(SessionKey sessionKey, Content newMessage) {
+    return runAsync(sessionKey, newMessage, RunConfig.builder().build());
   }
 
   /** See {@link #runAsync(String, String, Content, RunConfig, Map)}. */
@@ -513,7 +540,7 @@ public class Runner {
                         .id(Event.generateEventId())
                         .invocationId(contextWithUpdatedSession.invocationId())
                         .author("model")
-                        .content(Optional.of(content))
+                        .content(content)
                         .build());
 
     // Agent execution
@@ -564,9 +591,9 @@ public class Runner {
    * @return invocation context configured for a live run.
    */
   private InvocationContext newInvocationContextForLive(
-      Session session, Optional<LiveRequestQueue> liveRequestQueue, RunConfig runConfig) {
+      Session session, @Nullable LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
     RunConfig.Builder runConfigBuilder = RunConfig.builder(runConfig);
-    if (liveRequestQueue.isPresent()) {
+    if (liveRequestQueue != null) {
       // Default to AUDIO modality if not specified.
       if (CollectionUtils.isNullOrEmpty(runConfig.responseModalities())) {
         runConfigBuilder.setResponseModalities(
@@ -587,8 +614,9 @@ public class Runner {
     InvocationContext.Builder builder =
         newInvocationContextBuilder(session)
             .runConfig(runConfigBuilder.build())
-            .userContent(Content.fromParts());
-    liveRequestQueue.ifPresent(builder::liveRequestQueue);
+            .userContent(Content.fromParts())
+            .liveRequestQueue(liveRequestQueue);
+
     return builder.build();
   }
 
@@ -616,7 +644,7 @@ public class Runner {
     return Flowable.defer(
             () -> {
               InvocationContext invocationContext =
-                  newInvocationContextForLive(session, Optional.of(liveRequestQueue), runConfig);
+                  newInvocationContextForLive(session, liveRequestQueue, runConfig);
 
               Single<InvocationContext> invocationContextSingle;
               if (invocationContext.agent() instanceof LlmAgent agent) {
@@ -669,6 +697,17 @@ public class Runner {
                           String.format("Session not found: %s for user %s", sessionId, userId)));
                 }))
         .flatMapPublisher(session -> this.runLive(session, liveRequestQueue, runConfig));
+  }
+
+  /**
+   * Retrieves the session and runs the agent in live mode.
+   *
+   * @return stream of events from the agent.
+   * @throws IllegalArgumentException if the session is not found.
+   */
+  public Flowable<Event> runLive(
+      SessionKey sessionKey, LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
+    return runLive(sessionKey.userId(), sessionKey.id(), liveRequestQueue, runConfig);
   }
 
   /**

@@ -44,11 +44,11 @@ class MediaSupportTest {
 
     // GenAI Part to A2A TextPart
     Part genaiTextPart = Part.builder().text("Hello, world!").build();
-    Optional<io.a2a.spec.Part<?>> a2aPart = PartConverter.fromGenaiPart(genaiTextPart);
+    io.a2a.spec.Part<?> a2aPart = PartConverter.fromGenaiPart(genaiTextPart, false);
 
-    assertThat(a2aPart).isPresent();
-    assertThat(a2aPart.get()).isInstanceOf(TextPart.class);
-    assertThat(((TextPart) a2aPart.get()).getText()).isEqualTo("Hello, world!");
+    assertThat(a2aPart).isNotNull();
+    assertThat(a2aPart).isInstanceOf(TextPart.class);
+    assertThat(((TextPart) a2aPart).getText()).isEqualTo("Hello, world!");
   }
 
   @Test
@@ -158,11 +158,11 @@ class MediaSupportTest {
                     .build())
             .build();
 
-    Optional<io.a2a.spec.Part<?>> a2aPart = PartConverter.fromGenaiPart(genaiImagePart);
+    io.a2a.spec.Part<?> a2aPart = PartConverter.fromGenaiPart(genaiImagePart, false);
 
-    assertThat(a2aPart).isPresent();
-    assertThat(a2aPart.get()).isInstanceOf(FilePart.class);
-    FilePart filePart = (FilePart) a2aPart.get();
+    assertThat(a2aPart).isNotNull();
+    assertThat(a2aPart).isInstanceOf(FilePart.class);
+    FilePart filePart = (FilePart) a2aPart;
     assertThat(filePart.getFile()).isInstanceOf(FileWithUri.class);
     FileWithUri fileWithUri = (FileWithUri) filePart.getFile();
     assertThat(fileWithUri.uri()).isEqualTo("https://example.com/image.jpg");
@@ -183,11 +183,11 @@ class MediaSupportTest {
                     .build())
             .build();
 
-    Optional<io.a2a.spec.Part<?>> a2aPart = PartConverter.fromGenaiPart(genaiAudioPart);
+    io.a2a.spec.Part<?> a2aPart = PartConverter.fromGenaiPart(genaiAudioPart, false);
 
-    assertThat(a2aPart).isPresent();
-    assertThat(a2aPart.get()).isInstanceOf(FilePart.class);
-    FilePart filePart = (FilePart) a2aPart.get();
+    assertThat(a2aPart).isNotNull();
+    assertThat(a2aPart).isInstanceOf(FilePart.class);
+    FilePart filePart = (FilePart) a2aPart;
     assertThat(filePart.getFile()).isInstanceOf(FileWithBytes.class);
     FileWithBytes fileWithBytes = (FileWithBytes) filePart.getFile();
     assertThat(fileWithBytes.mimeType()).isEqualTo("audio/wav");
@@ -207,11 +207,11 @@ class MediaSupportTest {
                     .build())
             .build();
 
-    Optional<io.a2a.spec.Part<?>> a2aPart = PartConverter.fromGenaiPart(genaiVideoPart);
+    io.a2a.spec.Part<?> a2aPart = PartConverter.fromGenaiPart(genaiVideoPart, false);
 
-    assertThat(a2aPart).isPresent();
-    assertThat(a2aPart.get()).isInstanceOf(FilePart.class);
-    FilePart filePart = (FilePart) a2aPart.get();
+    assertThat(a2aPart).isNotNull();
+    assertThat(a2aPart).isInstanceOf(FilePart.class);
+    FilePart filePart = (FilePart) a2aPart;
     assertThat(filePart.getFile()).isInstanceOf(FileWithUri.class);
     FileWithUri fileWithUri = (FileWithUri) filePart.getFile();
     assertThat(fileWithUri.mimeType()).isEqualTo("video/mp4");

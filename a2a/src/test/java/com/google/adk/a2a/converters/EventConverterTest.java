@@ -92,6 +92,8 @@ public final class EventConverterTest {
             .invocationId("invocation-1")
             .agent(new TestAgent())
             .session(session)
+            .userContent(
+                Content.builder().role("user").parts(ImmutableList.of(userTextPart)).build())
             .endInvocation(false)
             .build();
 
@@ -101,24 +103,28 @@ public final class EventConverterTest {
     // Assert
     assertThat(maybeMessage).isPresent();
     Message message = maybeMessage.get();
-    assertThat(message.getParts()).hasSize(3);
+    assertThat(message.getParts()).hasSize(4);
     assertThat(message.getParts().get(0)).isInstanceOf(TextPart.class);
     assertThat(message.getParts().get(1)).isInstanceOf(DataPart.class);
     assertThat(message.getParts().get(2)).isInstanceOf(DataPart.class);
+    assertThat(message.getParts().get(3)).isInstanceOf(TextPart.class);
 
     DataPart callDataPart = (DataPart) message.getParts().get(1);
     assertThat(callDataPart.getMetadata().get(PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY))
-        .isEqualTo(PartConverter.A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL);
+        .isEqualTo(A2ADataPartMetadataType.FUNCTION_CALL.getType());
     assertThat(callDataPart.getData()).containsEntry("name", "roll_die");
     assertThat(callDataPart.getData()).containsEntry("id", "adk-call-1");
     assertThat(callDataPart.getData()).containsEntry("args", ImmutableMap.of("sides", 6));
 
     DataPart responseDataPart = (DataPart) message.getParts().get(2);
     assertThat(responseDataPart.getMetadata().get(PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY))
-        .isEqualTo(PartConverter.A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE);
+        .isEqualTo(A2ADataPartMetadataType.FUNCTION_RESPONSE.getType());
     assertThat(responseDataPart.getData()).containsEntry("name", "roll_die");
     assertThat(responseDataPart.getData()).containsEntry("id", "adk-call-1");
     assertThat(responseDataPart.getData()).containsEntry("response", ImmutableMap.of("result", 3));
+
+    TextPart lastTextPart = (TextPart) message.getParts().get(3);
+    assertThat(lastTextPart.getText()).isEqualTo("Roll a die");
   }
 
   private static final class TestAgent extends BaseAgent {

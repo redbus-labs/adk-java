@@ -164,10 +164,10 @@ public final class RequestConverter {
           Optional.ofNullable(dataPart.getMetadata()).orElse(ImmutableMap.of());
       String type =
           metadata.getOrDefault(PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY, "").toString();
-      if (type.equals(PartConverter.A2A_DATA_PART_METADATA_TYPE_FUNCTION_CALL)) {
+      if (type.equals(A2ADataPartMetadataType.FUNCTION_CALL.getType())) {
         return "model";
       }
-      if (type.equals(PartConverter.A2A_DATA_PART_METADATA_TYPE_FUNCTION_RESPONSE)) {
+      if (type.equals(A2ADataPartMetadataType.FUNCTION_RESPONSE.getType())) {
         return "user";
       }
       Map<String, Object> data = Optional.ofNullable(dataPart.getData()).orElse(ImmutableMap.of());
