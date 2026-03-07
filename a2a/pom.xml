@@ -23,7 +23,7 @@
     <jackson.version>2.19.0</jackson.version>
     <jspecify.version>1.0.0</jspecify.version>
     <errorprone.version>2.38.0</errorprone.version>
-    <grpc.version>1.62.2</grpc.version>
+    <grpc.version>1.76.2</grpc.version>
     <slf4j.version>2.0.17</slf4j.version>
     <truth.version>1.4.4</truth.version>
     <junit4.version>4.13.2</junit4.version>
@@ -199,7 +199,7 @@
           </protocArtifact>
           <pluginId>grpc-java</pluginId>
           <pluginArtifact>
-            io.grpc:protoc-gen-grpc-java:1.48.1:exe:${os.detected.classifier}
+            io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}
           </pluginArtifact>
         </configuration>
         <executions>
