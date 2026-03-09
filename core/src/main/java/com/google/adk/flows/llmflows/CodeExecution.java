@@ -159,8 +159,7 @@ public final class CodeExecution {
         InvocationContext invocationContext, LlmResponse llmResponse) {
       if (llmResponse.partial().orElse(false)) {
         return Single.just(
-            ResponseProcessor.ResponseProcessingResult.create(
-                llmResponse, ImmutableList.of(), Optional.empty()));
+            ResponseProcessor.ResponseProcessingResult.create(llmResponse, ImmutableList.of()));
       }
       var llmResponseBuilder = llmResponse.toBuilder();
       return runPostProcessor(invocationContext, llmResponseBuilder)
@@ -168,7 +167,7 @@ public final class CodeExecution {
           .map(
               events ->
                   ResponseProcessor.ResponseProcessingResult.create(
-                      llmResponseBuilder.build(), events, Optional.empty()));
+                      llmResponseBuilder.build(), events));
     }
   }
 
