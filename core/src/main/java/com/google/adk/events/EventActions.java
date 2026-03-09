@@ -165,13 +165,20 @@ public class EventActions extends JsonBaseModel {
   }
 
   @JsonProperty("requestedToolConfirmations")
-  public ConcurrentMap<String, ToolConfirmation> requestedToolConfirmations() {
+  public Map<String, ToolConfirmation> requestedToolConfirmations() {
     return requestedToolConfirmations;
   }
 
   public void setRequestedToolConfirmations(
-      ConcurrentMap<String, ToolConfirmation> requestedToolConfirmations) {
-    this.requestedToolConfirmations = requestedToolConfirmations;
+      Map<String, ToolConfirmation> requestedToolConfirmations) {
+    if (requestedToolConfirmations == null) {
+      this.requestedToolConfirmations = new ConcurrentHashMap<>();
+    } else if (requestedToolConfirmations instanceof ConcurrentMap) {
+      this.requestedToolConfirmations =
+          (ConcurrentMap<String, ToolConfirmation>) requestedToolConfirmations;
+    } else {
+      this.requestedToolConfirmations = new ConcurrentHashMap<>(requestedToolConfirmations);
+    }
   }
 
   @JsonProperty("endOfAgent")
@@ -351,8 +358,16 @@ public class EventActions extends JsonBaseModel {
 
     @CanIgnoreReturnValue
     @JsonProperty("requestedToolConfirmations")
-    public Builder requestedToolConfirmations(ConcurrentMap<String, ToolConfirmation> value) {
-      this.requestedToolConfirmations = value;
+    public Builder requestedToolConfirmations(@Nullable Map<String, ToolConfirmation> value) {
+      if (value == null) {
+        this.requestedToolConfirmations = new ConcurrentHashMap<>();
+        return this;
+      }
+      if (value instanceof ConcurrentMap) {
+        this.requestedToolConfirmations = (ConcurrentMap<String, ToolConfirmation>) value;
+      } else {
+        this.requestedToolConfirmations = new ConcurrentHashMap<>(value);
+      }
       return this;
     }
 
