@@ -25,6 +25,7 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventCompaction;
 import com.google.adk.models.LlmRequest;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import javax.annotation.Nullable;
 
 /** {@link RequestProcessor} that populates content in request for LLM flows. */
 public final class Contents implements RequestProcessor {
@@ -68,7 +70,7 @@ public final class Contents implements RequestProcessor {
               request.toBuilder()
                   .contents(
                       getCurrentTurnContents(
-                          context.branch(),
+                          context.branch().orElse(null),
                           context.session().events(),
                           context.agent().name(),
                           modelName))
@@ -78,7 +80,10 @@ public final class Contents implements RequestProcessor {
 
     ImmutableList<Content> contents =
         getContents(
-            context.branch(), context.session().events(), context.agent().name(), modelName);
+            context.branch().orElse(null),
+            context.session().events(),
+            context.agent().name(),
+            modelName);
 
     return Single.just(
         RequestProcessor.RequestProcessingResult.create(
@@ -87,7 +92,7 @@ public final class Contents implements RequestProcessor {
 
   /** Gets contents for the current turn only (no conversation history). */
   private ImmutableList<Content> getCurrentTurnContents(
-      Optional<String> currentBranch, List<Event> events, String agentName, String modelName) {
+      @Nullable String currentBranch, List<Event> events, String agentName, String modelName) {
     // Find the latest event that starts the current turn and process from there.
     for (int i = events.size() - 1; i >= 0; i--) {
       Event event = events.get(i);
@@ -99,7 +104,7 @@ public final class Contents implements RequestProcessor {
   }
 
   private ImmutableList<Content> getContents(
-      Optional<String> currentBranch, List<Event> events, String agentName, String modelName) {
+      @Nullable String currentBranch, List<Event> events, String agentName, String modelName) {
     List<Event> filteredEvents = new ArrayList<>();
     boolean hasCompactEvent = false;
 
@@ -414,16 +419,12 @@ public final class Contents implements RequestProcessor {
     }
   }
 
-  private static boolean isEventBelongsToBranch(Optional<String> invocationBranchOpt, Event event) {
-    Optional<String> eventBranchOpt = event.branch();
+  private static boolean isEventBelongsToBranch(@Nullable String invocationBranch, Event event) {
+    @Nullable String eventBranch = event.branch().orElse(null);
 
-    if (invocationBranchOpt.isEmpty() || invocationBranchOpt.get().isEmpty()) {
-      return true;
-    }
-    if (eventBranchOpt.isEmpty() || eventBranchOpt.get().isEmpty()) {
-      return true;
-    }
-    return invocationBranchOpt.get().startsWith(eventBranchOpt.get());
+    return Strings.isNullOrEmpty(invocationBranch)
+        || Strings.isNullOrEmpty(eventBranch)
+        || invocationBranch.startsWith(eventBranch);
   }
 
   /**
