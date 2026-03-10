@@ -568,7 +568,7 @@ public class Runner {
         .toFlowable()
         .switchIfEmpty(agentEvents)
         .concatWith(
-            Completable.defer(() -> pluginManager.runAfterRunCallback(contextWithUpdatedSession)))
+            Completable.defer(() -> pluginManager.afterRunCallback(contextWithUpdatedSession)))
         .concatWith(Completable.defer(() -> compactEvents(updatedSession)));
   }
 
