@@ -67,7 +67,7 @@ abstract class ApiClient {
       applyHttpOptions(customHttpOptions.get());
     }
 
-    this.httpClient = createHttpClient(httpOptions.timeout());
+    this.httpClient = createHttpClient(httpOptions.timeout().orElse(null));
   }
 
   ApiClient(
@@ -113,13 +113,13 @@ abstract class ApiClient {
     }
     this.apiKey = Optional.empty();
     this.vertexAI = true;
-    this.httpClient = createHttpClient(httpOptions.timeout());
+    this.httpClient = createHttpClient(httpOptions.timeout().orElse(null));
   }
 
-  private OkHttpClient createHttpClient(Optional<Integer> timeout) {
+  private OkHttpClient createHttpClient(@Nullable Integer timeout) {
     OkHttpClient.Builder builder = new OkHttpClient().newBuilder();
-    if (timeout.isPresent()) {
-      builder.connectTimeout(Duration.ofMillis(timeout.get()));
+    if (timeout != null) {
+      builder.connectTimeout(Duration.ofMillis(timeout));
     }
     return builder.build();
   }
