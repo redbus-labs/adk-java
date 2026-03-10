@@ -73,7 +73,7 @@ final class SessionJsonConverter {
     event.turnComplete().ifPresent(v -> metadataJson.put("turnComplete", v));
     event.interrupted().ifPresent(v -> metadataJson.put("interrupted", v));
     event.branch().ifPresent(v -> metadataJson.put("branch", v));
-    putIfNotEmpty(metadataJson, "longRunningToolIds", event.longRunningToolIds());
+    event.longRunningToolIds().ifPresent(v -> putIfNotEmpty(metadataJson, "longRunningToolIds", v));
     event.groundingMetadata().ifPresent(v -> metadataJson.put("groundingMetadata", v));
     event.usageMetadata().ifPresent(v -> metadataJson.put("usageMetadata", v));
     Map<String, Object> eventJson = new HashMap<>();
@@ -353,11 +353,6 @@ final class SessionJsonConverter {
     if (values != null && !values.isEmpty()) {
       map.put(key, values);
     }
-  }
-
-  private static void putIfNotEmpty(
-      Map<String, Object> map, String key, Optional<? extends Collection<?>> values) {
-    values.ifPresent(v -> putIfNotEmpty(map, key, v));
   }
 
   private static void putIfNotEmpty(
