@@ -75,7 +75,10 @@ public class InvocationContext {
     this.eventsCompactionConfig = builder.eventsCompactionConfig;
     this.contextCacheConfig = builder.contextCacheConfig;
     this.invocationCostManager = builder.invocationCostManager;
-    this.callbackContextData = new ConcurrentHashMap<>(builder.callbackContextData);
+    // Don't copy the callback context data.  This should be the same instance for the full
+    // invocation invocation so that Plugins can access the same data it during the invocation
+    // across all types of callbacks.
+    this.callbackContextData = builder.callbackContextData;
   }
 
   /**
@@ -345,7 +348,10 @@ public class InvocationContext {
       this.eventsCompactionConfig = context.eventsCompactionConfig;
       this.contextCacheConfig = context.contextCacheConfig;
       this.invocationCostManager = context.invocationCostManager;
-      this.callbackContextData = new ConcurrentHashMap<>(context.callbackContextData);
+      // Don't copy the callback context data.  This should be the same instance for the full
+      // invocation invocation so that Plugins can access the same data it during the invocation
+      // across all types of callbacks.
+      this.callbackContextData = context.callbackContextData;
     }
 
     private BaseSessionService sessionService;
