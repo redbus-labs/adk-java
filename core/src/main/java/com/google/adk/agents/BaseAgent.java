@@ -32,7 +32,6 @@ import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
-import io.reactivex.rxjava3.core.Single;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -316,30 +315,29 @@ public abstract class BaseAgent {
         () -> {
           InvocationContext invocationContext = createInvocationContext(parentContext);
 
+          Flowable<Event> mainAndAfterEvents =
+              Flowable.defer(() -> runImplementation.apply(invocationContext))
+                  .concatWith(
+                      Flowable.defer(
+                          () ->
+                              callCallback(
+                                      afterCallbacksToFunctions(
+                                          invocationContext.pluginManager(), afterAgentCallback),
+                                      invocationContext)
+                                  .toFlowable()));
+
           return callCallback(
                   beforeCallbacksToFunctions(
                       invocationContext.pluginManager(), beforeAgentCallback),
                   invocationContext)
               .flatMapPublisher(
-                  beforeEventOpt -> {
+                  beforeEvent -> {
                     if (invocationContext.endInvocation()) {
-                      return Flowable.fromOptional(beforeEventOpt);
+                      return Flowable.just(beforeEvent);
                     }
-
-                    Flowable<Event> beforeEvents = Flowable.fromOptional(beforeEventOpt);
-                    Flowable<Event> mainEvents =
-                        Flowable.defer(() -> runImplementation.apply(invocationContext));
-                    Flowable<Event> afterEvents =
-                        Flowable.defer(
-                            () ->
-                                callCallback(
-                                        afterCallbacksToFunctions(
-                                            invocationContext.pluginManager(), afterAgentCallback),
-                                        invocationContext)
-                                    .flatMapPublisher(Flowable::fromOptional));
-
-                    return Flowable.concat(beforeEvents, mainEvents, afterEvents);
+                    return Flowable.just(beforeEvent).concatWith(mainAndAfterEvents);
                   })
+              .switchIfEmpty(mainAndAfterEvents)
               .compose(
                   Tracing.traceAgent(
                       "invoke_agent " + name(), name(), description(), invocationContext));
@@ -383,13 +381,13 @@ public abstract class BaseAgent {
    *
    * @param agentCallbacks Callback functions.
    * @param invocationContext Current invocation context.
-   * @return single emitting first event, or empty if none.
+   * @return maybe emitting first event, or empty if none.
    */
-  private Single<Optional<Event>> callCallback(
+  private Maybe<Event> callCallback(
       List<Function<CallbackContext, Maybe<Content>>> agentCallbacks,
       InvocationContext invocationContext) {
     if (agentCallbacks.isEmpty()) {
-      return Single.just(Optional.empty());
+      return Maybe.empty();
     }
 
     CallbackContext callbackContext =
@@ -404,21 +402,20 @@ public abstract class BaseAgent {
                   .map(
                       content -> {
                         invocationContext.setEndInvocation(true);
-                        return Optional.of(
-                            Event.builder()
-                                .id(Event.generateEventId())
-                                .invocationId(invocationContext.invocationId())
-                                .author(name())
-                                .branch(invocationContext.branch().orElse(null))
-                                .actions(callbackContext.eventActions())
-                                .content(content)
-                                .build());
+                        return Event.builder()
+                            .id(Event.generateEventId())
+                            .invocationId(invocationContext.invocationId())
+                            .author(name())
+                            .branch(invocationContext.branch().orElse(null))
+                            .actions(callbackContext.eventActions())
+                            .content(content)
+                            .build();
                       })
                   .toFlowable();
             })
         .firstElement()
         .switchIfEmpty(
-            Single.defer(
+            Maybe.defer(
                 () -> {
                   if (callbackContext.state().hasDelta()) {
                     Event.Builder eventBuilder =
@@ -429,9 +426,9 @@ public abstract class BaseAgent {
                             .branch(invocationContext.branch().orElse(null))
                             .actions(callbackContext.eventActions());
 
-                    return Single.just(Optional.of(eventBuilder.build()));
+                    return Maybe.just(eventBuilder.build());
                   } else {
-                    return Single.just(Optional.empty());
+                    return Maybe.empty();
                   }
                 }));
   }

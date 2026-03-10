@@ -170,52 +170,51 @@ public abstract class BaseLlmFlow implements BaseFlow {
     LlmRequest.Builder llmRequestBuilder = llmRequest.toBuilder();
 
     return handleBeforeModelCallback(context, llmRequestBuilder, eventForCallbackUsage)
-        .flatMapPublisher(
-            beforeResponse -> {
-              if (beforeResponse.isPresent()) {
-                return Flowable.just(beforeResponse.get());
-              }
-              BaseLlm llm =
-                  agent.resolvedModel().model().isPresent()
-                      ? agent.resolvedModel().model().get()
-                      : LlmRegistry.getLlm(agent.resolvedModel().modelName().get());
-              return llm.generateContent(
-                      llmRequestBuilder.build(),
-                      context.runConfig().streamingMode() == StreamingMode.SSE)
-                  .onErrorResumeNext(
-                      exception ->
-                          handleOnModelErrorCallback(
-                                  context, llmRequestBuilder, eventForCallbackUsage, exception)
-                              .switchIfEmpty(Single.error(exception))
-                              .toFlowable())
-                  .doOnNext(
-                      llmResp ->
-                          Tracing.traceCallLlm(
-                              context,
-                              eventForCallbackUsage.id(),
-                              llmRequestBuilder.build(),
-                              llmResp))
-                  .doOnError(
-                      error -> {
-                        Span span = Span.current();
-                        span.setStatus(StatusCode.ERROR, error.getMessage());
-                        span.recordException(error);
-                      })
-                  .compose(Tracing.trace("call_llm"))
-                  .concatMap(
-                      llmResp ->
-                          handleAfterModelCallback(context, llmResp, eventForCallbackUsage)
-                              .toFlowable());
-            });
+        .toFlowable()
+        .switchIfEmpty(
+            Flowable.defer(
+                () -> {
+                  BaseLlm llm =
+                      agent.resolvedModel().model().isPresent()
+                          ? agent.resolvedModel().model().get()
+                          : LlmRegistry.getLlm(agent.resolvedModel().modelName().get());
+                  return llm.generateContent(
+                          llmRequestBuilder.build(),
+                          context.runConfig().streamingMode() == StreamingMode.SSE)
+                      .onErrorResumeNext(
+                          exception ->
+                              handleOnModelErrorCallback(
+                                      context, llmRequestBuilder, eventForCallbackUsage, exception)
+                                  .switchIfEmpty(Single.error(exception))
+                                  .toFlowable())
+                      .doOnNext(
+                          llmResp ->
+                              Tracing.traceCallLlm(
+                                  context,
+                                  eventForCallbackUsage.id(),
+                                  llmRequestBuilder.build(),
+                                  llmResp))
+                      .doOnError(
+                          error -> {
+                            Span span = Span.current();
+                            span.setStatus(StatusCode.ERROR, error.getMessage());
+                            span.recordException(error);
+                          })
+                      .compose(Tracing.trace("call_llm"))
+                      .concatMap(
+                          llmResp ->
+                              handleAfterModelCallback(context, llmResp, eventForCallbackUsage)
+                                  .toFlowable());
+                }));
   }
 
   /**
    * Invokes {@link BeforeModelCallback}s. If any returns a response, it's used instead of calling
    * the LLM.
    *
-   * @return A {@link Single} with the callback result or {@link Optional#empty()}.
+   * @return A {@link Maybe} with the callback result.
    */
-  private Single<Optional<LlmResponse>> handleBeforeModelCallback(
+  private Maybe<LlmResponse> handleBeforeModelCallback(
       InvocationContext context, LlmRequest.Builder llmRequestBuilder, Event modelResponseEvent) {
     Event callbackEvent = modelResponseEvent.toBuilder().build();
     CallbackContext callbackContext =
@@ -228,7 +227,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
     List<? extends BeforeModelCallback> callbacks = agent.canonicalBeforeModelCallbacks();
     if (callbacks.isEmpty()) {
-      return pluginResult.map(Optional::of).defaultIfEmpty(Optional.empty());
+      return pluginResult;
     }
 
     Maybe<LlmResponse> callbackResult =
@@ -238,10 +237,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                     .concatMapMaybe(callback -> callback.call(callbackContext, llmRequestBuilder))
                     .firstElement());
 
-    return pluginResult
-        .switchIfEmpty(callbackResult)
-        .map(Optional::of)
-        .defaultIfEmpty(Optional.empty());
+    return pluginResult.switchIfEmpty(callbackResult);
   }
 
   /**
