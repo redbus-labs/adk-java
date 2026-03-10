@@ -37,20 +37,16 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.reactivex.rxjava3.core.Completable;
-import io.reactivex.rxjava3.core.CompletableObserver;
 import io.reactivex.rxjava3.core.CompletableSource;
 import io.reactivex.rxjava3.core.CompletableTransformer;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.FlowableTransformer;
 import io.reactivex.rxjava3.core.Maybe;
-import io.reactivex.rxjava3.core.MaybeObserver;
 import io.reactivex.rxjava3.core.MaybeSource;
 import io.reactivex.rxjava3.core.MaybeTransformer;
 import io.reactivex.rxjava3.core.Single;
-import io.reactivex.rxjava3.core.SingleObserver;
 import io.reactivex.rxjava3.core.SingleSource;
 import io.reactivex.rxjava3.core.SingleTransformer;
-import io.reactivex.rxjava3.disposables.Disposable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,12 +54,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscriber;
-import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,10 +136,6 @@ public class Tracing {
     return Optional.of(span);
   }
 
-  private static void traceWithSpan(String methodName, Consumer<Span> action) {
-    getValidCurrentSpan(methodName).ifPresent(action);
-  }
-
   private static void setInvocationAttributes(
       Span span, InvocationContext invocationContext, String eventId) {
     span.setAttribute(ADK_INVOCATION_ID, invocationContext.invocationId());
@@ -217,16 +206,16 @@ public class Tracing {
    */
   public static void traceToolCall(
       String toolName, String toolDescription, String toolType, Map<String, Object> args) {
-    traceWithSpan(
-        "traceToolCall",
-        span -> {
-          setToolExecutionAttributes(span);
-          span.setAttribute(GEN_AI_TOOL_NAME, toolName);
-          span.setAttribute(GEN_AI_TOOL_DESCRIPTION, toolDescription);
-          span.setAttribute(GEN_AI_TOOL_TYPE, toolType);
+    getValidCurrentSpan("traceToolCall")
+        .ifPresent(
+            span -> {
+              setToolExecutionAttributes(span);
+              span.setAttribute(GEN_AI_TOOL_NAME, toolName);
+              span.setAttribute(GEN_AI_TOOL_DESCRIPTION, toolDescription);
+              span.setAttribute(GEN_AI_TOOL_TYPE, toolType);
 
-          setJsonAttribute(span, ADK_TOOL_CALL_ARGS, args);
-        });
+              setJsonAttribute(span, ADK_TOOL_CALL_ARGS, args);
+            });
   }
 
   /**
@@ -236,32 +225,33 @@ public class Tracing {
    * @param functionResponseEvent The function response event.
    */
   public static void traceToolResponse(String eventId, Event functionResponseEvent) {
-    traceWithSpan(
-        "traceToolResponse",
-        span -> {
-          setToolExecutionAttributes(span);
-          span.setAttribute(ADK_EVENT_ID, eventId);
+    getValidCurrentSpan("traceToolResponse")
+        .ifPresent(
+            span -> {
+              setToolExecutionAttributes(span);
+              span.setAttribute(ADK_EVENT_ID, eventId);
 
-          Optional<FunctionResponse> functionResponse =
-              functionResponseEvent.functionResponses().stream().findFirst();
+              FunctionResponse functionResponse =
+                  functionResponseEvent.functionResponses().stream().findFirst().orElse(null);
 
-          String toolCallId =
-              functionResponse.flatMap(FunctionResponse::id).orElse("<not specified>");
-          Object toolResponse =
-              functionResponse
-                  .flatMap(FunctionResponse::response)
-                  .map(Object.class::cast)
-                  .orElse("<not specified>");
+              String toolCallId = "<not specified>";
+              Object toolResponse = "<not specified>";
+              if (functionResponse != null) {
+                toolCallId = functionResponse.id().orElse(toolCallId);
+                if (functionResponse.response().isPresent()) {
+                  toolResponse = functionResponse.response().get();
+                }
+              }
 
-          span.setAttribute(GEN_AI_TOOL_CALL_ID, toolCallId);
+              span.setAttribute(GEN_AI_TOOL_CALL_ID, toolCallId);
 
-          Object finalToolResponse =
-              (toolResponse instanceof Map)
-                  ? toolResponse
-                  : ImmutableMap.of("result", toolResponse);
+              Object finalToolResponse =
+                  (toolResponse instanceof Map)
+                      ? toolResponse
+                      : ImmutableMap.of("result", toolResponse);
 
-          setJsonAttribute(span, ADK_TOOL_RESPONSE, finalToolResponse);
-        });
+              setJsonAttribute(span, ADK_TOOL_RESPONSE, finalToolResponse);
+            });
   }
 
   /**
@@ -306,63 +296,58 @@ public class Tracing {
       String eventId,
       LlmRequest llmRequest,
       LlmResponse llmResponse) {
-    traceWithSpan(
-        "traceCallLlm",
-        span -> traceCallLlm(span, invocationContext, eventId, llmRequest, llmResponse));
-  }
-
-  /**
-   * Traces a call to the LLM.
-   *
-   * @param span The span to end when the stream completes
-   * @param invocationContext The invocation context.
-   * @param eventId The ID of the event associated with this LLM call/response.
-   * @param llmRequest The LLM request object.
-   * @param llmResponse The LLM response object.
-   */
-  public static void traceCallLlm(
-      Span span,
-      InvocationContext invocationContext,
-      String eventId,
-      LlmRequest llmRequest,
-      LlmResponse llmResponse) {
-    span.setAttribute(GEN_AI_OPERATION_NAME, "call_llm");
-    span.setAttribute(GEN_AI_SYSTEM, "gcp.vertex.agent");
-    llmRequest.model().ifPresent(modelName -> span.setAttribute(GEN_AI_REQUEST_MODEL, modelName));
-
-    setInvocationAttributes(span, invocationContext, eventId);
-
-    setJsonAttribute(span, ADK_LLM_REQUEST, buildLlmRequestForTrace(llmRequest));
-    setJsonAttribute(span, ADK_LLM_RESPONSE, llmResponse);
-
-    llmRequest
-        .config()
-        .flatMap(config -> config.topP())
-        .ifPresent(topP -> span.setAttribute(GEN_AI_REQUEST_TOP_P, topP.doubleValue()));
-    llmRequest
-        .config()
-        .flatMap(config -> config.maxOutputTokens())
+    getValidCurrentSpan("traceCallLlm")
         .ifPresent(
-            maxTokens -> span.setAttribute(GEN_AI_REQUEST_MAX_TOKENS, maxTokens.longValue()));
+            span -> {
+              span.setAttribute(GEN_AI_SYSTEM, "gcp.vertex.agent");
+              llmRequest
+                  .model()
+                  .ifPresent(modelName -> span.setAttribute(GEN_AI_REQUEST_MODEL, modelName));
 
-    llmResponse
-        .usageMetadata()
-        .ifPresent(
-            usage -> {
-              usage
-                  .promptTokenCount()
-                  .ifPresent(tokens -> span.setAttribute(GEN_AI_USAGE_INPUT_TOKENS, (long) tokens));
-              usage
-                  .candidatesTokenCount()
+              setInvocationAttributes(span, invocationContext, eventId);
+
+              setJsonAttribute(span, ADK_LLM_REQUEST, buildLlmRequestForTrace(llmRequest));
+              setJsonAttribute(span, ADK_LLM_RESPONSE, llmResponse);
+
+              llmRequest
+                  .config()
                   .ifPresent(
-                      tokens -> span.setAttribute(GEN_AI_USAGE_OUTPUT_TOKENS, (long) tokens));
+                      config -> {
+                        config
+                            .topP()
+                            .ifPresent(
+                                topP ->
+                                    span.setAttribute(GEN_AI_REQUEST_TOP_P, topP.doubleValue()));
+                        config
+                            .maxOutputTokens()
+                            .ifPresent(
+                                maxTokens ->
+                                    span.setAttribute(
+                                        GEN_AI_REQUEST_MAX_TOKENS, maxTokens.longValue()));
+                      });
+              llmResponse
+                  .usageMetadata()
+                  .ifPresent(
+                      usage -> {
+                        usage
+                            .promptTokenCount()
+                            .ifPresent(
+                                tokens ->
+                                    span.setAttribute(GEN_AI_USAGE_INPUT_TOKENS, (long) tokens));
+                        usage
+                            .candidatesTokenCount()
+                            .ifPresent(
+                                tokens ->
+                                    span.setAttribute(GEN_AI_USAGE_OUTPUT_TOKENS, (long) tokens));
+                      });
+              llmResponse
+                  .finishReason()
+                  .map(reason -> reason.knownEnum().name().toLowerCase(Locale.ROOT))
+                  .ifPresent(
+                      reason ->
+                          span.setAttribute(
+                              GEN_AI_RESPONSE_FINISH_REASONS, ImmutableList.of(reason)));
             });
-
-    llmResponse
-        .finishReason()
-        .map(reason -> reason.knownEnum().name().toLowerCase(Locale.ROOT))
-        .ifPresent(
-            reason -> span.setAttribute(GEN_AI_RESPONSE_FINISH_REASONS, ImmutableList.of(reason)));
   }
 
   /**
@@ -374,18 +359,17 @@ public class Tracing {
    */
   public static void traceSendData(
       InvocationContext invocationContext, String eventId, List<Content> data) {
-    traceWithSpan(
-        "traceSendData",
-        span -> {
-          span.setAttribute(GEN_AI_OPERATION_NAME, "send_data");
-          setInvocationAttributes(span, invocationContext, eventId);
+    getValidCurrentSpan("traceSendData")
+        .ifPresent(
+            span -> {
+              setInvocationAttributes(span, invocationContext, eventId);
 
-          ImmutableList<Content> safeData =
-              Optional.ofNullable(data).orElse(ImmutableList.of()).stream()
-                  .filter(Objects::nonNull)
-                  .collect(toImmutableList());
-          setJsonAttribute(span, ADK_DATA, safeData);
-        });
+              ImmutableList<Content> safeData =
+                  Optional.ofNullable(data).orElse(ImmutableList.of()).stream()
+                      .filter(Objects::nonNull)
+                      .collect(toImmutableList());
+              setJsonAttribute(span, ADK_DATA, safeData);
+            });
   }
 
   /**
@@ -421,17 +405,14 @@ public class Tracing {
   @SuppressWarnings("MustBeClosedChecker") // Scope lifecycle managed by RxJava doFinally
   public static <T> Flowable<T> traceFlowable(
       Context spanContext, Span span, Supplier<Flowable<T>> flowableSupplier) {
-    return Flowable.defer(
-        () -> {
-          Scope scope = spanContext.makeCurrent();
-          return flowableSupplier
-              .get()
-              .doFinally(
-                  () -> {
-                    scope.close();
-                    span.end();
-                  });
-        });
+    Scope scope = spanContext.makeCurrent();
+    return flowableSupplier
+        .get()
+        .doFinally(
+            () -> {
+              scope.close();
+              span.end();
+            });
   }
 
   /**
@@ -469,64 +450,13 @@ public class Tracing {
    * @return A TracerProvider configured for agent invocation.
    */
   public static <T> TracerProvider<T> traceAgent(
-      Context parent,
       String spanName,
       String agentName,
       String agentDescription,
       InvocationContext invocationContext) {
     return new TracerProvider<T>(spanName)
-        .setParent(parent)
         .configure(
             span -> traceAgentInvocation(span, agentName, agentDescription, invocationContext));
-  }
-
-  /**
-   * Returns a transformer that re-activates a given context for the duration of the stream's
-   * subscription.
-   *
-   * @param context The context to re-activate.
-   * @param <T> The type of the stream.
-   * @return A transformer that re-activates the context.
-   */
-  public static <T> ContextTransformer<T> withContext(Context context) {
-    return new ContextTransformer<>(context);
-  }
-
-  /**
-   * A transformer that re-activates a given context for the duration of the stream's subscription.
-   *
-   * @param <T> The type of the stream.
-   */
-  public static final class ContextTransformer<T>
-      implements FlowableTransformer<T, T>,
-          SingleTransformer<T, T>,
-          MaybeTransformer<T, T>,
-          CompletableTransformer {
-    private final Context context;
-
-    private ContextTransformer(Context context) {
-      this.context = context;
-    }
-
-    @Override
-    public Publisher<T> apply(Flowable<T> upstream) {
-      return upstream.lift(subscriber -> TracingObserver.wrap(context, subscriber));
-    }
-
-    @Override
-    public SingleSource<T> apply(Single<T> upstream) {
-      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
-    }
-
-    @Override
-    public MaybeSource<T> apply(Maybe<T> upstream) {
-      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
-    }
-
-    @Override
-    public CompletableSource apply(Completable upstream) {
-      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
-    }
   }
 
   /**
@@ -542,7 +472,6 @@ public class Tracing {
     private final String spanName;
     private Context explicitParentContext;
     private final List<Consumer<Span>> spanConfigurers = new ArrayList<>();
-    private BiConsumer<Span, T> onSuccessConsumer;
 
     private TracerProvider(String spanName) {
       this.spanName = spanName;
@@ -562,38 +491,27 @@ public class Tracing {
       return this;
     }
 
-    /**
-     * Registers a callback to be executed with the span and the result item when the stream emits a
-     * success value.
-     */
-    @CanIgnoreReturnValue
-    public TracerProvider<T> onSuccess(BiConsumer<Span, T> consumer) {
-      this.onSuccessConsumer = consumer;
-      return this;
-    }
-
     private Context getParentContext() {
       return explicitParentContext != null ? explicitParentContext : Context.current();
     }
 
     private final class TracingLifecycle {
-      private final Span span;
-      private final Context context;
+      private Span span;
+      private Scope scope;
 
-      TracingLifecycle() {
-        Context parentContext = getParentContext();
-        span = tracer.spanBuilder(spanName).setParent(parentContext).startSpan();
+      @SuppressWarnings("MustBeClosedChecker")
+      void start() {
+        span = tracer.spanBuilder(spanName).setParent(getParentContext()).startSpan();
         spanConfigurers.forEach(c -> c.accept(span));
-        context = parentContext.with(span);
+        scope = span.makeCurrent();
       }
 
       void end() {
-        span.end();
-      }
-
-      <O> void run(O observer, Consumer<O> subscribeAction) {
-        try (Scope scope = context.makeCurrent()) {
-          subscribeAction.accept(observer);
+        if (scope != null) {
+          scope.close();
+        }
+        if (span != null) {
+          span.end();
         }
       }
     }
@@ -603,18 +521,7 @@ public class Tracing {
       return Flowable.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return Flowable.fromPublisher(
-                observer ->
-                    lifecycle.run(
-                        observer,
-                        o -> {
-                          Flowable<T> chain = upstream.compose(withContext(lifecycle.context));
-                          if (onSuccessConsumer != null) {
-                            chain =
-                                chain.doOnNext(t -> onSuccessConsumer.accept(lifecycle.span, t));
-                          }
-                          chain.doFinally(lifecycle::end).subscribe(o);
-                        }));
+            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
           });
     }
 
@@ -623,18 +530,7 @@ public class Tracing {
       return Single.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return Single.wrap(
-                observer ->
-                    lifecycle.run(
-                        observer,
-                        o -> {
-                          Single<T> chain = upstream.compose(withContext(lifecycle.context));
-                          if (onSuccessConsumer != null) {
-                            chain =
-                                chain.doOnSuccess(t -> onSuccessConsumer.accept(lifecycle.span, t));
-                          }
-                          chain.doFinally(lifecycle::end).subscribe(o);
-                        }));
+            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
           });
     }
 
@@ -643,18 +539,7 @@ public class Tracing {
       return Maybe.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return Maybe.wrap(
-                observer ->
-                    lifecycle.run(
-                        observer,
-                        o -> {
-                          Maybe<T> chain = upstream.compose(withContext(lifecycle.context));
-                          if (onSuccessConsumer != null) {
-                            chain =
-                                chain.doOnSuccess(t -> onSuccessConsumer.accept(lifecycle.span, t));
-                          }
-                          chain.doFinally(lifecycle::end).subscribe(o);
-                        }));
+            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
           });
     }
 
@@ -663,142 +548,7 @@ public class Tracing {
       return Completable.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return Completable.wrap(
-                observer ->
-                    lifecycle.run(
-                        observer,
-                        o -> {
-                          Completable chain = upstream.compose(withContext(lifecycle.context));
-                          // Completable does not emit items, so onSuccessConsumer is not
-                          // applicable.
-                          chain.doFinally(lifecycle::end).subscribe(o);
-                        }));
-          });
-    }
-  }
-
-  /**
-   * An observer that wraps another observer and ensures that the OpenTelemetry context is active
-   * during all callback methods.
-   *
-   * @param <T> The type of the items emitted by the stream.
-   */
-  private static final class TracingObserver<T>
-      implements Subscriber<T>, SingleObserver<T>, MaybeObserver<T>, CompletableObserver {
-    private final Context context;
-    private final Subscriber<? super T> subscriber;
-    private final SingleObserver<? super T> singleObserver;
-    private final MaybeObserver<? super T> maybeObserver;
-    private final CompletableObserver completableObserver;
-
-    private TracingObserver(
-        Context context,
-        Subscriber<? super T> subscriber,
-        SingleObserver<? super T> singleObserver,
-        MaybeObserver<? super T> maybeObserver,
-        CompletableObserver completableObserver) {
-      this.context = context;
-      this.subscriber = subscriber;
-      this.singleObserver = singleObserver;
-      this.maybeObserver = maybeObserver;
-      this.completableObserver = completableObserver;
-    }
-
-    static <T> TracingObserver<T> wrap(Context context, Subscriber<? super T> subscriber) {
-      return new TracingObserver<>(context, subscriber, null, null, null);
-    }
-
-    static <T> TracingObserver<T> wrap(Context context, SingleObserver<? super T> observer) {
-      return new TracingObserver<>(context, null, observer, null, null);
-    }
-
-    static <T> TracingObserver<T> wrap(Context context, MaybeObserver<? super T> observer) {
-      return new TracingObserver<>(context, null, null, observer, null);
-    }
-
-    static <T> TracingObserver<T> wrap(Context context, CompletableObserver observer) {
-      return new TracingObserver<>(context, null, null, null, observer);
-    }
-
-    private void runInContext(Runnable action) {
-      try (Scope scope = context.makeCurrent()) {
-        action.run();
-      }
-    }
-
-    @Override
-    public void onSubscribe(Subscription s) {
-      runInContext(
-          () -> {
-            if (subscriber != null) {
-              subscriber.onSubscribe(s);
-            }
-          });
-    }
-
-    @Override
-    public void onSubscribe(Disposable d) {
-      runInContext(
-          () -> {
-            if (singleObserver != null) {
-              singleObserver.onSubscribe(d);
-            } else if (maybeObserver != null) {
-              maybeObserver.onSubscribe(d);
-            } else if (completableObserver != null) {
-              completableObserver.onSubscribe(d);
-            }
-          });
-    }
-
-    @Override
-    public void onNext(T t) {
-      runInContext(
-          () -> {
-            if (subscriber != null) {
-              subscriber.onNext(t);
-            }
-          });
-    }
-
-    @Override
-    public void onSuccess(T t) {
-      runInContext(
-          () -> {
-            if (singleObserver != null) {
-              singleObserver.onSuccess(t);
-            } else if (maybeObserver != null) {
-              maybeObserver.onSuccess(t);
-            }
-          });
-    }
-
-    @Override
-    public void onError(Throwable t) {
-      runInContext(
-          () -> {
-            if (subscriber != null) {
-              subscriber.onError(t);
-            } else if (singleObserver != null) {
-              singleObserver.onError(t);
-            } else if (maybeObserver != null) {
-              maybeObserver.onError(t);
-            } else if (completableObserver != null) {
-              completableObserver.onError(t);
-            }
-          });
-    }
-
-    @Override
-    public void onComplete() {
-      runInContext(
-          () -> {
-            if (subscriber != null) {
-              subscriber.onComplete();
-            } else if (maybeObserver != null) {
-              maybeObserver.onComplete();
-            } else if (completableObserver != null) {
-              completableObserver.onComplete();
-            }
+            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
           });
     }
   }
