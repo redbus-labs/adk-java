@@ -110,12 +110,12 @@ public class EventActions extends JsonBaseModel {
   }
 
   @JsonProperty("artifactDelta")
-  public ConcurrentMap<String, Integer> artifactDelta() {
+  public Map<String, Integer> artifactDelta() {
     return artifactDelta;
   }
 
-  public void setArtifactDelta(ConcurrentMap<String, Integer> artifactDelta) {
-    this.artifactDelta = artifactDelta;
+  public void setArtifactDelta(Map<String, Integer> artifactDelta) {
+    this.artifactDelta = new ConcurrentHashMap<>(artifactDelta);
   }
 
   @JsonProperty("deletedArtifactIds")
@@ -322,8 +322,8 @@ public class EventActions extends JsonBaseModel {
 
     @CanIgnoreReturnValue
     @JsonProperty("artifactDelta")
-    public Builder artifactDelta(ConcurrentMap<String, Integer> value) {
-      this.artifactDelta = value;
+    public Builder artifactDelta(Map<String, Integer> value) {
+      this.artifactDelta = new ConcurrentHashMap<>(value);
       return this;
     }
 

@@ -111,6 +111,16 @@ public final class EventActionsTest {
   }
 
   @Test
+  public void setArtifactDelta_copiesRegularMap() {
+    EventActions eventActions = new EventActions();
+    ImmutableMap<String, Integer> artifactDelta = ImmutableMap.of("artifact1", 1);
+
+    eventActions.setArtifactDelta(artifactDelta);
+
+    assertThat(eventActions.artifactDelta()).containsExactly("artifact1", 1);
+  }
+
+  @Test
   public void removeStateByKey_marksKeyAsRemoved() {
     EventActions eventActions = new EventActions();
     eventActions.stateDelta().put("key1", "value1");
