@@ -384,6 +384,50 @@ public final class PartConverter {
         metadata.buildOrThrow());
   }
 
+  /**
+   * Converts a remote call part to a user part.
+   *
+   * <p>Events are rephrased as if a user was telling what happened in the session up to the point.
+   * E.g.
+   *
+   * <pre>{@code
+   * For context:
+   * User said: Now help me with Z
+   * Agent A said: Agent B can help you with it!
+   * Agent B said: Agent C might know better.*
+   * }</pre>
+   *
+   * @param author The author of the part.
+   * @param part The part to convert.
+   * @return The converted part.
+   */
+  public static Part remoteCallAsUserPart(String author, Part part) {
+    if (part.text().isPresent()) {
+      String partText = String.format("[%s] said: %s", author, part.text().get());
+      return Part.builder().text(partText).build();
+    } else if (part.functionCall().isPresent()) {
+      FunctionCall functionCall = part.functionCall().get();
+      String partText =
+          String.format(
+              "[%s] called tool %s with parameters: %s",
+              author,
+              functionCall.name().orElse("<unknown>"),
+              functionCall.args().orElse(ImmutableMap.of()));
+      return Part.builder().text(partText).build();
+    } else if (part.functionResponse().isPresent()) {
+      FunctionResponse functionResponse = part.functionResponse().get();
+      String partText =
+          String.format(
+              "[%s] %s tool returned result: %s",
+              author,
+              functionResponse.name().orElse("<unknown>"),
+              functionResponse.response().orElse(ImmutableMap.of()));
+      return Part.builder().text(partText).build();
+    } else {
+      return part;
+    }
+  }
+
   @SuppressWarnings("unchecked") // safe conversion from objectMapper.readValue
   private static Map<String, Object> coerceToMap(Object value) {
     if (value == null) {
