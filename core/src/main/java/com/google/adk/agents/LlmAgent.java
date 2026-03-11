@@ -758,14 +758,6 @@ public class LlmAgent extends BaseAgent {
   }
 
   /**
-   * @deprecated Use {@link #canonicalTools(ReadonlyContext)} instead.
-   */
-  @Deprecated
-  public Flowable<BaseTool> canonicalTools(Optional<ReadonlyContext> context) {
-    return canonicalTools(context.orElse(null));
-  }
-
-  /**
    * Constructs the list of tools for this agent based on the {@link #tools} field.
    *
    * @return The resolved list of tools as a {@link Single} wrapped list of {@link BaseTool}.
