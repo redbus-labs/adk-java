@@ -29,6 +29,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.DoNotCall;
 import com.google.genai.types.Content;
+import io.opentelemetry.context.Context;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
@@ -311,6 +312,7 @@ public abstract class BaseAgent {
   private Flowable<Event> run(
       InvocationContext parentContext,
       Function<InvocationContext, Flowable<Event>> runImplementation) {
+    Context parentSpanContext = Context.current();
     return Flowable.defer(
         () -> {
           InvocationContext invocationContext = createInvocationContext(parentContext);
@@ -339,8 +341,12 @@ public abstract class BaseAgent {
                   })
               .switchIfEmpty(mainAndAfterEvents)
               .compose(
-                  Tracing.traceAgent(
-                      "invoke_agent " + name(), name(), description(), invocationContext));
+                  Tracing.<Event>trace("invoke_agent " + name())
+                      .setParent(parentSpanContext)
+                      .configure(
+                          span ->
+                              Tracing.traceAgentInvocation(
+                                  span, name(), description(), invocationContext)));
         });
   }
 

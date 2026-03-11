@@ -178,7 +178,7 @@ public final class Functions {
               if (events.size() > 1) {
                 return Maybe.just(mergedEvent)
                     .doOnSuccess(event -> Tracing.traceToolResponse(event.id(), event))
-                    .compose(Tracing.trace("tool_response", parentContext));
+                    .compose(Tracing.<Event>trace("tool_response").setParent(parentContext));
               }
               return Maybe.just(mergedEvent);
             });
@@ -432,8 +432,8 @@ public final class Functions {
                                           toolContext,
                                           invocationContext))
                               .compose(
-                                  Tracing.trace(
-                                      "tool_response [" + tool.name() + "]", parentContext))
+                                  Tracing.<Event>trace("tool_response [" + tool.name() + "]")
+                                      .setParent(parentContext))
                               .doOnSuccess(event -> Tracing.traceToolResponse(event.id(), event));
                         });
               }
@@ -593,7 +593,9 @@ public final class Functions {
                 Tracing.traceToolCall(
                     tool.name(), tool.description(), tool.getClass().getSimpleName(), args))
         .doOnError(t -> Span.current().recordException(t))
-        .compose(Tracing.trace("tool_call [" + tool.name() + "]", parentContext))
+        .compose(
+            Tracing.<Map<String, Object>>trace("tool_call [" + tool.name() + "]")
+                .setParent(parentContext))
         .onErrorResumeNext(
             e ->
                 Maybe.error(
