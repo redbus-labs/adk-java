@@ -3,7 +3,6 @@ package com.google.adk.tools;
 import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -163,12 +162,11 @@ public final class LoadArtifactsToolTest {
     Part loadedArtifactPart = Part.fromText("This is the content of doc1.txt");
     ToolContext spiedToolContext = spy(ToolContext.builder(mockInvocationContext).build());
     when(spiedToolContext.listArtifacts()).thenReturn(Single.just(availableArtifacts));
-    when(spiedToolContext.loadArtifact(eq("doc1.txt"), eq(Optional.empty())))
-        .thenReturn(Maybe.just(loadedArtifactPart));
+    when(spiedToolContext.loadArtifact("doc1.txt")).thenReturn(Maybe.just(loadedArtifactPart));
 
     loadArtifactsTool.processLlmRequest(llmRequestBuilder, spiedToolContext).blockingAwait();
 
-    verify(spiedToolContext).loadArtifact(eq("doc1.txt"), eq(Optional.empty()));
+    verify(spiedToolContext).loadArtifact("doc1.txt");
 
     LlmRequest finalRequest = llmRequestBuilder.build();
     List<Content> finalContents = finalRequest.contents();
