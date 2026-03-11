@@ -427,19 +427,6 @@ public class Tracing {
   }
 
   /**
-   * Returns a transformer that traces the execution of an RxJava stream with an explicit parent
-   * context.
-   *
-   * @param spanName The name of the span to create.
-   * @param parentContext The explicit parent context for the span.
-   * @param <T> The type of the stream.
-   * @return A TracerProvider that can be used with .compose().
-   */
-  public static <T> TracerProvider<T> trace(String spanName, Context parentContext) {
-    return new TracerProvider<T>(spanName).setParent(parentContext);
-  }
-
-  /**
    * Returns a transformer that traces an agent invocation.
    *
    * @param spanName The name of the span to create.

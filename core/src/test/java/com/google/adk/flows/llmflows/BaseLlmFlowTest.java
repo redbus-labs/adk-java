@@ -524,19 +524,14 @@ public final class BaseLlmFlowTest {
 
   private static ResponseProcessor createResponseProcessor() {
     return (context, response) ->
-        Single.just(
-            ResponseProcessingResult.create(
-                response, ImmutableList.of(), /* transferToAgent= */ Optional.empty()));
+        Single.just(ResponseProcessingResult.create(response, ImmutableList.of()));
   }
 
   private static ResponseProcessor createResponseProcessor(
       Function<LlmResponse, LlmResponse> responseUpdater) {
     return (context, response) ->
         Single.just(
-            ResponseProcessingResult.create(
-                responseUpdater.apply(response),
-                ImmutableList.of(),
-                /* transferToAgent= */ Optional.empty()));
+            ResponseProcessingResult.create(responseUpdater.apply(response), ImmutableList.of()));
   }
 
   private static class TestTool extends BaseTool {

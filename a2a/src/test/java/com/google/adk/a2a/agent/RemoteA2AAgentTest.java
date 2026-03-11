@@ -1,4 +1,4 @@
-package com.google.adk.a2a;
+package com.google.adk.a2a.agent;
 
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.SECONDS;

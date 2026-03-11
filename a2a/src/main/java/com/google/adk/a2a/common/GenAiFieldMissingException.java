@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package com.google.adk.a2a.common;
 
-package com.google.adk;
+/** Exception thrown when the the genai class has an empty field. */
+public class GenAiFieldMissingException extends RuntimeException {
+  public GenAiFieldMissingException(String message) {
+    super(message);
+  }
 
-/**
- * Tracks the current ADK version. Useful for tracking headers. Kept as a string literal to avoid
- * coupling with the build system.
- */
-public final class Version {
-  // Don't touch this, release-please should keep it up to date.
-  public static final String JAVA_ADK_VERSION = "0.8.0"; // x-release-please-released-version
-
-  private Version() {}
+  public GenAiFieldMissingException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

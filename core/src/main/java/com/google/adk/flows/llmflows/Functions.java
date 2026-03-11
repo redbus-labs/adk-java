@@ -122,7 +122,7 @@ public final class Functions {
                       new IllegalStateException(
                           "Content role is missing in event: " + modelResponseEvent.id()));
       Content newContent = Content.builder().role(role).parts(newParts).build();
-      modelResponseEvent.setContent(Optional.of(newContent));
+      modelResponseEvent.setContent(newContent);
     }
   }
 
@@ -178,7 +178,7 @@ public final class Functions {
               if (events.size() > 1) {
                 return Maybe.just(mergedEvent)
                     .doOnSuccess(event -> Tracing.traceToolResponse(event.id(), event))
-                    .compose(Tracing.trace("tool_response", parentContext));
+                    .compose(Tracing.<Event>trace("tool_response").setParent(parentContext));
               }
               return Maybe.just(mergedEvent);
             });
@@ -432,8 +432,8 @@ public final class Functions {
                                           toolContext,
                                           invocationContext))
                               .compose(
-                                  Tracing.trace(
-                                      "tool_response [" + tool.name() + "]", parentContext))
+                                  Tracing.<Event>trace("tool_response [" + tool.name() + "]")
+                                      .setParent(parentContext))
                               .doOnSuccess(event -> Tracing.traceToolResponse(event.id(), event));
                         });
               }
@@ -468,8 +468,8 @@ public final class Functions {
             .id(Event.generateEventId())
             .invocationId(baseEvent.invocationId())
             .author(baseEvent.author())
-            .branch(baseEvent.branch())
-            .content(Optional.of(Content.builder().role("user").parts(mergedParts).build()))
+            .branch(baseEvent.branch().orElse(null))
+            .content(Content.builder().role("user").parts(mergedParts).build())
             .actions(mergedActionsBuilder.build())
             .timestamp(baseEvent.timestamp())
             .build());
@@ -593,7 +593,9 @@ public final class Functions {
                 Tracing.traceToolCall(
                     tool.name(), tool.description(), tool.getClass().getSimpleName(), args))
         .doOnError(t -> Span.current().recordException(t))
-        .compose(Tracing.trace("tool_call [" + tool.name() + "]", parentContext))
+        .compose(
+            Tracing.<Map<String, Object>>trace("tool_call [" + tool.name() + "]")
+                .setParent(parentContext))
         .onErrorResumeNext(
             e ->
                 Maybe.error(
@@ -624,7 +626,7 @@ public final class Functions {
         .id(Event.generateEventId())
         .invocationId(invocationContext.invocationId())
         .author(invocationContext.agent().name())
-        .branch(invocationContext.branch())
+        .branch(invocationContext.branch().orElse(null))
         .content(Content.builder().role("user").parts(partFunctionResponse).build())
         .actions(toolContext.eventActions())
         .build();
@@ -684,7 +686,7 @@ public final class Functions {
         Event.builder()
             .invocationId(invocationContext.invocationId())
             .author(invocationContext.agent().name())
-            .branch(invocationContext.branch())
+            .branch(invocationContext.branch().orElse(null))
             .content(contentBuilder.build())
             .longRunningToolIds(longRunningToolIds)
             .build());

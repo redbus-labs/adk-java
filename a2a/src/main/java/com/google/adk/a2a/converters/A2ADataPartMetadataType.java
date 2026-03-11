@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package com.google.adk.a2a.converters;
 
-package com.google.adk;
+/** Enum for the type of A2A DataPart metadata. */
+public enum A2ADataPartMetadataType {
+  FUNCTION_RESPONSE("function_response"),
+  FUNCTION_CALL("function_call"),
+  CODE_EXECUTION_RESULT("code_execution_result"),
+  EXECUTABLE_CODE("executable_code");
 
-/**
- * Tracks the current ADK version. Useful for tracking headers. Kept as a string literal to avoid
- * coupling with the build system.
- */
-public final class Version {
-  // Don't touch this, release-please should keep it up to date.
-  public static final String JAVA_ADK_VERSION = "0.8.0"; // x-release-please-released-version
+  private final String type;
 
-  private Version() {}
+  private A2ADataPartMetadataType(String type) {
+    this.type = type;
+  }
+
+  public String getType() {
+    return type;
+  }
 }

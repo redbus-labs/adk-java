@@ -132,6 +132,13 @@ public class Runner {
       return this;
     }
 
+    @CanIgnoreReturnValue
+    public Builder plugins(Plugin... plugins) {
+      Preconditions.checkState(this.app == null, "plugins() cannot be called when app is set.");
+      this.plugins = ImmutableList.copyOf(plugins);
+      return this;
+    }
+
     public Runner build() {
       BaseAgent buildAgent;
       String buildAppName;
@@ -333,7 +340,7 @@ public class Runner {
             .id(Event.generateEventId())
             .invocationId(invocationContext.invocationId())
             .author("user")
-            .content(Optional.of(newMessage));
+            .content(newMessage);
 
     // Add state delta if provided
     if (stateDelta != null && !stateDelta.isEmpty()) {
@@ -533,7 +540,7 @@ public class Runner {
                         .id(Event.generateEventId())
                         .invocationId(contextWithUpdatedSession.invocationId())
                         .author("model")
-                        .content(Optional.of(content))
+                        .content(content)
                         .build());
 
     // Agent execution
@@ -561,7 +568,7 @@ public class Runner {
         .toFlowable()
         .switchIfEmpty(agentEvents)
         .concatWith(
-            Completable.defer(() -> pluginManager.runAfterRunCallback(contextWithUpdatedSession)))
+            Completable.defer(() -> pluginManager.afterRunCallback(contextWithUpdatedSession)))
         .concatWith(Completable.defer(() -> compactEvents(updatedSession)));
   }
 
@@ -584,9 +591,9 @@ public class Runner {
    * @return invocation context configured for a live run.
    */
   private InvocationContext newInvocationContextForLive(
-      Session session, Optional<LiveRequestQueue> liveRequestQueue, RunConfig runConfig) {
+      Session session, @Nullable LiveRequestQueue liveRequestQueue, RunConfig runConfig) {
     RunConfig.Builder runConfigBuilder = RunConfig.builder(runConfig);
-    if (liveRequestQueue.isPresent()) {
+    if (liveRequestQueue != null) {
       // Default to AUDIO modality if not specified.
       if (CollectionUtils.isNullOrEmpty(runConfig.responseModalities())) {
         runConfigBuilder.setResponseModalities(
@@ -607,8 +614,9 @@ public class Runner {
     InvocationContext.Builder builder =
         newInvocationContextBuilder(session)
             .runConfig(runConfigBuilder.build())
-            .userContent(Content.fromParts());
-    liveRequestQueue.ifPresent(builder::liveRequestQueue);
+            .userContent(Content.fromParts())
+            .liveRequestQueue(liveRequestQueue);
+
     return builder.build();
   }
 
@@ -636,7 +644,7 @@ public class Runner {
     return Flowable.defer(
             () -> {
               InvocationContext invocationContext =
-                  newInvocationContextForLive(session, Optional.of(liveRequestQueue), runConfig);
+                  newInvocationContextForLive(session, liveRequestQueue, runConfig);
 
               Single<InvocationContext> invocationContextSingle;
               if (invocationContext.agent() instanceof LlmAgent agent) {

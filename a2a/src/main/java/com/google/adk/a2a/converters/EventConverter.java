@@ -1,74 +1,69 @@
+/*
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.google.adk.a2a.converters;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.adk.agents.InvocationContext;
-import com.google.adk.events.Event;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
-import com.google.genai.types.Part;
 import io.a2a.spec.Message;
-import io.a2a.spec.TextPart;
-import java.util.ArrayList;
-import java.util.List;
+import io.a2a.spec.Part;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Converter for ADK Events to A2A Messages.
- *
- * <p>**EXPERIMENTAL:** Subject to change, rename, or removal in any future patch release. Do not
- * use in production code.
- */
+/** Converter for ADK Events to A2A Messages. */
 public final class EventConverter {
   private static final Logger logger = LoggerFactory.getLogger(EventConverter.class);
 
   private EventConverter() {}
 
   /**
-   * Aggregation mode for converting events to A2A messages.
+   * Converts an ADK InvocationContext to an A2A Message.
    *
-   * <p>AS_IS: Parts are aggregated as-is.
+   * <p>It combines all the events in the session, plus the user content, converted into A2A Parts,
+   * into a single A2A Message.
    *
-   * <p>EXTERNAL_HANDOFF: Parts are aggregated as-is, except for function responses, which are
-   * converted to text parts with the function name and response map.
+   * <p>If the context has no events, or no suitable content to build the message, an empty optional
+   * is returned.
+   *
+   * @param context The ADK InvocationContext to convert.
+   * @return The converted A2A Message.
    */
-  public enum AggregationMode {
-    AS_IS,
-    EXTERNAL_HANDOFF
-  }
-
-  public static ImmutableList<io.a2a.spec.Part<?>> contentToParts(Optional<Content> content) {
-    if (content.isPresent() && content.get().parts().isPresent()) {
-      return content.get().parts().get().stream()
-          .map(PartConverter::fromGenaiPart)
-          .flatMap(Optional::stream)
-          .collect(toImmutableList());
-    }
-    return ImmutableList.of();
-  }
-
   public static Optional<Message> convertEventsToA2AMessage(InvocationContext context) {
-    return convertEventsToA2AMessage(context, AggregationMode.AS_IS);
-  }
-
-  public static Optional<Message> convertEventsToA2AMessage(
-      InvocationContext context, AggregationMode mode) {
     if (context.session().events().isEmpty()) {
       logger.warn("No events in session, cannot convert to A2A message.");
       return Optional.empty();
     }
 
-    List<io.a2a.spec.Part<?>> parts = new ArrayList<>();
-    for (Event event : context.session().events()) {
-      appendContentParts(event.content(), mode, parts);
-    }
+    ImmutableList.Builder<Part<?>> partsBuilder = ImmutableList.builder();
 
     context
-        .userContent()
-        .ifPresent(content -> appendContentParts(Optional.of(content), mode, parts));
+        .session()
+        .events()
+        .forEach(
+            event ->
+                partsBuilder.addAll(
+                    contentToParts(event.content(), event.partial().orElse(false))));
+    partsBuilder.addAll(contentToParts(context.userContent(), false));
+
+    ImmutableList<Part<?>> parts = partsBuilder.build();
 
     if (parts.isEmpty()) {
       logger.warn("No suitable content found to build A2A request message.");
@@ -83,37 +78,11 @@ public final class EventConverter {
             .build());
   }
 
-  private static void appendContentParts(
-      Optional<Content> contentOpt, AggregationMode mode, List<io.a2a.spec.Part<?>> target) {
-    if (contentOpt.isEmpty() || contentOpt.get().parts().isEmpty()) {
-      return;
-    }
-
-    for (Part part : contentOpt.get().parts().get()) {
-      if (part.text().isPresent()) {
-        target.add(new TextPart(part.text().get()));
-        continue;
-      }
-
-      if (part.functionCall().isPresent()) {
-        if (mode == AggregationMode.AS_IS) {
-          PartConverter.convertGenaiPartToA2aPart(part).ifPresent(target::add);
-        }
-        continue;
-      }
-
-      if (part.functionResponse().isPresent()) {
-        if (mode == AggregationMode.AS_IS) {
-          PartConverter.convertGenaiPartToA2aPart(part).ifPresent(target::add);
-        } else {
-          String name = part.functionResponse().get().name().orElse("");
-          String mapStr = String.valueOf(part.functionResponse().get().response().orElse(null));
-          target.add(new TextPart(String.format("%s response: %s", name, mapStr)));
-        }
-        continue;
-      }
-
-      PartConverter.fromGenaiPart(part).ifPresent(target::add);
-    }
+  public static ImmutableList<Part<?>> contentToParts(
+      Optional<Content> content, boolean isPartial) {
+    return content.flatMap(Content::parts).stream()
+        .flatMap(Collection::stream)
+        .map(part -> PartConverter.fromGenaiPart(part, isPartial))
+        .collect(toImmutableList());
   }
 }
