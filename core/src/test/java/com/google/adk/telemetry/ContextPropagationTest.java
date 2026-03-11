@@ -503,7 +503,7 @@ public class ContextPropagationTest {
                       .totalTokenCount(30)
                       .build())
               .build();
-      Tracing.traceCallLlm(buildInvocationContext(), "event-1", llmRequest, llmResponse);
+      Tracing.traceCallLlm(span, buildInvocationContext(), "event-1", llmRequest, llmResponse);
     } finally {
       span.end();
     }

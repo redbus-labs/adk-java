@@ -54,6 +54,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.reactivestreams.Publisher;
@@ -292,58 +293,49 @@ public class Tracing {
    * @param llmResponse The LLM response object.
    */
   public static void traceCallLlm(
+      Span span,
       InvocationContext invocationContext,
       String eventId,
       LlmRequest llmRequest,
       LlmResponse llmResponse) {
-    traceWithSpan(
-        "traceCallLlm",
-        span -> {
-          span.setAttribute(GEN_AI_SYSTEM, "gcp.vertex.agent");
-          llmRequest
-              .model()
-              .ifPresent(modelName -> span.setAttribute(GEN_AI_REQUEST_MODEL, modelName));
+    span.setAttribute(GEN_AI_SYSTEM, "gcp.vertex.agent");
+    llmRequest.model().ifPresent(modelName -> span.setAttribute(GEN_AI_REQUEST_MODEL, modelName));
 
-          setInvocationAttributes(span, invocationContext, eventId);
+    setInvocationAttributes(span, invocationContext, eventId);
 
-          setJsonAttribute(span, ADK_LLM_REQUEST, buildLlmRequestForTrace(llmRequest));
-          setJsonAttribute(span, ADK_LLM_RESPONSE, llmResponse);
+    setJsonAttribute(span, ADK_LLM_REQUEST, buildLlmRequestForTrace(llmRequest));
+    setJsonAttribute(span, ADK_LLM_RESPONSE, llmResponse);
 
-          llmRequest
-              .config()
-              .ifPresent(
-                  config -> {
-                    config
-                        .topP()
-                        .ifPresent(
-                            topP -> span.setAttribute(GEN_AI_REQUEST_TOP_P, topP.doubleValue()));
-                    config
-                        .maxOutputTokens()
-                        .ifPresent(
-                            maxTokens ->
-                                span.setAttribute(
-                                    GEN_AI_REQUEST_MAX_TOKENS, maxTokens.longValue()));
-                  });
-          llmResponse
-              .usageMetadata()
-              .ifPresent(
-                  usage -> {
-                    usage
-                        .promptTokenCount()
-                        .ifPresent(
-                            tokens -> span.setAttribute(GEN_AI_USAGE_INPUT_TOKENS, (long) tokens));
-                    usage
-                        .candidatesTokenCount()
-                        .ifPresent(
-                            tokens -> span.setAttribute(GEN_AI_USAGE_OUTPUT_TOKENS, (long) tokens));
-                  });
-          llmResponse
-              .finishReason()
-              .map(reason -> reason.knownEnum().name().toLowerCase(Locale.ROOT))
-              .ifPresent(
-                  reason ->
-                      span.setAttribute(GEN_AI_RESPONSE_FINISH_REASONS, ImmutableList.of(reason)));
-        });
+    llmRequest
+        .config()
+        .ifPresent(
+            config -> {
+              config
+                  .topP()
+                  .ifPresent(topP -> span.setAttribute(GEN_AI_REQUEST_TOP_P, topP.doubleValue()));
+              config
+                  .maxOutputTokens()
+                  .ifPresent(
+                      maxTokens ->
+                          span.setAttribute(GEN_AI_REQUEST_MAX_TOKENS, maxTokens.longValue()));
+            });
+    llmResponse
+        .usageMetadata()
+        .ifPresent(
+            usage -> {
+              usage
+                  .promptTokenCount()
+                  .ifPresent(tokens -> span.setAttribute(GEN_AI_USAGE_INPUT_TOKENS, (long) tokens));
+              usage
+                  .candidatesTokenCount()
+                  .ifPresent(
+                      tokens -> span.setAttribute(GEN_AI_USAGE_OUTPUT_TOKENS, (long) tokens));
+            });
+    llmResponse
+        .finishReason()
+        .map(reason -> reason.knownEnum().name().toLowerCase(Locale.ROOT))
+        .ifPresent(
+            reason -> span.setAttribute(GEN_AI_RESPONSE_FINISH_REASONS, ImmutableList.of(reason)));
   }
 
   /**
@@ -455,6 +447,7 @@ public class Tracing {
     private final String spanName;
     private Context explicitParentContext;
     private final List<Consumer<Span>> spanConfigurers = new ArrayList<>();
+    private BiConsumer<Span, T> onSuccessConsumer;
 
     private TracerProvider(String spanName) {
       this.spanName = spanName;
@@ -471,6 +464,16 @@ public class Tracing {
     @CanIgnoreReturnValue
     public TracerProvider<T> setParent(Context parentContext) {
       this.explicitParentContext = parentContext;
+      return this;
+    }
+
+    /**
+     * Registers a callback to be executed with the span and the result item when the stream emits a
+     * success value.
+     */
+    @CanIgnoreReturnValue
+    public TracerProvider<T> onSuccess(BiConsumer<Span, T> consumer) {
+      this.onSuccessConsumer = consumer;
       return this;
     }
 
@@ -504,7 +507,11 @@ public class Tracing {
       return Flowable.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
+            Flowable<T> pipeline = upstream.doOnSubscribe(s -> lifecycle.start());
+            if (onSuccessConsumer != null) {
+              pipeline = pipeline.doOnNext(t -> onSuccessConsumer.accept(lifecycle.span, t));
+            }
+            return pipeline.doFinally(lifecycle::end);
           });
     }
 
@@ -513,7 +520,11 @@ public class Tracing {
       return Single.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
+            Single<T> pipeline = upstream.doOnSubscribe(s -> lifecycle.start());
+            if (onSuccessConsumer != null) {
+              pipeline = pipeline.doOnSuccess(t -> onSuccessConsumer.accept(lifecycle.span, t));
+            }
+            return pipeline.doFinally(lifecycle::end);
           });
     }
 
@@ -522,7 +533,11 @@ public class Tracing {
       return Maybe.defer(
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
-            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
+            Maybe<T> pipeline = upstream.doOnSubscribe(s -> lifecycle.start());
+            if (onSuccessConsumer != null) {
+              pipeline = pipeline.doOnSuccess(t -> onSuccessConsumer.accept(lifecycle.span, t));
+            }
+            return pipeline.doFinally(lifecycle::end);
           });
     }
 

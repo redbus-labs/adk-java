@@ -190,20 +190,23 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                       context, llmRequestBuilder, eventForCallbackUsage, exception)
                                   .switchIfEmpty(Single.error(exception))
                                   .toFlowable())
-                      .doOnNext(
-                          llmResp ->
-                              Tracing.traceCallLlm(
-                                  context,
-                                  eventForCallbackUsage.id(),
-                                  llmRequestBuilder.build(),
-                                  llmResp))
                       .doOnError(
                           error -> {
                             Span span = Span.current();
                             span.setStatus(StatusCode.ERROR, error.getMessage());
                             span.recordException(error);
                           })
-                      .compose(Tracing.<LlmResponse>trace("call_llm").setParent(spanContext))
+                      .compose(
+                          Tracing.<LlmResponse>trace("call_llm")
+                              .setParent(spanContext)
+                              .onSuccess(
+                                  (span, llmResp) ->
+                                      Tracing.traceCallLlm(
+                                          span,
+                                          context,
+                                          eventForCallbackUsage.id(),
+                                          llmRequestBuilder.build(),
+                                          llmResp)))
                       .concatMap(
                           llmResp ->
                               handleAfterModelCallback(context, llmResp, eventForCallbackUsage)
