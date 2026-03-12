@@ -240,7 +240,8 @@ public final class CodeExecution {
                                     .code(codeStr)
                                     .inputFiles(ImmutableList.of(file))
                                     .executionId(
-                                        getOrSetExecutionId(invocationContext, codeExecutorContext))
+                                        getOrSetExecutionId(invocationContext, codeExecutorContext)
+                                            .orElse(null))
                                     .build());
 
                         codeExecutorContext.updateCodeExecutionResult(
@@ -320,7 +321,9 @@ public final class CodeExecution {
                       CodeExecutionInput.builder()
                           .code(codeStr)
                           .inputFiles(codeExecutorContext.getInputFiles())
-                          .executionId(getOrSetExecutionId(invocationContext, codeExecutorContext))
+                          .executionId(
+                              getOrSetExecutionId(invocationContext, codeExecutorContext)
+                                  .orElse(null))
                           .build());
               codeExecutorContext.updateCodeExecutionResult(
                   invocationContext.invocationId(),
