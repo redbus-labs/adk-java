@@ -27,7 +27,6 @@ import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
-import com.google.errorprone.annotations.InlineMe;
 import com.google.genai.types.Content;
 import java.util.Map;
 import java.util.Objects;
@@ -79,62 +78,6 @@ public class InvocationContext {
     // invocation invocation so that Plugins can access the same data it during the invocation
     // across all types of callbacks.
     this.callbackContextData = builder.callbackContextData;
-  }
-
-  /**
-   * @deprecated Use {@link #builder()} instead.
-   */
-  @InlineMe(
-      replacement =
-          "InvocationContext.builder()"
-              + ".sessionService(sessionService)"
-              + ".artifactService(artifactService)"
-              + ".invocationId(invocationId)"
-              + ".agent(agent)"
-              + ".session(session)"
-              + ".userContent(userContent)"
-              + ".runConfig(runConfig)"
-              + ".build()",
-      imports = {"com.google.adk.agents.InvocationContext"})
-  @Deprecated(forRemoval = true)
-  public static InvocationContext create(
-      BaseSessionService sessionService,
-      BaseArtifactService artifactService,
-      String invocationId,
-      BaseAgent agent,
-      Session session,
-      Content userContent,
-      RunConfig runConfig) {
-    return builder()
-        .sessionService(sessionService)
-        .artifactService(artifactService)
-        .invocationId(invocationId)
-        .agent(agent)
-        .session(session)
-        .userContent(userContent)
-        .runConfig(runConfig)
-        .build();
-  }
-
-  /**
-   * @deprecated Use {@link #builder()} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static InvocationContext create(
-      BaseSessionService sessionService,
-      BaseArtifactService artifactService,
-      BaseAgent agent,
-      Session session,
-      LiveRequestQueue liveRequestQueue,
-      RunConfig runConfig) {
-    return builder()
-        .sessionService(sessionService)
-        .artifactService(artifactService)
-        .agent(agent)
-        .session(session)
-        .liveRequestQueue(liveRequestQueue)
-        .runConfig(runConfig)
-        .build();
   }
 
   /** Returns a new {@link Builder} for creating {@link InvocationContext} instances. */
