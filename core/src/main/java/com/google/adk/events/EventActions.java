@@ -83,7 +83,7 @@ public class EventActions extends JsonBaseModel {
   }
 
   @JsonProperty("stateDelta")
-  public ConcurrentMap<String, Object> stateDelta() {
+  public Map<String, Object> stateDelta() {
     return stateDelta;
   }
 
