@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.9.0](https://github.com/google/adk-java/compare/v0.8.0...v0.9.0) (2026-03-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* refactor ApiClient constructors hierarchy to remove Optional parameters
+* remove deprecated LlmAgent.canonicalTools method
+* remove deprecated LoadArtifactsTool.loadArtifacts method
+* update LoopAgent's maxIteration field and methods to be @Nullable instead of Optional
+* Remove Optional parameters in EventActions
+* remove deprecated url method in ComputerState.Builder
+* Remove deprecated create method in ResponseProcessor
+* remove McpAsyncToolset constructors
+* use @Nullable fields in Event class
+* remove methods with Optional params from VertexCredential.Builder
+
+### Features
+
+* add formatting to the RemoteA2A agent so it filters out the previous agent responses and updates the context of the function calls and responses ([0d6dd55](https://github.com/google/adk-java/commit/0d6dd55f4870007e79db23e21bd261879dbfba79))
+* add multiple LLM responses to LLM recordings for conformance tests ([bdfb7a7](https://github.com/google/adk-java/commit/bdfb7a72188ce6e72c12c16c0abedb824b846160))
+* add support for gemini models in VertexAiRagRetrieval ([924fb71](https://github.com/google/adk-java/commit/924fb7174855b46a58be43373c1a29284c47dfa8))
+* Fixing the spans produced by agent calls to have the right parent spans ([3c8f488](https://github.com/google/adk-java/commit/3c8f4886f0e4c76abdbeb64a348bfccd5c16120e))
+* Fixing the spans produced by agent calls to have the right parent spans ([973f887](https://github.com/google/adk-java/commit/973f88743cabebcd2e6e7a8d5f141142b596dbbb))
+* refactor ApiClient constructors hierarchy to remove Optional parameters ([910d727](https://github.com/google/adk-java/commit/910d727f1981498151dea4cb91b9e5836f91e3ba))
+* Remove deprecated create method in ResponseProcessor ([5e1e1d4](https://github.com/google/adk-java/commit/5e1e1d434fa1f3931af30194422800757de96cb6))
+* remove deprecated LlmAgent.canonicalTools method ([aabf15a](https://github.com/google/adk-java/commit/aabf15a526ba525cdb47c74c246c178eff1851d5))
+* remove deprecated LoadArtifactsTool.loadArtifacts method ([bc38558](https://github.com/google/adk-java/commit/bc385589057a6daf0209a335280bf19d20b2126b))
+* remove deprecated url method in ComputerState.Builder ([a86ede0](https://github.com/google/adk-java/commit/a86ede007c3442ed73ee08a5c6ad0e2efa12998a))
+* remove executionId method that takes Optional param from CodeExecutionUtils ([be3b3f8](https://github.com/google/adk-java/commit/be3b3f8360888ea1f13796969bb19893c32727e0))
+* remove McpAsyncToolset constructors ([82ef5ac](https://github.com/google/adk-java/commit/82ef5ac2689e01676aa95d2616e3b4d8463e573e))
+* remove methods with Optional params from VertexCredential.Builder ([0b9057c](https://github.com/google/adk-java/commit/0b9057c9ccab98ea58597ec55b8168e32ac7c9a6))
+* Remove Optional parameters in EventActions ([b8316b1](https://github.com/google/adk-java/commit/b8316b1944ce17cc9208963cc09d900c379444c6))
+* replace Optional type of version in BaseArtifactService.loadArtifact with Nullable ([5fd4c53](https://github.com/google/adk-java/commit/5fd4c53c88e977d004b9eee8fa3697625ec85f47))
+* Trigger traceCallLlm to set call_llm attributes before span ends ([d9d84ee](https://github.com/google/adk-java/commit/d9d84ee67406cce8eeb66abcf1be24fad9c58e29))
+* Update converters for task and artifact events; add long running tools ids ([9ce78d7](https://github.com/google/adk-java/commit/9ce78d7c3e1b0fb6d8d4fdce9052a572ffb9e515))
+* update LoopAgent's maxIteration field and methods to be @Nullable instead of Optional ([e0d833b](https://github.com/google/adk-java/commit/e0d833b337e958e299d0d11a03f6bfa1468731bc))
+* update return type for artifactDelta getter and setter to Map from ConcurrentMap ([d1d5539](https://github.com/google/adk-java/commit/d1d5539ef763b6bfd5057c6ea0f2591225a98535))
+* update return type for requestedToolConfirmations getter and setter to Map from ConcurrentMap ([143b656](https://github.com/google/adk-java/commit/143b656949d61363d135e0b74ef5696e78eb270a))
+* update return type for stateDelta() to Map from ConcurrentMap ([3f6504e](https://github.com/google/adk-java/commit/3f6504e9416f9f644ef431e612ec983b9a2edd9d))
+* update State constructors to accept general Map types ([c6fdb63](https://github.com/google/adk-java/commit/c6fdb63c92e2f3481a01cfeafa946b6dce728c51))
+* use @Nullable fields in Event class ([67b602f](https://github.com/google/adk-java/commit/67b602f245f564238ea22298a37bf70049e56a12))
+
+
+### Bug Fixes
+
+* Explicitly setting the otel parent spans in agents, llm flow and function calls ([20f863f](https://github.com/google/adk-java/commit/20f863f716f653979551c481d85d4e7fa56a35da))
+* Make sure that `InvocationContext.callbackContextData` remains the same instance ([14ee28b](https://github.com/google/adk-java/commit/14ee28ba593a9f6f5f7b9bb6003441539fe33a18))
+* Removing deprecated InvocationContext methods ([41f5af0](https://github.com/google/adk-java/commit/41f5af0dceb78501ca8b94e434e4d751f608a699))
+* Removing deprecated methods in Runner ([0d8e22d](https://github.com/google/adk-java/commit/0d8e22d6e9fe4e8d29c87d485915ba51a22eb350))
+* Removing deprecated methods in Runner ([b857f01](https://github.com/google/adk-java/commit/b857f010a0f51df0eb25ecdc364465ffdd9fef65))
+
+
+### Miscellaneous Chores
+
+* override new version to 0.9.0 ([a47b651](https://github.com/google/adk-java/commit/a47b651b5c4868a603fd79df164b70bc712c3a80))
+
 ## [0.8.0](https://github.com/google/adk-java/compare/v0.7.0...v0.8.0) (2026-03-06)
 
 
