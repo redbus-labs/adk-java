@@ -37,16 +37,20 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.CompletableObserver;
 import io.reactivex.rxjava3.core.CompletableSource;
 import io.reactivex.rxjava3.core.CompletableTransformer;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.FlowableTransformer;
 import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.core.MaybeObserver;
 import io.reactivex.rxjava3.core.MaybeSource;
 import io.reactivex.rxjava3.core.MaybeTransformer;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.core.SingleObserver;
 import io.reactivex.rxjava3.core.SingleSource;
 import io.reactivex.rxjava3.core.SingleTransformer;
+import io.reactivex.rxjava3.disposables.Disposable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,6 +62,8 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -547,6 +553,187 @@ public class Tracing {
           () -> {
             TracingLifecycle lifecycle = new TracingLifecycle();
             return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
+          });
+    }
+  }
+
+  /**
+   * Returns a transformer that re-activates a given context for the duration of the stream's
+   * subscription.
+   *
+   * @param context The context to re-activate.
+   * @param <T> The type of the stream.
+   * @return A transformer that re-activates the context.
+   */
+  public static <T> ContextTransformer<T> withContext(Context context) {
+    return new ContextTransformer<>(context);
+  }
+
+  /**
+   * A transformer that re-activates a given context for the duration of the stream's subscription.
+   *
+   * @param <T> The type of the stream.
+   */
+  public static final class ContextTransformer<T>
+      implements FlowableTransformer<T, T>,
+          SingleTransformer<T, T>,
+          MaybeTransformer<T, T>,
+          CompletableTransformer {
+    private final Context context;
+
+    private ContextTransformer(Context context) {
+      this.context = context;
+    }
+
+    @Override
+    public Publisher<T> apply(Flowable<T> upstream) {
+      return upstream.lift(subscriber -> TracingObserver.wrap(context, subscriber));
+    }
+
+    @Override
+    public SingleSource<T> apply(Single<T> upstream) {
+      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
+    }
+
+    @Override
+    public MaybeSource<T> apply(Maybe<T> upstream) {
+      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
+    }
+
+    @Override
+    public CompletableSource apply(Completable upstream) {
+      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
+    }
+  }
+
+  /**
+   * An observer that wraps another observer and ensures that the OpenTelemetry context is active
+   * during all callback methods.
+   *
+   * <p>This implementation only wraps the data-flow callbacks (`onNext`, `onSuccess`, etc.). The
+   * `Subscription.request/cancel` and `Disposable.dispose` calls are not wrapped in the context. If
+   * the upstream logic depends on the context during these signals, they might lose trace
+   * information. Given this is a manual `withContext` utility, this might be an acceptable
+   * trade-off for simplicity/performance, but worth keeping in mind.
+   *
+   * @param <T> The type of the items emitted by the stream.
+   */
+  private static final class TracingObserver<T>
+      implements Subscriber<T>, SingleObserver<T>, MaybeObserver<T>, CompletableObserver {
+    private final Context context;
+    private final Subscriber<? super T> subscriber;
+    private final SingleObserver<? super T> singleObserver;
+    private final MaybeObserver<? super T> maybeObserver;
+    private final CompletableObserver completableObserver;
+
+    private TracingObserver(
+        Context context,
+        Subscriber<? super T> subscriber,
+        SingleObserver<? super T> singleObserver,
+        MaybeObserver<? super T> maybeObserver,
+        CompletableObserver completableObserver) {
+      this.context = context;
+      this.subscriber = subscriber;
+      this.singleObserver = singleObserver;
+      this.maybeObserver = maybeObserver;
+      this.completableObserver = completableObserver;
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, Subscriber<? super T> subscriber) {
+      return new TracingObserver<>(context, subscriber, null, null, null);
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, SingleObserver<? super T> observer) {
+      return new TracingObserver<>(context, null, observer, null, null);
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, MaybeObserver<? super T> observer) {
+      return new TracingObserver<>(context, null, null, observer, null);
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, CompletableObserver observer) {
+      return new TracingObserver<>(context, null, null, null, observer);
+    }
+
+    private void runInContext(Runnable action) {
+      try (Scope scope = context.makeCurrent()) {
+        action.run();
+      }
+    }
+
+    @Override
+    public void onSubscribe(Subscription s) {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onSubscribe(s);
+            }
+          });
+    }
+
+    @Override
+    public void onSubscribe(Disposable d) {
+      runInContext(
+          () -> {
+            if (singleObserver != null) {
+              singleObserver.onSubscribe(d);
+            } else if (maybeObserver != null) {
+              maybeObserver.onSubscribe(d);
+            } else if (completableObserver != null) {
+              completableObserver.onSubscribe(d);
+            }
+          });
+    }
+
+    @Override
+    public void onNext(T t) {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onNext(t);
+            }
+          });
+    }
+
+    @Override
+    public void onSuccess(T t) {
+      runInContext(
+          () -> {
+            if (singleObserver != null) {
+              singleObserver.onSuccess(t);
+            } else if (maybeObserver != null) {
+              maybeObserver.onSuccess(t);
+            }
+          });
+    }
+
+    @Override
+    public void onError(Throwable t) {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onError(t);
+            } else if (singleObserver != null) {
+              singleObserver.onError(t);
+            } else if (maybeObserver != null) {
+              maybeObserver.onError(t);
+            } else if (completableObserver != null) {
+              completableObserver.onError(t);
+            }
+          });
+    }
+
+    @Override
+    public void onComplete() {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onComplete();
+            } else if (maybeObserver != null) {
+              maybeObserver.onComplete();
+            } else if (completableObserver != null) {
+              completableObserver.onComplete();
+            }
           });
     }
   }
