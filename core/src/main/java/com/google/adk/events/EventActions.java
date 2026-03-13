@@ -87,7 +87,7 @@ public class EventActions extends JsonBaseModel {
     return stateDelta;
   }
 
-  @Deprecated // Use stateDelta(), addState() and removeStateByKey() instead.
+  @Deprecated // Use stateDelta() and removeStateByKey() instead.
   public void setStateDelta(ConcurrentMap<String, Object> stateDelta) {
     this.stateDelta = stateDelta;
   }
