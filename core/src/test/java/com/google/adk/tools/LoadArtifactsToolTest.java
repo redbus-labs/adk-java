@@ -1,7 +1,7 @@
 package com.google.adk.tools;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
@@ -105,7 +105,7 @@ public final class LoadArtifactsToolTest {
     assertThat(finalRequest.config()).isPresent();
     assertThat(finalRequest.config().get().systemInstruction()).isEmpty();
     verify(mockArtifactService, never())
-        .loadArtifact(anyString(), anyString(), anyString(), anyString(), any());
+        .loadArtifact(anyString(), anyString(), anyString(), anyString(), anyInt());
   }
 
   @Test
@@ -130,7 +130,7 @@ public final class LoadArtifactsToolTest {
     assertThat(appendedInstruction).contains("call the `load_artifacts` function");
 
     verify(mockArtifactService, never())
-        .loadArtifact(anyString(), anyString(), anyString(), anyString(), any());
+        .loadArtifact(anyString(), anyString(), anyString(), anyString(), anyInt());
   }
 
   @Test
@@ -215,7 +215,7 @@ public final class LoadArtifactsToolTest {
         .contains("You have a list of artifacts:");
 
     verify(mockArtifactService, never())
-        .loadArtifact(anyString(), anyString(), anyString(), anyString(), any());
+        .loadArtifact(anyString(), anyString(), anyString(), anyString(), anyInt());
     assertThat(finalRequest.contents()).containsExactly(functionCallContent);
   }
 }
