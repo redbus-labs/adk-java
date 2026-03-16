@@ -458,6 +458,9 @@ public class Runner {
       Content newMessage,
       RunConfig runConfig,
       @Nullable Map<String, Object> stateDelta) {
+    Preconditions.checkNotNull(session, "session cannot be null");
+    Preconditions.checkNotNull(newMessage, "newMessage cannot be null");
+    Preconditions.checkNotNull(runConfig, "runConfig cannot be null");
     return Flowable.defer(
             () -> {
               BaseAgent rootAgent = this.agent;
@@ -476,19 +479,14 @@ public class Runner {
                   .defaultIfEmpty(newMessage)
                   .flatMap(
                       content ->
-                          (content != null)
-                              ? appendNewMessageToSession(
-                                  session,
-                                  content,
-                                  initialContext,
-                                  runConfig.saveInputBlobsAsArtifacts(),
-                                  stateDelta)
-                              : Single.just(null))
+                          appendNewMessageToSession(
+                              session,
+                              content,
+                              initialContext,
+                              runConfig.saveInputBlobsAsArtifacts(),
+                              stateDelta))
                   .flatMapPublisher(
                       event -> {
-                        if (event == null) {
-                          return Flowable.empty();
-                        }
                         // Get the updated session after the message and state delta are
                         // applied
                         return this.sessionService
