@@ -35,6 +35,7 @@ import com.google.adk.agents.Callbacks.BeforeToolCallback;
 import com.google.adk.agents.Callbacks.OnModelErrorCallback;
 import com.google.adk.agents.Callbacks.OnToolErrorCallback;
 import com.google.adk.events.Event;
+import com.google.adk.examples.Example;
 import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
@@ -46,6 +47,7 @@ import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils.EchoTool;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.BaseToolset;
+import com.google.adk.tools.ExampleTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -648,5 +650,31 @@ public final class LlmAgentTest {
         .filter(s -> s.getName().equals(name))
         .findFirst()
         .orElseThrow(() -> new AssertionError("Span not found: " + name));
+  }
+
+  @Test
+  public void run_withExampleTool_doesNotAddFunctionDeclarations() {
+    ExampleTool tool =
+        ExampleTool.builder()
+            .addExample(
+                Example.builder()
+                    .input(Content.fromParts(Part.fromText("qin")))
+                    .output(ImmutableList.of(Content.fromParts(Part.fromText("qout"))))
+                    .build())
+            .build();
+
+    Content modelContent = Content.fromParts(Part.fromText("Real LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(modelContent));
+    LlmAgent agent = createTestAgentBuilder(testLlm).tools(tool).build();
+    InvocationContext invocationContext = createInvocationContext(agent);
+
+    var unused = agent.runAsync(invocationContext).toList().blockingGet();
+
+    assertThat(testLlm.getRequests()).hasSize(1);
+    LlmRequest request = testLlm.getRequests().get(0);
+
+    assertThat(request.config().isPresent()).isTrue();
+    var config = request.config().get();
+    assertThat(config.tools().isPresent()).isFalse();
   }
 }
