@@ -11,10 +11,12 @@ import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
 import io.a2a.client.MessageEvent;
 import io.a2a.client.TaskUpdateEvent;
 import io.a2a.spec.Artifact;
+import io.a2a.spec.DataPart;
 import io.a2a.spec.Message;
 import io.a2a.spec.Task;
 import io.a2a.spec.TaskArtifactUpdateEvent;
@@ -142,6 +144,81 @@ public final class ResponseConverterTest {
     Event event = ResponseConverter.taskToEvent(task, invocationContext);
     assertThat(event).isNotNull();
     assertThat(event.invocationId()).isEqualTo(invocationContext.invocationId());
+  }
+
+  @Test
+  public void taskToEvent_withInputRequired_parsesLongRunningToolIds() {
+    ImmutableMap<String, Object> data =
+        ImmutableMap.of("name", "myTool", "id", "call_123", "args", ImmutableMap.of());
+    ImmutableMap<String, Object> metadata =
+        ImmutableMap.of(
+            PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY,
+            "function_call",
+            PartConverter.A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY,
+            true);
+    DataPart dataPart = new DataPart(data, metadata);
+    ImmutableMap<String, Object> statusData =
+        ImmutableMap.of("name", "messageTools", "id", "msg_123", "args", ImmutableMap.of());
+    ImmutableMap<String, Object> statusMetadata =
+        ImmutableMap.of(
+            PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY,
+            "function_call",
+            PartConverter.A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY,
+            true);
+    DataPart statusDataPart = new DataPart(statusData, statusMetadata);
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(statusDataPart))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.INPUT_REQUIRED, statusMessage, null);
+
+    Artifact artifact =
+        new Artifact.Builder().artifactId("artifact-1").parts(ImmutableList.of(dataPart)).build();
+    Task task = testTask().status(status).artifacts(ImmutableList.of(artifact)).build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+    assertThat(event).isNotNull();
+    assertThat(event.longRunningToolIds().get()).containsExactly("call_123", "msg_123");
+  }
+
+  @Test
+  public void taskToEvent_withFailedState_setsErrorCode() {
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(new TextPart("Task failed")))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.FAILED, statusMessage, null);
+    Task task = testTask().status(status).artifacts(ImmutableList.of()).build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+    assertThat(event).isNotNull();
+    assertThat(event.errorMessage()).hasValue("Task failed");
+  }
+
+  @Test
+  public void taskToEvent_withFinalEvent_returnsEmptyEvent() {
+    TaskStatus status = new TaskStatus(TaskState.COMPLETED);
+    Task task = testTask().status(status).artifacts(ImmutableList.of()).build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+    assertThat(event).isNotNull();
+    assertThat(event.invocationId()).isEqualTo(invocationContext.invocationId());
+    assertThat(event.turnComplete()).hasValue(true);
+    assertThat(event.content().flatMap(Content::parts).orElse(ImmutableList.of())).isEmpty();
+  }
+
+  @Test
+  public void taskToEvent_withEmptyParts_returnsEmptyEvent() {
+    TaskStatus status = new TaskStatus(TaskState.SUBMITTED);
+    Task task = testTask().status(status).artifacts(ImmutableList.of()).build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+    assertThat(event).isNotNull();
+    assertThat(event.invocationId()).isEqualTo(invocationContext.invocationId());
+    assertThat(event.content()).isPresent();
+    assertThat(event.content().get().parts().orElse(ImmutableList.of())).isEmpty();
   }
 
   @Test

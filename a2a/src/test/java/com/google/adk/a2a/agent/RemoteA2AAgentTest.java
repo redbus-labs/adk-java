@@ -1,4 +1,4 @@
-package com.google.adk.a2a;
+package com.google.adk.a2a.agent;
 
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -412,10 +412,11 @@ public final class RemoteA2AAgentTest {
         .sendMessage(messageCaptor.capture(), any(List.class), any(Consumer.class), any());
     Message message = messageCaptor.getValue();
     assertThat(message.getRole()).isEqualTo(Message.Role.USER);
-    assertThat(message.getParts()).hasSize(3);
+    assertThat(message.getParts()).hasSize(4);
     assertThat(((TextPart) message.getParts().get(0)).getText()).isEqualTo("hello");
-    assertThat(((TextPart) message.getParts().get(1)).getText()).isEqualTo("hi");
-    assertThat(((TextPart) message.getParts().get(2)).getText()).isEqualTo("how are you?");
+    assertThat(((TextPart) message.getParts().get(1)).getText()).isEqualTo("For context:");
+    assertThat(((TextPart) message.getParts().get(2)).getText()).isEqualTo("[model] said: hi");
+    assertThat(((TextPart) message.getParts().get(3)).getText()).isEqualTo("how are you?");
   }
 
   @Test
