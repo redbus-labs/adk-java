@@ -44,7 +44,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 class LangChain4jIntegrationTest {
 
-  public static final String CLAUDE_3_7_SONNET_20250219 = "claude-3-7-sonnet-20250219";
+  public static final String CLAUDE_4_6_SONNET = "claude-sonnet-4-6";
   public static final String GEMINI_2_0_FLASH = "gemini-2.0-flash";
   public static final String GPT_4_O_MINI = "gpt-4o-mini";
 
@@ -55,14 +55,14 @@ class LangChain4jIntegrationTest {
     AnthropicChatModel claudeModel =
         AnthropicChatModel.builder()
             .apiKey(System.getenv("ANTHROPIC_API_KEY"))
-            .modelName(CLAUDE_3_7_SONNET_20250219)
+            .modelName(CLAUDE_4_6_SONNET)
             .build();
 
     LlmAgent agent =
         LlmAgent.builder()
             .name("science-app")
             .description("Science teacher agent")
-            .model(new LangChain4j(claudeModel, CLAUDE_3_7_SONNET_20250219))
+            .model(new LangChain4j(claudeModel, CLAUDE_4_6_SONNET))
             .instruction(
                 """
                 You are a helpful science teacher that explains science concepts
@@ -91,14 +91,14 @@ class LangChain4jIntegrationTest {
     AnthropicChatModel claudeModel =
         AnthropicChatModel.builder()
             .apiKey(System.getenv("ANTHROPIC_API_KEY"))
-            .modelName(CLAUDE_3_7_SONNET_20250219)
+            .modelName(CLAUDE_4_6_SONNET)
             .build();
 
     BaseAgent agent =
         LlmAgent.builder()
             .name("friendly-weather-app")
             .description("Friend agent that knows about the weather")
-            .model(new LangChain4j(claudeModel, CLAUDE_3_7_SONNET_20250219))
+            .model(new LangChain4j(claudeModel, CLAUDE_4_6_SONNET))
             .instruction(
                 """
                 You are a friendly assistant.
@@ -155,7 +155,7 @@ class LangChain4jIntegrationTest {
     List<Part> partsThree = contentThree.parts().get();
     assertEquals(1, partsThree.size());
     assertTrue(partsThree.get(0).text().isPresent());
-    assertTrue(partsThree.get(0).text().get().contains("beautiful"));
+    assertTrue(partsThree.get(0).text().get().contains("sunny"));
   }
 
   @Test
@@ -352,10 +352,10 @@ class LangChain4jIntegrationTest {
     AnthropicStreamingChatModel claudeStreamingModel =
         AnthropicStreamingChatModel.builder()
             .apiKey(System.getenv("ANTHROPIC_API_KEY"))
-            .modelName(CLAUDE_3_7_SONNET_20250219)
+            .modelName(CLAUDE_4_6_SONNET)
             .build();
 
-    LangChain4j lc4jClaude = new LangChain4j(claudeStreamingModel, CLAUDE_3_7_SONNET_20250219);
+    LangChain4j lc4jClaude = new LangChain4j(claudeStreamingModel, CLAUDE_4_6_SONNET);
 
     // when
     Flowable<LlmResponse> responses =
