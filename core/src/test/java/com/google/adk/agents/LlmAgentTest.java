@@ -574,8 +574,13 @@ public final class LlmAgentTest {
 
     String agentSpanId = agentSpan.getSpanContext().getSpanId();
     llmSpans.forEach(s -> assertEquals(agentSpanId, s.getParentSpanContext().getSpanId()));
-    toolCallSpans.forEach(s -> assertEquals(agentSpanId, s.getParentSpanContext().getSpanId()));
-    toolResponseSpans.forEach(s -> assertEquals(agentSpanId, s.getParentSpanContext().getSpanId()));
+
+    // The tool calls and responses are children of the first LLM call that produced the function
+    // call.
+    String firstLlmSpanId = llmSpans.get(0).getSpanContext().getSpanId();
+    toolCallSpans.forEach(s -> assertEquals(firstLlmSpanId, s.getParentSpanContext().getSpanId()));
+    toolResponseSpans.forEach(
+        s -> assertEquals(firstLlmSpanId, s.getParentSpanContext().getSpanId()));
   }
 
   @Test
