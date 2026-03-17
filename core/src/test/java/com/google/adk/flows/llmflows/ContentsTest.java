@@ -36,13 +36,15 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
+import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -787,15 +789,49 @@ public final class ContentsTest {
   public void processRequest_concurrentReadAndWrite_noException() throws Exception {
     LlmAgent agent =
         LlmAgent.builder().name(AGENT).includeContents(LlmAgent.IncludeContents.DEFAULT).build();
-    Session session =
-        sessionService
-            .createSession("test-app", "test-user", new HashMap<>(), "test-session")
-            .blockingGet();
+    List<Event> customEvents =
+        new ArrayList<Event>() {
+          private void checkLock() {
+            if (!Thread.holdsLock(this)) {
+              throw new ConcurrentModificationException("Unsynchronized iteration detected!");
+            }
+          }
 
-    // Seed with dummy events to widen the race capability
-    for (int i = 0; i < 5000; i++) {
-      session.events().add(createUserEvent("dummy" + i, "dummy"));
-    }
+          @Override
+          public Iterator<Event> iterator() {
+            checkLock();
+            return super.iterator();
+          }
+
+          @Override
+          public ListIterator<Event> listIterator() {
+            checkLock();
+            return super.listIterator();
+          }
+
+          @Override
+          public ListIterator<Event> listIterator(int index) {
+            checkLock();
+            return super.listIterator(index);
+          }
+
+          @Override
+          public Stream<Event> stream() {
+            checkLock();
+            return super.stream();
+          }
+        };
+
+    Session session =
+        Session.builder("test-session")
+            .appName("test-app")
+            .userId("test-user")
+            .events(customEvents)
+            .build();
+
+    // The list must have at least one element so that operations interacting with events trigger
+    // iteration.
+    customEvents.add(createUserEvent("dummy", "dummy"));
 
     InvocationContext context =
         InvocationContext.builder()
@@ -807,37 +843,8 @@ public final class ContentsTest {
 
     LlmRequest initialRequest = LlmRequest.builder().build();
 
-    AtomicReference<Throwable> writerError = new AtomicReference<>();
-    CountDownLatch startLatch = new CountDownLatch(1);
-
-    Thread writerThread =
-        new Thread(
-            () -> {
-              startLatch.countDown();
-              try {
-                for (int i = 0; i < 2000; i++) {
-                  session.events().add(createUserEvent("writer" + i, "new data"));
-                }
-              } catch (Throwable t) {
-                writerError.set(t);
-              }
-            });
-
-    writerThread.start();
-    startLatch.await(); // wait for writer to be ready
-
-    // Process (read) requests concurrently to trigger race conditions
-    for (int i = 0; i < 200; i++) {
-      var unused = contentsProcessor.processRequest(context, initialRequest).blockingGet();
-      if (writerError.get() != null) {
-        throw new RuntimeException("Writer failed", writerError.get());
-      }
-    }
-
-    writerThread.join();
-    if (writerError.get() != null) {
-      throw new RuntimeException("Writer failed", writerError.get());
-    }
+    // This single call will throw the exception if the list is accessed insecurely.
+    var unused = contentsProcessor.processRequest(context, initialRequest).blockingGet();
   }
 
   private static Event createUserEvent(String id, String text) {
