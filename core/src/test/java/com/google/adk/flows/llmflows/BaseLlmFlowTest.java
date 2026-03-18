@@ -17,6 +17,7 @@
 package com.google.adk.flows.llmflows;
 
 import static com.google.adk.testing.TestUtils.assertEqualIgnoringFunctionIds;
+import static com.google.adk.testing.TestUtils.createGenerateContentResponseUsageMetadata;
 import static com.google.adk.testing.TestUtils.createInvocationContext;
 import static com.google.adk.testing.TestUtils.createLlmResponse;
 import static com.google.adk.testing.TestUtils.createTestAgent;
@@ -25,6 +26,7 @@ import static com.google.adk.testing.TestUtils.createTestLlm;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.adk.agents.Callbacks;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.RequestProcessor.RequestProcessingResult;
@@ -41,8 +43,13 @@ import com.google.genai.types.FinishReason;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.ContextKey;
+import io.opentelemetry.context.Scope;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -414,6 +421,82 @@ public final class BaseLlmFlowTest {
     assertThat(processor2CallCount.get()).isEqualTo(1);
   }
 
+  @Test
+  public void run_sharingcallbackContextDataBetweenCallbacks() {
+    Content content = Content.fromParts(Part.fromText("LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(content));
+
+    Callbacks.BeforeModelCallback beforeCallback =
+        (ctx, req) -> {
+          ctx.invocationContext().callbackContextData().put("key", "value_from_before");
+          return Maybe.empty();
+        };
+
+    Callbacks.AfterModelCallback afterCallback =
+        (ctx, resp) -> {
+          String value = (String) ctx.invocationContext().callbackContextData().get("key");
+          LlmResponse modifiedResp =
+              resp.toBuilder().content(Content.fromParts(Part.fromText("Saw: " + value))).build();
+          return Maybe.just(modifiedResp);
+        };
+
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .beforeModelCallback(beforeCallback)
+                .afterModelCallback(afterCallback)
+                .build());
+
+    BaseLlmFlow baseLlmFlow = createBaseLlmFlowWithoutProcessors();
+
+    List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).stringifyContent()).isEqualTo("Saw: value_from_before");
+  }
+
+  @Test
+  public void run_sharingcallbackContextDataAcrossContextCopies() {
+    Content content = Content.fromParts(Part.fromText("LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(content));
+
+    Callbacks.BeforeModelCallback beforeCallback =
+        (ctx, req) -> {
+          ctx.invocationContext().callbackContextData().put("key", "value_from_before");
+          return Maybe.empty();
+        };
+
+    Callbacks.AfterModelCallback afterCallback =
+        (ctx, resp) -> {
+          String value = (String) ctx.invocationContext().callbackContextData().get("key");
+          LlmResponse modifiedResp =
+              resp.toBuilder().content(Content.fromParts(Part.fromText("Saw: " + value))).build();
+          return Maybe.just(modifiedResp);
+        };
+
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .beforeModelCallback(beforeCallback)
+                .afterModelCallback(afterCallback)
+                .build());
+
+    BaseLlmFlow baseLlmFlow =
+        new BaseLlmFlow(ImmutableList.of(), ImmutableList.of()) {
+          @Override
+          public Flowable<Event> run(InvocationContext context) {
+            // Force a context copy
+            InvocationContext copiedContext = context.toBuilder().build();
+            return super.run(copiedContext);
+          }
+        };
+
+    List<Event> events = baseLlmFlow.run(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).stringifyContent()).isEqualTo("Saw: value_from_before");
+  }
+
   private static BaseLlmFlow createBaseLlmFlowWithoutProcessors() {
     return createBaseLlmFlow(ImmutableList.of(), ImmutableList.of());
   }
@@ -445,19 +528,14 @@ public final class BaseLlmFlowTest {
 
   private static ResponseProcessor createResponseProcessor() {
     return (context, response) ->
-        Single.just(
-            ResponseProcessingResult.create(
-                response, ImmutableList.of(), /* transferToAgent= */ Optional.empty()));
+        Single.just(ResponseProcessingResult.create(response, ImmutableList.of()));
   }
 
   private static ResponseProcessor createResponseProcessor(
       Function<LlmResponse, LlmResponse> responseUpdater) {
     return (context, response) ->
         Single.just(
-            ResponseProcessingResult.create(
-                responseUpdater.apply(response),
-                ImmutableList.of(),
-                /* transferToAgent= */ Optional.empty()));
+            ResponseProcessingResult.create(responseUpdater.apply(response), ImmutableList.of()));
   }
 
   private static class TestTool extends BaseTool {
@@ -496,5 +574,103 @@ public final class BaseLlmFlowTest {
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
       return Single.just(response);
     }
+  }
+
+  @Test
+  public void run_contextPropagation() {
+    ContextKey<String> testKey = ContextKey.named("test-key");
+    Context testContext = Context.current().with(testKey, "test-value");
+
+    Content content = Content.fromParts(Part.fromText("LLM response"));
+    TestLlm testLlm = createTestLlm(createLlmResponse(content));
+
+    RequestProcessor requestProcessor =
+        (ctx, request) -> {
+          return Single.just(RequestProcessingResult.create(request, ImmutableList.of()))
+              .subscribeOn(Schedulers.computation());
+        };
+
+    ResponseProcessor responseProcessor =
+        (ctx, response) -> {
+          return Single.just(ResponseProcessingResult.create(response, ImmutableList.of()))
+              .subscribeOn(Schedulers.computation());
+        };
+
+    Callbacks.BeforeModelCallback beforeCallback =
+        (ctx, req) -> {
+          return Maybe.<LlmResponse>empty().subscribeOn(Schedulers.computation());
+        };
+
+    Callbacks.AfterModelCallback afterCallback =
+        (ctx, resp) -> {
+          return Maybe.just(resp).subscribeOn(Schedulers.computation());
+        };
+
+    Callbacks.OnModelErrorCallback onErrorCallback =
+        (ctx, req, err) -> {
+          return Maybe.just(
+                  LlmResponse.builder().content(Content.fromParts(Part.fromText("error"))).build())
+              .subscribeOn(Schedulers.computation());
+        };
+
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentBuilder(testLlm)
+                .beforeModelCallback(beforeCallback)
+                .afterModelCallback(afterCallback)
+                .onModelErrorCallback(onErrorCallback)
+                .build());
+
+    BaseLlmFlow baseLlmFlow =
+        createBaseLlmFlow(ImmutableList.of(requestProcessor), ImmutableList.of(responseProcessor));
+
+    List<Event> events;
+    try (Scope scope = testContext.makeCurrent()) {
+      events =
+          baseLlmFlow
+              .run(invocationContext)
+              .doOnNext(
+                  event -> {
+                    assertThat(Context.current().get(testKey)).isEqualTo("test-value");
+                  })
+              .toList()
+              .blockingGet();
+    }
+
+    assertThat(events).hasSize(1);
+    assertThat(events.get(0).content()).hasValue(content);
+  }
+
+  @Test
+  public void postprocess_noResponseProcessors_onlyUsageMetadata_returnsEvent() {
+    GenerateContentResponseUsageMetadata usageMetadata =
+        createGenerateContentResponseUsageMetadata().build();
+    LlmResponse llmResponse = LlmResponse.builder().usageMetadata(usageMetadata).build();
+    InvocationContext invocationContext =
+        createInvocationContext(createTestAgent(createTestLlm(llmResponse)));
+    BaseLlmFlow baseLlmFlow = createBaseLlmFlowWithoutProcessors();
+    Event baseEvent =
+        Event.builder()
+            .invocationId(invocationContext.invocationId())
+            .author(invocationContext.agent().name())
+            .build();
+
+    List<Event> events =
+        baseLlmFlow
+            .postprocess(
+                invocationContext,
+                baseEvent,
+                LlmRequest.builder().build(),
+                llmResponse,
+                Context.current())
+            .toList()
+            .blockingGet();
+
+    assertThat(events).hasSize(1);
+    Event event = getOnlyElement(events);
+    assertThat(event.content()).isEmpty();
+    assertThat(event.usageMetadata()).hasValue(usageMetadata);
+    assertThat(event.author()).isEqualTo(invocationContext.agent().name());
+    assertThat(event.invocationId()).isEqualTo(invocationContext.invocationId());
   }
 }

@@ -21,15 +21,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.events.ToolConfirmation;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.genai.types.Content;
 import com.google.genai.types.FinishReason;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.GroundingMetadata;
-import com.google.genai.types.Part;
 import java.io.UncheckedIOException;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -55,59 +57,66 @@ final class SessionJsonConverter {
    * @throws UncheckedIOException if serialization fails.
    */
   static String convertEventToJson(Event event) {
-    Map<String, Object> metadataJson = new HashMap<>();
-    metadataJson.put("partial", event.partial());
-    metadataJson.put("turnComplete", event.turnComplete());
-    metadataJson.put("interrupted", event.interrupted());
-    metadataJson.put("branch", event.branch().orElse(null));
-    metadataJson.put(
-        "long_running_tool_ids",
-        event.longRunningToolIds() != null ? event.longRunningToolIds().orElse(null) : null);
-    if (event.groundingMetadata() != null) {
-      metadataJson.put("grounding_metadata", event.groundingMetadata());
-    }
+    return convertEventToJson(event, false);
+  }
 
+  /**
+   * Converts an {@link Event} to its JSON string representation for API transmission.
+   *
+   * @param useIsoString if true, use ISO-8601 string for timestamp; otherwise use object format.
+   * @return JSON string of the event.
+   * @throws UncheckedIOException if serialization fails.
+   */
+  static String convertEventToJson(Event event, boolean useIsoString) {
+    Map<String, Object> metadataJson = new HashMap<>();
+    event.partial().ifPresent(v -> metadataJson.put("partial", v));
+    event.turnComplete().ifPresent(v -> metadataJson.put("turnComplete", v));
+    event.interrupted().ifPresent(v -> metadataJson.put("interrupted", v));
+    event.branch().ifPresent(v -> metadataJson.put("branch", v));
+    event.longRunningToolIds().ifPresent(v -> putIfNotEmpty(metadataJson, "longRunningToolIds", v));
+    event.groundingMetadata().ifPresent(v -> metadataJson.put("groundingMetadata", v));
+    event.usageMetadata().ifPresent(v -> metadataJson.put("usageMetadata", v));
     Map<String, Object> eventJson = new HashMap<>();
     eventJson.put("author", event.author());
     eventJson.put("invocationId", event.invocationId());
-    eventJson.put(
-        "timestamp",
-        new HashMap<>(
-            ImmutableMap.of(
-                "seconds",
-                event.timestamp() / 1000,
-                "nanos",
-                (event.timestamp() % 1000) * 1000000)));
-    if (event.errorCode().isPresent()) {
-      eventJson.put("errorCode", event.errorCode());
+    if (useIsoString) {
+      eventJson.put("timestamp", Instant.ofEpochMilli(event.timestamp()).toString());
+    } else {
+      eventJson.put(
+          "timestamp",
+          new HashMap<>(
+              ImmutableMap.of(
+                  "seconds",
+                  event.timestamp() / 1000,
+                  "nanos",
+                  (event.timestamp() % 1000) * 1000000)));
     }
-    if (event.errorMessage().isPresent()) {
-      eventJson.put("errorMessage", event.errorMessage());
-    }
+    event.errorCode().ifPresent(errorCode -> eventJson.put("errorCode", errorCode));
+    event.errorMessage().ifPresent(errorMessage -> eventJson.put("errorMessage", errorMessage));
     eventJson.put("eventMetadata", metadataJson);
 
     if (event.actions() != null) {
       Map<String, Object> actionsJson = new HashMap<>();
-      actionsJson.put("skipSummarization", event.actions().skipSummarization());
-      actionsJson.put("stateDelta", event.actions().stateDelta());
-      actionsJson.put("artifactDelta", event.actions().artifactDelta());
-      actionsJson.put("transferAgent", event.actions().transferToAgent());
-      actionsJson.put("escalate", event.actions().escalate());
-      actionsJson.put("requestedAuthConfigs", event.actions().requestedAuthConfigs());
-      actionsJson.put("requestedToolConfirmations", event.actions().requestedToolConfirmations());
-      actionsJson.put("endInvocation", event.actions().endInvocation());
-      actionsJson.put("compaction", event.actions().compaction());
+      EventActions actions = event.actions();
+      actions.skipSummarization().ifPresent(v -> actionsJson.put("skipSummarization", v));
+      actionsJson.put("stateDelta", stateDeltaToJson(actions.stateDelta()));
+      putIfNotEmpty(actionsJson, "artifactDelta", actions.artifactDelta());
+      actions
+          .transferToAgent()
+          .ifPresent(
+              v -> {
+                actionsJson.put("transferAgent", v);
+              });
+      actions.escalate().ifPresent(v -> actionsJson.put("escalate", v));
+      if (actions.endOfAgent()) {
+        actionsJson.put("endOfAgent", actions.endOfAgent());
+      }
+      putIfNotEmpty(actionsJson, "requestedAuthConfigs", actions.requestedAuthConfigs());
+      putIfNotEmpty(
+          actionsJson, "requestedToolConfirmations", actions.requestedToolConfirmations());
       eventJson.put("actions", actionsJson);
     }
-    if (event.content().isPresent()) {
-      eventJson.put("content", SessionUtils.encodeContent(event.content().get()));
-    }
-    if (event.errorCode().isPresent()) {
-      eventJson.put("errorCode", event.errorCode().get());
-    }
-    if (event.errorMessage().isPresent()) {
-      eventJson.put("errorMessage", event.errorMessage().get());
-    }
+    event.content().ifPresent(c -> eventJson.put("content", SessionUtils.encodeContent(c)));
     try {
       return objectMapper.writeValueAsString(eventJson);
     } catch (JsonProcessingException e) {
@@ -121,7 +130,7 @@ final class SessionJsonConverter {
    * @return parsed {@link Content}, or {@code null} if conversion fails.
    */
   @Nullable
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Safe because we check instanceof Map before casting.
   private static Content convertMapToContent(Object rawContentValue) {
     if (rawContentValue == null) {
       return null;
@@ -147,29 +156,41 @@ final class SessionJsonConverter {
    *
    * @return parsed {@link Event}.
    */
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
   static Event fromApiEvent(Map<String, Object> apiEvent) {
     EventActions.Builder eventActionsBuilder = EventActions.builder();
-    if (apiEvent.get("actions") != null) {
-      Map<String, Object> actionsMap = (Map<String, Object>) apiEvent.get("actions");
-      if (actionsMap.get("skipSummarization") != null) {
-        eventActionsBuilder.skipSummarization((Boolean) actionsMap.get("skipSummarization"));
+    Map<String, Object> actionsMap = (Map<String, Object>) apiEvent.get("actions");
+    if (actionsMap != null) {
+      Boolean skipSummarization = (Boolean) actionsMap.get("skipSummarization");
+      if (skipSummarization != null) {
+        eventActionsBuilder.skipSummarization(skipSummarization);
       }
-      eventActionsBuilder.stateDelta(
-          actionsMap.get("stateDelta") != null
-              ? new ConcurrentHashMap<>((Map<String, Object>) actionsMap.get("stateDelta"))
-              : new ConcurrentHashMap<>());
+      eventActionsBuilder.stateDelta(stateDeltaFromJson(actionsMap.get("stateDelta")));
+      Object artifactDelta = actionsMap.get("artifactDelta");
       eventActionsBuilder.artifactDelta(
-          actionsMap.get("artifactDelta") != null
-              ? convertToArtifactDeltaMap(actionsMap.get("artifactDelta"))
+          artifactDelta != null
+              ? convertToArtifactDeltaMap(artifactDelta)
               : new ConcurrentHashMap<>());
-      eventActionsBuilder.transferToAgent((String) actionsMap.get("transferAgent"));
-      if (actionsMap.get("escalate") != null) {
-        eventActionsBuilder.escalate((Boolean) actionsMap.get("escalate"));
+      String transferAgent = (String) actionsMap.get("transferAgent");
+      if (transferAgent == null) {
+        transferAgent = (String) actionsMap.get("transferToAgent");
+      }
+      eventActionsBuilder.transferToAgent(transferAgent);
+      Boolean escalate = (Boolean) actionsMap.get("escalate");
+      if (escalate != null) {
+        eventActionsBuilder.escalate(escalate);
+      }
+      Boolean endOfAgent = (Boolean) actionsMap.get("endOfAgent");
+      if (endOfAgent != null) {
+        eventActionsBuilder.endOfAgent(endOfAgent);
       }
       eventActionsBuilder.requestedAuthConfigs(
           Optional.ofNullable(actionsMap.get("requestedAuthConfigs"))
               .map(SessionJsonConverter::asConcurrentMapOfConcurrentMaps)
+              .orElse(new ConcurrentHashMap<>()));
+      eventActionsBuilder.requestedToolConfirmations(
+          Optional.ofNullable(actionsMap.get("requestedToolConfirmations"))
+              .map(SessionJsonConverter::asConcurrentMapOfToolConfirmations)
               .orElse(new ConcurrentHashMap<>()));
     }
 
@@ -187,14 +208,15 @@ final class SessionJsonConverter {
             .timestamp(convertToInstant(apiEvent.get("timestamp")).toEpochMilli())
             .errorCode(
                 Optional.ofNullable(apiEvent.get("errorCode"))
-                    .map(value -> new FinishReason((String) value)))
+                    .map(value -> new FinishReason((String) value))
+                    .orElse(null))
             .errorMessage(
-                Optional.ofNullable(apiEvent.get("errorMessage")).map(value -> (String) value))
-            .branch(Optional.ofNullable(apiEvent.get("branch")).map(value -> (String) value))
+                Optional.ofNullable(apiEvent.get("errorMessage"))
+                    .map(value -> (String) value)
+                    .orElse(null))
             .build();
-    // TODO(b/414263934): Add Event branch and grounding metadata for python parity.
-    if (apiEvent.get("eventMetadata") != null) {
-      Map<String, Object> eventMetadata = (Map<String, Object>) apiEvent.get("eventMetadata");
+    Map<String, Object> eventMetadata = (Map<String, Object>) apiEvent.get("eventMetadata");
+    if (eventMetadata != null) {
       List<String> longRunningToolIdsList = (List<String>) eventMetadata.get("longRunningToolIds");
 
       GroundingMetadata groundingMetadata = null;
@@ -202,6 +224,12 @@ final class SessionJsonConverter {
       if (rawGroundingMetadata != null) {
         groundingMetadata =
             objectMapper.convertValue(rawGroundingMetadata, GroundingMetadata.class);
+      }
+      GenerateContentResponseUsageMetadata usageMetadata = null;
+      Object rawUsageMetadata = eventMetadata.get("usageMetadata");
+      if (rawUsageMetadata != null) {
+        usageMetadata =
+            objectMapper.convertValue(rawUsageMetadata, GenerateContentResponseUsageMetadata.class);
       }
 
       event =
@@ -211,13 +239,40 @@ final class SessionJsonConverter {
                   Optional.ofNullable((Boolean) eventMetadata.get("turnComplete")).orElse(false))
               .interrupted(
                   Optional.ofNullable((Boolean) eventMetadata.get("interrupted")).orElse(false))
-              .branch(Optional.ofNullable((String) eventMetadata.get("branch")))
+              .branch((String) eventMetadata.get("branch"))
               .groundingMetadata(groundingMetadata)
+              .usageMetadata(usageMetadata)
               .longRunningToolIds(
                   longRunningToolIdsList != null ? new HashSet<>(longRunningToolIdsList) : null)
               .build();
     }
     return event;
+  }
+
+  @SuppressWarnings("unchecked") // stateDeltaFromMap is a Map<String, Object> from JSON.
+  private static ConcurrentMap<String, Object> stateDeltaFromJson(Object stateDeltaFromMap) {
+    if (stateDeltaFromMap == null) {
+      return new ConcurrentHashMap<>();
+    }
+    return ((Map<String, Object>) stateDeltaFromMap)
+        .entrySet().stream()
+            .collect(
+                ConcurrentHashMap::new,
+                (map, entry) ->
+                    map.put(
+                        entry.getKey(),
+                        entry.getValue() == null ? State.REMOVED : entry.getValue()),
+                ConcurrentHashMap::putAll);
+  }
+
+  private static Map<String, Object> stateDeltaToJson(Map<String, Object> stateDelta) {
+    return stateDelta.entrySet().stream()
+        .collect(
+            HashMap::new,
+            (map, entry) ->
+                map.put(
+                    entry.getKey(), entry.getValue() == State.REMOVED ? null : entry.getValue()),
+            HashMap::putAll);
   }
 
   /**
@@ -246,18 +301,19 @@ final class SessionJsonConverter {
    * @return A {@link ConcurrentMap} representing the artifact delta.
    */
   @SuppressWarnings("unchecked")
-  private static ConcurrentMap<String, Part> convertToArtifactDeltaMap(Object artifactDeltaObj) {
+  private static ConcurrentMap<String, Integer> convertToArtifactDeltaMap(Object artifactDeltaObj) {
     if (!(artifactDeltaObj instanceof Map)) {
       return new ConcurrentHashMap<>();
     }
-    ConcurrentMap<String, Part> artifactDeltaMap = new ConcurrentHashMap<>();
-    Map<String, Map<String, Object>> rawMap = (Map<String, Map<String, Object>>) artifactDeltaObj;
-    for (Map.Entry<String, Map<String, Object>> entry : rawMap.entrySet()) {
+    ConcurrentMap<String, Integer> artifactDeltaMap = new ConcurrentHashMap<>();
+    Map<String, Object> rawMap = (Map<String, Object>) artifactDeltaObj;
+    for (Map.Entry<String, Object> entry : rawMap.entrySet()) {
       try {
-        Part part = objectMapper.convertValue(entry.getValue(), Part.class);
-        artifactDeltaMap.put(entry.getKey(), part);
+        Integer value = objectMapper.convertValue(entry.getValue(), Integer.class);
+        artifactDeltaMap.put(entry.getKey(), value);
       } catch (IllegalArgumentException e) {
-        logger.warn("Error converting artifactDelta value to Part for key: {}", entry.getKey(), e);
+        logger.warn(
+            "Error converting artifactDelta value to Integer for key: {}", entry.getKey(), e);
       }
     }
     return artifactDeltaMap;
@@ -268,7 +324,7 @@ final class SessionJsonConverter {
    *
    * @return thread-safe nested map.
    */
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
   private static ConcurrentMap<String, ConcurrentMap<String, Object>>
       asConcurrentMapOfConcurrentMaps(Object value) {
     return ((Map<String, Map<String, Object>>) value)
@@ -277,5 +333,32 @@ final class SessionJsonConverter {
                 ConcurrentHashMap::new,
                 (map, entry) -> map.put(entry.getKey(), new ConcurrentHashMap<>(entry.getValue())),
                 ConcurrentHashMap::putAll);
+  }
+
+  @SuppressWarnings("unchecked") // Parsing raw Map from JSON following a known schema.
+  private static ConcurrentMap<String, ToolConfirmation> asConcurrentMapOfToolConfirmations(
+      Object value) {
+    return ((Map<String, Object>) value)
+        .entrySet().stream()
+            .collect(
+                ConcurrentHashMap::new,
+                (map, entry) ->
+                    map.put(
+                        entry.getKey(),
+                        objectMapper.convertValue(entry.getValue(), ToolConfirmation.class)),
+                ConcurrentHashMap::putAll);
+  }
+
+  private static void putIfNotEmpty(Map<String, Object> map, String key, Map<?, ?> values) {
+    if (values != null && !values.isEmpty()) {
+      map.put(key, values);
+    }
+  }
+
+  private static void putIfNotEmpty(
+      Map<String, Object> map, String key, @Nullable Collection<?> values) {
+    if (values != null && !values.isEmpty()) {
+      map.put(key, values);
+    }
   }
 }

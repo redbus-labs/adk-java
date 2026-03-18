@@ -167,8 +167,7 @@ public class VertexAiSessionServiceTest {
 
   @Test
   public void createSession_success() throws Exception {
-    ConcurrentMap<String, Object> sessionStateMap =
-        new ConcurrentHashMap<>(ImmutableMap.of("new_key", "new_value"));
+    Map<String, Object> sessionStateMap = new HashMap<>(ImmutableMap.of("new_key", "new_value"));
     Single<Session> sessionSingle =
         vertexAiSessionService.createSession("123", "test_user", sessionStateMap, null);
     Session createdSession = sessionSingle.blockingGet();
@@ -190,8 +189,7 @@ public class VertexAiSessionServiceTest {
 
   @Test
   public void createSession_getSession_success() throws Exception {
-    ConcurrentMap<String, Object> sessionStateMap =
-        new ConcurrentHashMap<>(ImmutableMap.of("new_key", "new_value"));
+    Map<String, Object> sessionStateMap = new HashMap<>(ImmutableMap.of("new_key", "new_value"));
     Single<Session> sessionSingle =
         vertexAiSessionService.createSession("789", "test_user", sessionStateMap, null);
     Session createdSession = sessionSingle.blockingGet();
@@ -252,8 +250,7 @@ public class VertexAiSessionServiceTest {
 
   @Test
   public void createSessionAndGetSession_success() throws Exception {
-    ConcurrentMap<String, Object> sessionStateMap =
-        new ConcurrentHashMap<>(ImmutableMap.of("key", "value"));
+    Map<String, Object> sessionStateMap = new HashMap<>(ImmutableMap.of("key", "value"));
     Single<Session> sessionSingle =
         vertexAiSessionService.createSession("123", "user", sessionStateMap, null);
     Session createdSession = sessionSingle.blockingGet();
@@ -336,5 +333,33 @@ public class VertexAiSessionServiceTest {
                 .blockingGet()
                 .events())
         .isEmpty();
+  }
+
+  @Test
+  public void appendEvent_withStateRemoved_updatesSessionState() {
+    String userId = "userB";
+    Map<String, Object> initialState =
+        new HashMap<>(ImmutableMap.of("key1", "value1", "key2", "value2"));
+    Session session =
+        vertexAiSessionService.createSession("987", userId, initialState, null).blockingGet();
+
+    ConcurrentMap<String, Object> stateDelta =
+        new ConcurrentHashMap<>(ImmutableMap.of("key2", State.REMOVED));
+    Event event =
+        Event.builder()
+            .invocationId("456")
+            .author(userId)
+            .timestamp(Instant.parse("2024-12-12T12:12:12.123456Z").toEpochMilli())
+            .actions(EventActions.builder().stateDelta(stateDelta).build())
+            .build();
+    var unused = vertexAiSessionService.appendEvent(session, event).blockingGet();
+
+    Session updatedSession =
+        vertexAiSessionService
+            .getSession(session.appName(), session.userId(), session.id(), Optional.empty())
+            .blockingGet();
+
+    assertThat(updatedSession.state()).containsExactly("key1", "value1");
+    assertThat(updatedSession.state()).doesNotContainKey("key2");
   }
 }

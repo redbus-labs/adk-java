@@ -29,6 +29,7 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
 import com.google.adk.events.ToolConfirmation;
 import com.google.adk.models.LlmRequest;
+import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -37,6 +38,7 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
+import io.opentelemetry.context.Context;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.Collection;
@@ -51,7 +53,7 @@ import org.slf4j.LoggerFactory;
 public class RequestConfirmationLlmRequestProcessor implements RequestProcessor {
   private static final Logger logger =
       LoggerFactory.getLogger(RequestConfirmationLlmRequestProcessor.class);
-  private static final ObjectMapper OBJECT_MAPPER = JsonBaseModel.getMapper();
+  private static final ObjectMapper objectMapper = JsonBaseModel.getMapper();
   private static final String ORIGINAL_FUNCTION_CALL = "originalFunctionCall";
 
   @Override
@@ -177,7 +179,7 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
     }
     try {
       FunctionCall originalFunctionCall =
-          OBJECT_MAPPER.convertValue(
+          objectMapper.convertValue(
               functionCall.args().get().get(ORIGINAL_FUNCTION_CALL), FunctionCall.class);
       if (originalFunctionCall.id().isEmpty()) {
         return Optional.empty();
@@ -216,10 +218,13 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
                     .build())
             .build();
 
-    return toolsMapSingle.flatMapMaybe(
-        toolsMap ->
-            Functions.handleFunctionCalls(
-                invocationContext, functionCallEvent, toolsMap, toolConfirmations));
+    Context parentContext = Context.current();
+    return toolsMapSingle
+        .flatMapMaybe(
+            toolsMap ->
+                Functions.handleFunctionCalls(
+                    invocationContext, functionCallEvent, toolsMap, toolConfirmations))
+        .compose(Tracing.withContext(parentContext));
   }
 
   private static Optional<Map.Entry<String, ToolConfirmation>> maybeCreateToolConfirmationEntry(
@@ -229,14 +234,14 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
       return Optional.of(
           Map.entry(
               functionResponse.id().get(),
-              OBJECT_MAPPER.convertValue(responseMap, ToolConfirmation.class)));
+              objectMapper.convertValue(responseMap, ToolConfirmation.class)));
     }
 
     try {
       return Optional.of(
           Map.entry(
               functionResponse.id().get(),
-              OBJECT_MAPPER.readValue(
+              objectMapper.readValue(
                   (String) responseMap.get("response"), ToolConfirmation.class)));
     } catch (JsonProcessingException e) {
       logger.error("Failed to parse tool confirmation response", e);

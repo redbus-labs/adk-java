@@ -45,9 +45,7 @@ public final class EventTest {
       EventActions.builder()
           .skipSummarization(true)
           .stateDelta(new ConcurrentHashMap<>(ImmutableMap.of("key", "value")))
-          .artifactDelta(
-              new ConcurrentHashMap<>(
-                  ImmutableMap.of("artifact_key", Part.builder().text("artifact_value").build())))
+          .artifactDelta(new ConcurrentHashMap<>(ImmutableMap.of("artifact_key", 1)))
           .transferToAgent("agent_id")
           .escalate(true)
           .requestedAuthConfigs(
@@ -78,6 +76,7 @@ public final class EventTest {
           .avgLogprobs(0.5)
           .interrupted(true)
           .timestamp(123456789L)
+          .modelVersion("model_version")
           .build();
 
   @Test
@@ -101,6 +100,7 @@ public final class EventTest {
     assertThat(EVENT.interrupted()).hasValue(true);
     assertThat(EVENT.timestamp()).isEqualTo(123456789L);
     assertThat(EVENT.actions()).isEqualTo(EVENT_ACTIONS);
+    assertThat(EVENT.modelVersion()).hasValue("model_version");
   }
 
   @Test
@@ -190,5 +190,68 @@ public final class EventTest {
     String json = EVENT.toJson();
     Event deserializedEvent = Event.fromJson(json);
     assertThat(deserializedEvent).isEqualTo(EVENT);
+  }
+
+  @Test
+  public void finalResponse_returnsTrueIfNoToolCalls() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromText("hello")))
+            .build();
+    assertThat(event.finalResponse()).isTrue();
+  }
+
+  @Test
+  public void finalResponse_returnsFalseIfToolCalls() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromFunctionCall("tool", ImmutableMap.of("k", "v"))))
+            .build();
+    assertThat(event.finalResponse()).isFalse();
+  }
+
+  @Test
+  public void finalResponse_isTrueForEventWithTextContent() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromText("hello")))
+            .longRunningToolIds(ImmutableSet.of("tool1"))
+            .build();
+    assertThat(event.finalResponse()).isTrue();
+  }
+
+  @Test
+  public void finalResponse_isFalseForEventWithToolCallAndLongRunningToolId() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromFunctionCall("tool", ImmutableMap.of("k", "v"))))
+            .longRunningToolIds(ImmutableSet.of("tool1"))
+            .build();
+    assertThat(event.finalResponse()).isFalse();
+  }
+
+  @Test
+  public void finalResponse_returnsTrueIfSkipSummarization() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromFunctionCall("tool", ImmutableMap.of("k", "v"))))
+            .actions(EventActions.builder().skipSummarization(true).build())
+            .build();
+    assertThat(event.finalResponse()).isTrue();
   }
 }

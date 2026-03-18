@@ -16,6 +16,8 @@
 
 package com.google.adk.summarizer;
 
+import com.google.auto.value.AutoBuilder;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import javax.annotation.Nullable;
 
 /**
@@ -27,11 +29,57 @@ import javax.annotation.Nullable;
  *     compacted range. This creates an overlap between consecutive compacted summaries, maintaining
  *     context.
  * @param summarizer An event summarizer to use for compaction.
+ * @param tokenThreshold The number of tokens above which compaction will be triggered. If null, no
+ *     token limit will be enforced. It will trigger compaction within the invocation.
+ * @param eventRetentionSize The maximum number of events to retain and preserve from compaction. If
+ *     null, no event retention limit will be enforced.
  */
 public record EventsCompactionConfig(
-    int compactionInterval, int overlapSize, @Nullable BaseEventSummarizer summarizer) {
+    @Nullable Integer compactionInterval,
+    @Nullable Integer overlapSize,
+    @Nullable BaseEventSummarizer summarizer,
+    @Nullable Integer tokenThreshold,
+    @Nullable Integer eventRetentionSize) {
+
+  public static Builder builder() {
+    return new AutoBuilder_EventsCompactionConfig_Builder();
+  }
+
+  public Builder toBuilder() {
+    return new AutoBuilder_EventsCompactionConfig_Builder(this);
+  }
+
+  /** Builder for {@link EventsCompactionConfig}. */
+  @AutoBuilder
+  public abstract static class Builder {
+    @CanIgnoreReturnValue
+    public abstract Builder compactionInterval(@Nullable Integer compactionInterval);
+
+    @CanIgnoreReturnValue
+    public abstract Builder overlapSize(@Nullable Integer overlapSize);
+
+    @CanIgnoreReturnValue
+    public abstract Builder summarizer(@Nullable BaseEventSummarizer summarizer);
+
+    @CanIgnoreReturnValue
+    public abstract Builder tokenThreshold(@Nullable Integer tokenThreshold);
+
+    @CanIgnoreReturnValue
+    public abstract Builder eventRetentionSize(@Nullable Integer eventRetentionSize);
+
+    public abstract EventsCompactionConfig build();
+  }
 
   public EventsCompactionConfig(int compactionInterval, int overlapSize) {
-    this(compactionInterval, overlapSize, null);
+    this(compactionInterval, overlapSize, null, null, null);
+  }
+
+  public EventsCompactionConfig(
+      int compactionInterval, int overlapSize, @Nullable BaseEventSummarizer summarizer) {
+    this(compactionInterval, overlapSize, summarizer, null, null);
+  }
+
+  public boolean hasSlidingWindowCompactionConfig() {
+    return compactionInterval != null && compactionInterval > 0 && overlapSize != null;
   }
 }
