@@ -25,6 +25,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Part;
+import com.google.genai.types.Schema;
+import com.google.genai.types.Type;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -234,7 +236,8 @@ public final class ChatRequest {
     Map<String, Object> map = new java.util.HashMap<>();
     schema.type().ifPresent(t -> map.put("type", schemaTypeToString(t)));
     schema.description().ifPresent(d -> map.put("description", d));
-    schema.properties()
+    schema
+        .properties()
         .ifPresent(
             props -> {
               Map<String, Object> propsMap = new java.util.HashMap<>();

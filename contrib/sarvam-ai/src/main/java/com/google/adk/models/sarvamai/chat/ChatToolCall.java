@@ -14,17 +14,12 @@
  * limitations under the License.
  */
 
-
 package com.google.adk.models.sarvamai.chat;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-/**
- * A tool call in the Sarvam AI chat completion response. This is a response from the Sarvam AI chat completions endpoint.
- *
- * @author Alfred Jimmy
- */
+/** OpenAI-format tool call (id, type, function with name and arguments). */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public final class ChatToolCall {
 

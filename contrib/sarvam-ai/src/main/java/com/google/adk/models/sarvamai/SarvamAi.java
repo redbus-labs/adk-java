@@ -16,6 +16,7 @@
 
 package com.google.adk.models.sarvamai;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.BaseLlm;
@@ -26,13 +27,12 @@ import com.google.adk.models.sarvamai.chat.ChatRequest;
 import com.google.adk.models.sarvamai.chat.ChatResponse;
 import com.google.adk.models.sarvamai.chat.ChatToolCall;
 import com.google.common.collect.ImmutableList;
-import com.google.genai.types.FunctionCall;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionCall;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
-import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -272,8 +272,7 @@ public class SarvamAi extends BaseLlm {
       if (parts.isEmpty()) {
         throw new SarvamAiException("Tool calls in response but no valid function call found");
       }
-      Content content =
-          Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build();
+      Content content = Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build();
       return LlmResponse.builder().content(content).build();
     }
 
@@ -282,8 +281,7 @@ public class SarvamAi extends BaseLlm {
     if (textContent == null) {
       textContent = "";
     }
-    Content content =
-        Content.builder().role("model").parts(Part.fromText(textContent)).build();
+    Content content = Content.builder().role("model").parts(Part.fromText(textContent)).build();
     return LlmResponse.builder().content(content).build();
   }
 
