@@ -313,6 +313,7 @@ public class Runner {
       throw new IllegalArgumentException("No parts in the new_message.");
     }
 
+    Completable saveArtifactsFlow = Completable.complete();
     if (this.artifactService != null && saveInputBlobsAsArtifacts) {
       // The runner directly saves the artifacts (if applicable) in the user message and replaces
       // the artifact data with a file name placeholder.
@@ -322,9 +323,11 @@ public class Runner {
           continue;
         }
         String fileName = "artifact_" + invocationContext.invocationId() + "_" + i;
-        var unused =
-            this.artifactService.saveArtifact(
-                this.appName, session.userId(), session.id(), fileName, part);
+        saveArtifactsFlow =
+            saveArtifactsFlow.andThen(
+                this.artifactService
+                    .saveArtifact(this.appName, session.userId(), session.id(), fileName, part)
+                    .ignoreElement());
 
         newMessage
             .parts()
@@ -349,7 +352,8 @@ public class Runner {
           EventActions.builder().stateDelta(new ConcurrentHashMap<>(stateDelta)).build());
     }
 
-    return this.sessionService.appendEvent(session, eventBuilder.build());
+    return saveArtifactsFlow.andThen(
+        this.sessionService.appendEvent(session, eventBuilder.build()));
   }
 
   /** See {@link #runAsync(String, String, Content, RunConfig, Map)}. */
