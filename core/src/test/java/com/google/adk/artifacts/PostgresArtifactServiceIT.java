@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.genai.types.Part;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -122,7 +121,7 @@ public class PostgresArtifactServiceIT {
     // Act - Load
     Part loadedArtifact =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.empty())
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, (Integer) null)
             .blockingGet();
 
     // Assert - Content matches
@@ -161,15 +160,15 @@ public class PostgresArtifactServiceIT {
     // Act - Load specific versions
     Part loaded0 =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.of(0))
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, 0)
             .blockingGet();
     Part loaded1 =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.of(1))
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, 1)
             .blockingGet();
     Part loaded2 =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.of(2))
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, 2)
             .blockingGet();
 
     // Assert - Each version contains correct content
@@ -180,7 +179,7 @@ public class PostgresArtifactServiceIT {
     // Act - Load latest (should be version 2)
     Part loadedLatest =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.empty())
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, (Integer) null)
             .blockingGet();
 
     // Assert - Latest is version 2
@@ -224,7 +223,7 @@ public class PostgresArtifactServiceIT {
     // Verify it exists
     Part beforeDelete =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.empty())
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, (Integer) null)
             .blockingGet();
     assertThat(beforeDelete).isNotNull();
 
@@ -236,7 +235,7 @@ public class PostgresArtifactServiceIT {
     // Assert - No longer exists
     Part afterDelete =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.empty())
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, (Integer) null)
             .blockingGet();
     assertThat(afterDelete).isNull();
   }
@@ -285,11 +284,11 @@ public class PostgresArtifactServiceIT {
     // Act - Load from each app
     Part fromApp1 =
         artifactService
-            .loadArtifact(app1, userId, sessionId, filename, Optional.empty())
+            .loadArtifact(app1, userId, sessionId, filename, (Integer) null)
             .blockingGet();
     Part fromApp2 =
         artifactService
-            .loadArtifact(app2, userId, sessionId, filename, Optional.empty())
+            .loadArtifact(app2, userId, sessionId, filename, (Integer) null)
             .blockingGet();
 
     // Assert - Content is isolated
@@ -321,11 +320,11 @@ public class PostgresArtifactServiceIT {
     // Act - Load from each user
     Part fromUser1 =
         artifactService
-            .loadArtifact(appName, user1, sessionId, filename, Optional.empty())
+            .loadArtifact(appName, user1, sessionId, filename, (Integer) null)
             .blockingGet();
     Part fromUser2 =
         artifactService
-            .loadArtifact(appName, user2, sessionId, filename, Optional.empty())
+            .loadArtifact(appName, user2, sessionId, filename, (Integer) null)
             .blockingGet();
 
     // Assert - Content is isolated
@@ -357,11 +356,11 @@ public class PostgresArtifactServiceIT {
     // Act - Load from each session
     Part fromSession1 =
         artifactService
-            .loadArtifact(appName, userId, session1, filename, Optional.empty())
+            .loadArtifact(appName, userId, session1, filename, (Integer) null)
             .blockingGet();
     Part fromSession2 =
         artifactService
-            .loadArtifact(appName, userId, session2, filename, Optional.empty())
+            .loadArtifact(appName, userId, session2, filename, (Integer) null)
             .blockingGet();
 
     // Assert - Content is isolated
@@ -398,8 +397,7 @@ public class PostgresArtifactServiceIT {
     // Act
     Part result =
         artifactService
-            .loadArtifact(
-                testAppName, testUserId, testSessionId, "nonexistent.txt", Optional.empty())
+            .loadArtifact(testAppName, testUserId, testSessionId, "nonexistent.txt", (Integer) null)
             .blockingGet();
 
     // Assert
@@ -417,7 +415,7 @@ public class PostgresArtifactServiceIT {
     // Act - Try to load non-existent version 99
     Part result =
         artifactService
-            .loadArtifact(testAppName, testUserId, testSessionId, filename, Optional.of(99))
+            .loadArtifact(testAppName, testUserId, testSessionId, filename, 99)
             .blockingGet();
 
     // Assert

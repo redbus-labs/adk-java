@@ -61,8 +61,10 @@ public final class RequestConverter {
     // Convert each A2A Part to GenAI Part
     if (message.getParts() != null) {
       for (Part<?> a2aPart : message.getParts()) {
-        Optional<com.google.genai.types.Part> genaiPart = PartConverter.toGenaiPart(a2aPart);
-        genaiPart.ifPresent(genaiParts::add);
+        com.google.genai.types.Part genaiPart = PartConverter.toGenaiPart(a2aPart);
+        if (genaiPart != null) {
+          genaiParts.add(genaiPart);
+        }
       }
     }
 
@@ -125,15 +127,15 @@ public final class RequestConverter {
 
     // Emit exactly one ADK Event per A2A Part, preserving order.
     for (Part<?> a2aPart : message.getParts()) {
-      Optional<com.google.genai.types.Part> genaiPart = PartConverter.toGenaiPart(a2aPart);
-      if (genaiPart.isEmpty()) {
+      com.google.genai.types.Part genaiPart = PartConverter.toGenaiPart(a2aPart);
+      if (genaiPart == null) {
         continue;
       }
 
       String author = extractAuthorFromMetadata(a2aPart);
       String role = determineRoleFromAuthor(author);
 
-      events.add(createEvent(ImmutableList.of(genaiPart.get()), author, role, invocationId));
+      events.add(createEvent(ImmutableList.of(genaiPart), author, role, invocationId));
     }
 
     if (events.isEmpty()) {

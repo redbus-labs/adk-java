@@ -5,7 +5,6 @@ import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import java.util.Optional;
 
 /**
  * @author Harshavardhan A
@@ -22,7 +21,11 @@ public class MongoDbArtifactService implements BaseArtifactService {
 
   @Override
   public Maybe<Part> loadArtifact(
-      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
+      String appName,
+      String userId,
+      String sessionId,
+      String filename,
+      @org.jspecify.annotations.Nullable Integer version) {
     return null;
   }
 

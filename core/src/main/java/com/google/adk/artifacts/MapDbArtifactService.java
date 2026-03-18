@@ -19,7 +19,6 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.io.File;
 import java.util.NavigableMap;
-import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
@@ -167,15 +166,19 @@ public final class MapDbArtifactService implements BaseArtifactService {
    */
   @Override
   public Maybe<Part> loadArtifact(
-      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
+      String appName,
+      String userId,
+      String sessionId,
+      String filename,
+      @org.jspecify.annotations.Nullable Integer version) {
     // The Callable should return the item (Part) or null.
     // Maybe.fromCallable will wrap the non-null item in a Maybe or emit empty if null.
     return Maybe.fromCallable(
         () -> {
           String key;
-          if (version.isPresent()) {
+          if (version != null) {
             // Load specific version
-            int v = version.get();
+            int v = version;
             if (v < 0) { // Version numbers must be non-negative
               return null; // Return null for empty Maybe
             }
