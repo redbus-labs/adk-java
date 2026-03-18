@@ -19,6 +19,7 @@ package com.google.adk.models.sarvamai.chat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.List;
 
 /**
  * A message in the Sarvam AI chat completion API (request or response).
@@ -37,6 +38,12 @@ public final class ChatMessage {
 
   @JsonProperty("reasoning_content")
   private String reasoningContent;
+
+  @JsonProperty("tool_calls")
+  private List<ChatToolCall> toolCalls;
+
+  @JsonProperty("tool_call_id")
+  private String toolCallId;
 
   public ChatMessage() {}
 
@@ -67,5 +74,21 @@ public final class ChatMessage {
 
   public void setReasoningContent(String reasoningContent) {
     this.reasoningContent = reasoningContent;
+  }
+
+  public List<ChatToolCall> getToolCalls() {
+    return toolCalls;
+  }
+
+  public void setToolCalls(List<ChatToolCall> toolCalls) {
+    this.toolCalls = toolCalls;
+  }
+
+  public String getToolCallId() {
+    return toolCallId;
+  }
+
+  public void setToolCallId(String toolCallId) {
+    this.toolCallId = toolCallId;
   }
 }

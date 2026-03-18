@@ -24,13 +24,20 @@ import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.models.sarvamai.chat.ChatRequest;
 import com.google.adk.models.sarvamai.chat.ChatResponse;
+import com.google.adk.models.sarvamai.chat.ChatToolCall;
+import com.google.common.collect.ImmutableList;
+import com.google.genai.types.FunctionCall;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
+import com.fasterxml.jackson.core.type.TypeReference;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import okhttp3.MediaType;
@@ -233,12 +240,50 @@ public class SarvamAi extends BaseLlm {
     }
     var choice = chatResponse.getChoices().get(0);
     var effectiveMsg = choice.effectiveMessage();
-    if (effectiveMsg == null || effectiveMsg.getContent() == null) {
-      throw new SarvamAiException("No content in response choice");
+    if (effectiveMsg == null) {
+      throw new SarvamAiException("No message in response choice");
     }
 
+    // Handle tool_calls in response (model requesting function execution)
+    if (effectiveMsg.getToolCalls() != null && !effectiveMsg.getToolCalls().isEmpty()) {
+      List<Part> parts = new ArrayList<>();
+      for (ChatToolCall tc : effectiveMsg.getToolCalls()) {
+        if (tc.getFunction() == null || tc.getFunction().getName() == null) {
+          continue;
+        }
+        String argsStr = tc.getFunction().getArguments();
+        if (argsStr == null) {
+          argsStr = "{}";
+        }
+        Map<String, Object> args;
+        try {
+          args = objectMapper.readValue(argsStr, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+          args = Map.of();
+        }
+        FunctionCall fc =
+            FunctionCall.builder()
+                .id(tc.getId())
+                .name(tc.getFunction().getName())
+                .args(args)
+                .build();
+        parts.add(Part.builder().functionCall(fc).build());
+      }
+      if (parts.isEmpty()) {
+        throw new SarvamAiException("Tool calls in response but no valid function call found");
+      }
+      Content content =
+          Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build();
+      return LlmResponse.builder().content(content).build();
+    }
+
+    // Handle text content
+    String textContent = effectiveMsg.getContent();
+    if (textContent == null) {
+      textContent = "";
+    }
     Content content =
-        Content.builder().role("model").parts(Part.fromText(effectiveMsg.getContent())).build();
+        Content.builder().role("model").parts(Part.fromText(textContent)).build();
     return LlmResponse.builder().content(content).build();
   }
 
