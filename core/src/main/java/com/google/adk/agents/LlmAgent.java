@@ -772,7 +772,7 @@ public class LlmAgent extends BaseAgent {
     return toolsUnion;
   }
 
-  public ImmutableList<BaseToolset> toolsets() {
+  public List<BaseToolset> toolsets() {
     return toolsets;
   }
 
