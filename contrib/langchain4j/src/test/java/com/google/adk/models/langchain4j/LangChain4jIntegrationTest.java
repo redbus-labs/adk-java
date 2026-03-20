@@ -62,7 +62,8 @@ class LangChain4jIntegrationTest {
         LlmAgent.builder()
             .name("science-app")
             .description("Science teacher agent")
-            .model(new LangChain4j(claudeModel, CLAUDE_4_6_SONNET))
+            .model(
+                LangChain4j.builder().chatModel(claudeModel).modelName(CLAUDE_4_6_SONNET).build())
             .instruction(
                 """
                 You are a helpful science teacher that explains science concepts
@@ -98,7 +99,8 @@ class LangChain4jIntegrationTest {
         LlmAgent.builder()
             .name("friendly-weather-app")
             .description("Friend agent that knows about the weather")
-            .model(new LangChain4j(claudeModel, CLAUDE_4_6_SONNET))
+            .model(
+                LangChain4j.builder().chatModel(claudeModel).modelName(CLAUDE_4_6_SONNET).build())
             .instruction(
                 """
                 You are a friendly assistant.
@@ -183,7 +185,7 @@ class LangChain4jIntegrationTest {
         LlmAgent.builder()
             .name("friendly-weather-app")
             .description("Friend agent that knows about the weather")
-            .model(new LangChain4j(gptModel))
+            .model(LangChain4j.builder().chatModel(gptModel).modelName(GPT_4_O_MINI).build())
             .instruction(
                 """
                 You are a friendly assistant.
@@ -246,7 +248,7 @@ class LangChain4jIntegrationTest {
         LlmAgent.builder()
             .name("greeterAgent")
             .description("Friendly agent that greets users")
-            .model(new LangChain4j(gptModel))
+            .model(LangChain4j.builder().chatModel(gptModel).modelName(GPT_4_O_MINI).build())
             .instruction(
                 """
                 You are a friendly that greets users.
@@ -257,7 +259,7 @@ class LangChain4jIntegrationTest {
         LlmAgent.builder()
             .name("farewellAgent")
             .description("Friendly agent that says goodbye to users")
-            .model(new LangChain4j(gptModel))
+            .model(LangChain4j.builder().chatModel(gptModel).modelName(GPT_4_O_MINI).build())
             .instruction(
                 """
                 You are a friendly that says goodbye to users.
@@ -355,7 +357,11 @@ class LangChain4jIntegrationTest {
             .modelName(CLAUDE_4_6_SONNET)
             .build();
 
-    LangChain4j lc4jClaude = new LangChain4j(claudeStreamingModel, CLAUDE_4_6_SONNET);
+    LangChain4j lc4jClaude =
+        LangChain4j.builder()
+            .streamingChatModel(claudeStreamingModel)
+            .modelName(CLAUDE_4_6_SONNET)
+            .build();
 
     // when
     Flowable<LlmResponse> responses =
@@ -413,7 +419,11 @@ class LangChain4jIntegrationTest {
                 When someone greets you, respond with "Hello".
                 If someone asks about the weather, call the `getWeather` function.
                 """)
-            .model(new LangChain4j(streamingModel, "GPT_4_O_MINI"))
+            .model(
+                LangChain4j.builder()
+                    .streamingChatModel(streamingModel)
+                    .modelName("GPT_4_O_MINI")
+                    .build())
             //            .model(new LangChain4j(streamingModel,
             // CLAUDE_3_7_SONNET_20250219))
             .tools(FunctionTool.create(ToolExample.class, "getWeather"))

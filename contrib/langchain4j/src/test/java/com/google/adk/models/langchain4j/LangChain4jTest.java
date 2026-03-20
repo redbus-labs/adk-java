@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.tools.FunctionTool;
@@ -26,6 +27,7 @@ import com.google.genai.types.*;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -33,6 +35,7 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.output.TokenUsage;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,8 +60,26 @@ class LangChain4jTest {
     chatModel = mock(ChatModel.class);
     streamingChatModel = mock(StreamingChatModel.class);
 
-    langChain4j = new LangChain4j(chatModel, MODEL_NAME);
-    streamingLangChain4j = new LangChain4j(streamingChatModel, MODEL_NAME);
+    langChain4j = LangChain4j.builder().chatModel(chatModel).modelName(MODEL_NAME).build();
+    streamingLangChain4j =
+        LangChain4j.builder().streamingChatModel(streamingChatModel).modelName(MODEL_NAME).build();
+  }
+
+  @Test
+  void testBuilder() {
+    ObjectMapper customMapper = new ObjectMapper();
+    LangChain4j customLc4j =
+        LangChain4j.builder()
+            .chatModel(chatModel)
+            .streamingChatModel(streamingChatModel)
+            .objectMapper(customMapper)
+            .modelName("custom-model")
+            .build();
+
+    assertThat(customLc4j.chatModel()).isEqualTo(chatModel);
+    assertThat(customLc4j.streamingChatModel()).isEqualTo(streamingChatModel);
+    assertThat(customLc4j.objectMapper()).isEqualTo(customMapper);
+    assertThat(customLc4j.modelName()).isEqualTo("custom-model");
   }
 
   @Test
@@ -811,5 +832,142 @@ class LangChain4jTest {
     assertThat(capturedRequest.toolSpecifications()).isNotEmpty();
     assertThat(capturedRequest.toolSpecifications().get(0).name()).isEqualTo("mcpTool");
     assertThat(capturedRequest.toolSpecifications().get(0).description()).isEqualTo("An MCP tool");
+  }
+
+  @Test
+  @DisplayName(
+      "Should use TokenCountEstimator to estimate token usage when TokenUsage is not available")
+  void testTokenCountEstimatorFallback() {
+    // Given
+    // Create a mock TokenCountEstimator
+    final TokenCountEstimator tokenCountEstimator = mock(TokenCountEstimator.class);
+    when(tokenCountEstimator.estimateTokenCountInMessages(any())).thenReturn(50); // Input tokens
+    when(tokenCountEstimator.estimateTokenCountInText(any())).thenReturn(20); // Output tokens
+
+    // Create LangChain4j with the TokenCountEstimator using Builder
+    final LangChain4j langChain4jWithEstimator =
+        LangChain4j.builder()
+            .chatModel(chatModel)
+            .modelName(MODEL_NAME)
+            .tokenCountEstimator(tokenCountEstimator)
+            .build();
+
+    // Create a LlmRequest
+    final LlmRequest llmRequest =
+        LlmRequest.builder()
+            .contents(List.of(Content.fromParts(Part.fromText("What is the weather today?"))))
+            .build();
+
+    // Mock ChatResponse WITHOUT TokenUsage (simulating when LLM doesn't provide token counts)
+    final ChatResponse chatResponse = mock(ChatResponse.class);
+    final AiMessage aiMessage = AiMessage.from("The weather is sunny today.");
+    when(chatResponse.aiMessage()).thenReturn(aiMessage);
+    when(chatResponse.tokenUsage()).thenReturn(null); // No token usage from LLM
+    when(chatModel.chat(any(ChatRequest.class))).thenReturn(chatResponse);
+
+    // When
+    final LlmResponse response =
+        langChain4jWithEstimator.generateContent(llmRequest, false).blockingFirst();
+
+    // Then
+    // Verify the response has usage metadata estimated by TokenCountEstimator
+    assertThat(response).isNotNull();
+    assertThat(response.content()).isPresent();
+    assertThat(response.content().get().text()).isEqualTo("The weather is sunny today.");
+
+    // IMPORTANT: Verify that token usage was estimated via the TokenCountEstimator
+    assertThat(response.usageMetadata()).isPresent();
+    final GenerateContentResponseUsageMetadata usageMetadata = response.usageMetadata().get();
+    assertThat(usageMetadata.promptTokenCount()).isEqualTo(Optional.of(50)); // From estimator
+    assertThat(usageMetadata.candidatesTokenCount()).isEqualTo(Optional.of(20)); // From estimator
+    assertThat(usageMetadata.totalTokenCount()).isEqualTo(Optional.of(70)); // 50 + 20
+
+    // Verify the estimator was actually called
+    verify(tokenCountEstimator).estimateTokenCountInMessages(any());
+    verify(tokenCountEstimator).estimateTokenCountInText("The weather is sunny today.");
+  }
+
+  @Test
+  @DisplayName("Should prioritize TokenCountEstimator over TokenUsage when estimator is provided")
+  void testTokenCountEstimatorPriority() {
+    // Given
+    // Create a mock TokenCountEstimator
+    final TokenCountEstimator tokenCountEstimator = mock(TokenCountEstimator.class);
+    when(tokenCountEstimator.estimateTokenCountInMessages(any())).thenReturn(100); // From estimator
+    when(tokenCountEstimator.estimateTokenCountInText(any())).thenReturn(50); // From estimator
+
+    // Create LangChain4j with the TokenCountEstimator using Builder
+    final LangChain4j langChain4jWithEstimator =
+        LangChain4j.builder()
+            .chatModel(chatModel)
+            .modelName(MODEL_NAME)
+            .tokenCountEstimator(tokenCountEstimator)
+            .build();
+
+    // Create a LlmRequest
+    final LlmRequest llmRequest =
+        LlmRequest.builder()
+            .contents(List.of(Content.fromParts(Part.fromText("What is the weather today?"))))
+            .build();
+
+    // Mock ChatResponse WITH actual TokenUsage from the LLM
+    final ChatResponse chatResponse = mock(ChatResponse.class);
+    final AiMessage aiMessage = AiMessage.from("The weather is sunny today.");
+    final TokenUsage actualTokenUsage = new TokenUsage(30, 15, 45); // Actual token counts from LLM
+    when(chatResponse.aiMessage()).thenReturn(aiMessage);
+    when(chatResponse.tokenUsage()).thenReturn(actualTokenUsage); // LLM provides token usage
+    when(chatModel.chat(any(ChatRequest.class))).thenReturn(chatResponse);
+
+    // When
+    final LlmResponse response =
+        langChain4jWithEstimator.generateContent(llmRequest, false).blockingFirst();
+
+    // Then
+    // IMPORTANT: When TokenCountEstimator is present, it takes priority over TokenUsage
+    assertThat(response).isNotNull();
+    assertThat(response.usageMetadata()).isPresent();
+    final GenerateContentResponseUsageMetadata usageMetadata = response.usageMetadata().get();
+    assertThat(usageMetadata.promptTokenCount()).isEqualTo(Optional.of(100)); // From estimator
+    assertThat(usageMetadata.candidatesTokenCount()).isEqualTo(Optional.of(50)); // From estimator
+    assertThat(usageMetadata.totalTokenCount()).isEqualTo(Optional.of(150)); // 100 + 50
+
+    // Verify the estimator was called (it takes priority)
+    verify(tokenCountEstimator).estimateTokenCountInMessages(any());
+    verify(tokenCountEstimator).estimateTokenCountInText("The weather is sunny today.");
+  }
+
+  @Test
+  @DisplayName("Should not include usageMetadata when TokenUsage is null and no estimator provided")
+  void testNoUsageMetadataWithoutEstimator() {
+    // Given
+    // Create LangChain4j WITHOUT TokenCountEstimator (default behavior)
+    final LangChain4j langChain4jNoEstimator =
+        LangChain4j.builder().chatModel(chatModel).modelName(MODEL_NAME).build();
+
+    // Create a LlmRequest
+    final LlmRequest llmRequest =
+        LlmRequest.builder()
+            .contents(List.of(Content.fromParts(Part.fromText("Hello, world!"))))
+            .build();
+
+    // Mock ChatResponse WITHOUT TokenUsage
+    final ChatResponse chatResponse = mock(ChatResponse.class);
+    final AiMessage aiMessage = AiMessage.from("Hello! How can I help you?");
+    when(chatResponse.aiMessage()).thenReturn(aiMessage);
+    when(chatResponse.tokenUsage()).thenReturn(null); // No token usage from LLM
+    when(chatModel.chat(any(ChatRequest.class))).thenReturn(chatResponse);
+
+    // When
+    final LlmResponse response =
+        langChain4jNoEstimator.generateContent(llmRequest, false).blockingFirst();
+
+    // Then
+    // Verify the response does NOT have usage metadata
+    assertThat(response).isNotNull();
+    assertThat(response.content()).isPresent();
+    assertThat(response.content().get().text()).isEqualTo("Hello! How can I help you?");
+
+    // IMPORTANT: usageMetadata should be empty when no TokenUsage and no estimator
+    assertThat(response.usageMetadata()).isEmpty();
   }
 }
