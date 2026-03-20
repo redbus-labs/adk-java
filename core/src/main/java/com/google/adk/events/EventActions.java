@@ -41,7 +41,7 @@ public class EventActions extends JsonBaseModel {
   private Set<String> deletedArtifactIds;
   private @Nullable String transferToAgent;
   private @Nullable Boolean escalate;
-  private ConcurrentMap<String, ConcurrentMap<String, Object>> requestedAuthConfigs;
+  private ConcurrentMap<String, Map<String, Object>> requestedAuthConfigs;
   private ConcurrentMap<String, ToolConfirmation> requestedToolConfirmations;
   private boolean endOfAgent;
   private @Nullable EventCompaction compaction;
@@ -139,13 +139,17 @@ public class EventActions extends JsonBaseModel {
   }
 
   @JsonProperty("requestedAuthConfigs")
-  public ConcurrentMap<String, ConcurrentMap<String, Object>> requestedAuthConfigs() {
+  public Map<String, Map<String, Object>> requestedAuthConfigs() {
     return requestedAuthConfigs;
   }
 
   public void setRequestedAuthConfigs(
-      ConcurrentMap<String, ConcurrentMap<String, Object>> requestedAuthConfigs) {
-    this.requestedAuthConfigs = requestedAuthConfigs;
+      Map<String, ? extends Map<String, Object>> requestedAuthConfigs) {
+    if (requestedAuthConfigs == null) {
+      this.requestedAuthConfigs = new ConcurrentHashMap<>();
+    } else {
+      this.requestedAuthConfigs = new ConcurrentHashMap<>(requestedAuthConfigs);
+    }
   }
 
   @JsonProperty("requestedToolConfirmations")
@@ -248,7 +252,7 @@ public class EventActions extends JsonBaseModel {
     private Set<String> deletedArtifactIds;
     private @Nullable String transferToAgent;
     private @Nullable Boolean escalate;
-    private ConcurrentMap<String, ConcurrentMap<String, Object>> requestedAuthConfigs;
+    private ConcurrentMap<String, Map<String, Object>> requestedAuthConfigs;
     private ConcurrentMap<String, ToolConfirmation> requestedToolConfirmations;
     private boolean endOfAgent = false;
     private @Nullable EventCompaction compaction;
@@ -328,8 +332,12 @@ public class EventActions extends JsonBaseModel {
     @CanIgnoreReturnValue
     @JsonProperty("requestedAuthConfigs")
     public Builder requestedAuthConfigs(
-        ConcurrentMap<String, ConcurrentMap<String, Object>> value) {
-      this.requestedAuthConfigs = value;
+        @Nullable Map<String, ? extends Map<String, Object>> value) {
+      if (value == null) {
+        this.requestedAuthConfigs = new ConcurrentHashMap<>();
+      } else {
+        this.requestedAuthConfigs = new ConcurrentHashMap<>(value);
+      }
       return this;
     }
 
