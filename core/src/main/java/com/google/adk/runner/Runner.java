@@ -529,7 +529,7 @@ public class Runner {
         contextWithUpdatedSession
             .agent()
             .runAsync(contextWithUpdatedSession)
-            .flatMap(
+            .concatMap(
                 agentEvent ->
                     this.sessionService
                         .appendEvent(updatedSession, agentEvent)

@@ -26,6 +26,7 @@ import static com.google.adk.testing.TestUtils.simplifyEvents;
 import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.stream;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
@@ -43,6 +45,7 @@ import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.Functions;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
+import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.sessions.SessionKey;
 import com.google.adk.summarizer.EventsCompactionConfig;
@@ -849,6 +852,45 @@ public final class RunnerTest {
     // Verify state delta was merged before beforeRunCallback was invoked
     assertThat(sessionInCallback.state()).containsEntry("callback_key", "callback_value");
     assertThat(sessionInCallback.state()).containsEntry("number", 123);
+  }
+
+  @Test
+  public void runAsync_ensureEventsAreAppendedInOrder() throws Exception {
+    Event event1 = TestUtils.createEvent("1");
+    Event event2 = TestUtils.createEvent("2");
+    BaseAgent mockAgent = TestUtils.createSubAgent("test agent", event1, event2);
+
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+
+    when(mockSessionService.getSession(any(), any(), any(), any())).thenReturn(Maybe.just(session));
+    when(mockSessionService.appendEvent(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              Event eventArg = invocation.getArgument(1);
+              Single<Event> result = Single.just(eventArg);
+              if (eventArg.id().equals("1")) {
+                // Artificially delay the first event to ensure it is appended first.
+                return result.delay(100, MILLISECONDS);
+              }
+              return result;
+            });
+
+    Runner mockRunner =
+        Runner.builder()
+            .agent(mockAgent)
+            .appName("test")
+            .sessionService(mockSessionService)
+            .build();
+
+    List<Event> results =
+        mockRunner
+            .runAsync("user", session.id(), createContent("user message"))
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(results))
+        .containsExactly("author: content for event 1", "author: content for event 2")
+        .inOrder();
   }
 
   private Content createContent(String text) {
