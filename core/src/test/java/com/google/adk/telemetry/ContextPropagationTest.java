@@ -32,7 +32,6 @@ import com.google.adk.models.LlmResponse;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
-import com.google.adk.sessions.SessionKey;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils;
 import com.google.adk.tools.BaseTool;
@@ -653,13 +652,13 @@ public class ContextPropagationTest {
   @Test
   public void runnerRunLive_propagatesContext() throws InterruptedException {
     BaseAgent agent = new TestAgent();
-    Runner runner = Runner.builder().agent(agent).appName("test-app").build();
+    Runner runner =
+        Runner.builder().agent(agent).appName("test_app").sessionService(sessionService).build();
     Span parentSpan = tracer.spanBuilder("parent").startSpan();
     try (Scope s = parentSpan.makeCurrent()) {
       Session session =
-          runner
-              .sessionService()
-              .createSession("test-app", "test-user", (Map<String, Object>) null, "test-session")
+          sessionService
+              .createSession("test_app", "test-user", (Map<String, Object>) null, "test-session")
               .blockingGet();
       Content newMessage = Content.fromParts(Part.fromText("hi"));
       RunConfig runConfig = RunConfig.builder().build();
@@ -800,12 +799,10 @@ public class ContextPropagationTest {
   }
 
   private void runAgent(BaseAgent agent) throws InterruptedException {
-    Runner runner = Runner.builder().agent(agent).appName("test-app").build();
+    Runner runner =
+        Runner.builder().agent(agent).appName("test_app").sessionService(sessionService).build();
     Session session =
-        runner
-            .sessionService()
-            .createSession(new SessionKey("test-app", "test-user", "test-session"))
-            .blockingGet();
+        sessionService.createSession("test_app", "test-user", null, "test-session").blockingGet();
     Content newMessage = Content.fromParts(Part.fromText("hi"));
     RunConfig runConfig = RunConfig.builder().build();
     runner
@@ -871,7 +868,9 @@ public class ContextPropagationTest {
 
   private InvocationContext buildInvocationContext() {
     Session session =
-        sessionService.createSession("test-app", "test-user", null, "test-session").blockingGet();
+        sessionService
+            .createSession("test_app", "test-user", (Map<String, Object>) null, "test-session")
+            .blockingGet();
     return InvocationContext.builder()
         .sessionService(sessionService)
         .session(session)
