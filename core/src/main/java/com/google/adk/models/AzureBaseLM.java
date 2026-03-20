@@ -47,6 +47,9 @@ import org.slf4j.LoggerFactory;
  * <p>Reads the endpoint from {@code AZURE_MODEL_ENDPOINT} and the API key from {@code
  * AZURE_OPENAI_API_KEY} environment variables. The model/deployment name is passed to the
  * constructor and sent in the request body.
+ * @author Alfred Jimmy
+ * @see <a href="https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/responses">Azure
+ *     OpenAI Responses API documentation</a>
  */
 public class AzureBaseLM extends BaseLlm {
 
