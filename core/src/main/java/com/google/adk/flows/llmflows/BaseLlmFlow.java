@@ -692,9 +692,14 @@ public abstract class BaseLlmFlow implements BaseFlow {
                 Optional<Event> toolConfirmationEvent =
                     Functions.generateRequestConfirmationEvent(
                         context, modelResponseEvent, functionResponseEvent);
-                return toolConfirmationEvent.isPresent()
-                    ? Flowable.just(toolConfirmationEvent.get(), functionResponseEvent)
-                    : Flowable.just(functionResponseEvent);
+                List<Event> events = new ArrayList<>();
+                toolConfirmationEvent.ifPresent(events::add);
+                events.add(functionResponseEvent);
+                OutputSchema.getStructuredModelResponse(functionResponseEvent)
+                    .ifPresent(
+                        json ->
+                            events.add(OutputSchema.createFinalModelResponseEvent(context, json)));
+                return Flowable.fromIterable(events);
               });
     }
 
