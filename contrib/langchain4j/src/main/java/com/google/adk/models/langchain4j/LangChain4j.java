@@ -607,8 +607,11 @@ public abstract class LangChain4j extends BaseLlm {
               });
       return parts;
     } else {
-      Part part = Part.builder().text(aiMessage.text()).build();
-      return List.of(part);
+      String text = aiMessage.text();
+      if (text == null) {
+        return List.of();
+      }
+      return List.of(Part.builder().text(text).build());
     }
   }
 
