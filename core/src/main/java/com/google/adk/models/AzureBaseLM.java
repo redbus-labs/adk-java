@@ -47,6 +47,7 @@ import org.slf4j.LoggerFactory;
  * <p>Reads the endpoint from {@code AZURE_MODEL_ENDPOINT} and the API key from {@code
  * AZURE_OPENAI_API_KEY} environment variables. The model/deployment name is passed to the
  * constructor and sent in the request body.
+ *
  * @author Alfred Jimmy
  * @see <a href="https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/responses">Azure
  *     OpenAI Responses API documentation</a>
@@ -148,6 +149,7 @@ public class AzureBaseLM extends BaseLlm {
     temperature.ifPresent(t -> payload.put("temperature", t));
     payload.put("stream", false);
     payload.put("store", false);
+    payload.put("reasoning", new JSONObject().put("summary", "auto"));
     if (maxTokens.isPresent() && maxTokens.get() > 0) {
       payload.put("max_output_tokens", maxTokens.get());
     }
@@ -196,6 +198,7 @@ public class AzureBaseLM extends BaseLlm {
     temperature.ifPresent(t -> payload.put("temperature", t));
     payload.put("stream", true);
     payload.put("store", false);
+    payload.put("reasoning", new JSONObject().put("summary", "auto"));
     if (maxTokens.isPresent() && maxTokens.get() > 0) {
       payload.put("max_output_tokens", maxTokens.get());
     }
@@ -204,173 +207,323 @@ public class AzureBaseLM extends BaseLlm {
     }
 
     final StringBuilder accumulatedText = new StringBuilder();
+    final StringBuilder reasoningSummary = new StringBuilder();
     final StringBuilder functionCallName = new StringBuilder();
     final StringBuilder functionCallCallId = new StringBuilder();
     final StringBuilder functionCallArgs = new StringBuilder();
     final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
-    final AtomicBoolean streamDone = new AtomicBoolean(false);
+    final AtomicBoolean finalTextEmitted = new AtomicBoolean(false);
     final AtomicInteger inputTokens = new AtomicInteger(0);
     final AtomicInteger outputTokens = new AtomicInteger(0);
 
-    return Flowable.generate(
-        () -> callApiStream(payload),
-        (reader, emitter) -> {
+    return Flowable.create(
+        emitter -> {
+          BufferedReader reader = null;
           try {
-            if (reader == null || streamDone.get()) {
+            reader = callApiStream(payload);
+            if (reader == null) {
               emitter.onComplete();
               return;
             }
+            String lastEventName = null;
+            String line;
+            while ((line = reader.readLine()) != null) {
+              if (emitter.isCancelled()) break;
 
-            String line = reader.readLine();
-            if (line == null) {
-              emitFinalStreamResponse(
-                  emitter,
-                  accumulatedText,
-                  inFunctionCall,
-                  functionCallName,
-                  functionCallCallId,
-                  functionCallArgs,
-                  inputTokens.get(),
-                  outputTokens.get());
-              emitter.onComplete();
-              return;
-            }
+              logger.debug(
+                  "SSE raw: {}", line.length() > 200 ? line.substring(0, 200) + "..." : line);
 
-            // SSE format: "event: <type>\ndata: <json>\n\n"
-            // We only care about data lines; skip event type lines and empty lines
-            if (line.isEmpty() || line.startsWith("event:")) {
-              return;
-            }
-            if (!line.startsWith("data:")) {
-              return;
-            }
+              if (line.isEmpty()) continue;
+              if (line.startsWith("event:")) {
+                lastEventName = line.substring(6).trim();
+                continue;
+              }
+              if (!line.startsWith("data:")) continue;
 
-            String jsonStr = line.substring(5).trim();
-            if (jsonStr.equals("[DONE]")) {
-              streamDone.set(true);
-              emitFinalStreamResponse(
-                  emitter,
-                  accumulatedText,
-                  inFunctionCall,
-                  functionCallName,
-                  functionCallCallId,
-                  functionCallArgs,
-                  inputTokens.get(),
-                  outputTokens.get());
-              emitter.onComplete();
-              return;
-            }
+              String jsonStr = line.substring(5).trim();
+              if (jsonStr.equals("[DONE]")) {
+                logger.info("[DONE] marker found, completing stream");
+                break;
+              }
 
-            JSONObject event;
-            try {
-              event = new JSONObject(jsonStr);
-            } catch (JSONException e) {
-              logger.warn("Failed to parse Azure SSE chunk: {}", jsonStr);
-              return;
-            }
+              JSONObject event;
+              try {
+                event = new JSONObject(jsonStr);
+              } catch (JSONException e) {
+                logger.warn("Failed to parse Azure SSE chunk: {}", jsonStr);
+                continue;
+              }
 
-            String eventType = event.optString("type", "");
+              String eventType = event.optString("type", "");
+              if (eventType.isEmpty() && lastEventName != null) {
+                eventType = lastEventName;
+              }
+              lastEventName = null;
 
-            switch (eventType) {
-              case "response.output_text.delta":
-                {
-                  String delta = event.optString("delta", "");
-                  if (!delta.isEmpty()) {
-                    accumulatedText.append(delta);
-                    emitter.onNext(
-                        LlmResponse.builder()
-                            .content(
-                                Content.builder().role("model").parts(Part.fromText(delta)).build())
-                            .partial(true)
-                            .build());
-                  }
-                  break;
-                }
+              logger.debug("SSE event type='{}' keys={}", eventType, event.keySet());
 
-              case "response.output_item.added":
-                {
-                  JSONObject item = event.optJSONObject("item");
-                  if (item != null && "function_call".equals(item.optString("type"))) {
-                    inFunctionCall.set(true);
-                    String name = item.optString("name", "");
-                    String callId = item.optString("call_id", "");
-                    if (!name.isEmpty()) functionCallName.append(name);
-                    if (!callId.isEmpty()) functionCallCallId.append(callId);
-                  }
-                  break;
-                }
-
-              case "response.function_call_arguments.delta":
-                {
-                  String delta = event.optString("delta", "");
-                  if (!delta.isEmpty()) {
-                    functionCallArgs.append(delta);
-                  }
-                  break;
-                }
-
-              case "response.function_call_arguments.done":
-                {
-                  // The full arguments are in "arguments" but we already accumulated them
-                  // Emit the function call immediately
-                  if (functionCallName.length() > 0) {
-                    String argsStr =
-                        functionCallArgs.length() > 0 ? functionCallArgs.toString() : "{}";
-                    Map<String, Object> args;
-                    try {
-                      args = new JSONObject(argsStr).toMap();
-                    } catch (JSONException e) {
-                      logger.warn("Failed to parse function args: {}", argsStr);
-                      args = Map.of();
+              switch (eventType) {
+                case "response.output_item.added":
+                  {
+                    JSONObject item = event.optJSONObject("item");
+                    if (item == null) break;
+                    String itemType = item.optString("type", "");
+                    if ("function_call".equals(itemType)) {
+                      inFunctionCall.set(true);
+                      String name = item.optString("name", "");
+                      String callId = item.optString("call_id", "");
+                      if (!name.isEmpty()) functionCallName.append(name);
+                      if (!callId.isEmpty()) functionCallCallId.append(callId);
+                    } else if ("reasoning".equals(itemType)) {
+                      emitter.onNext(
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(Part.fromText("\ud83e\udde0 Thinking...\n"))
+                                      .build())
+                              .partial(true)
+                              .build());
                     }
-                    FunctionCall fc =
-                        FunctionCall.builder().name(functionCallName.toString()).args(args).build();
+                    break;
+                  }
+
+                case "response.reasoning_summary_text.delta":
+                  {
+                    String delta = event.optString("delta", "");
+                    if (!delta.isEmpty()) {
+                      reasoningSummary.append(delta);
+                      emitter.onNext(
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(Part.fromText(delta))
+                                      .build())
+                              .partial(true)
+                              .build());
+                    }
+                    break;
+                  }
+
+                case "response.reasoning_summary_text.done":
+                  {
                     emitter.onNext(
                         LlmResponse.builder()
                             .content(
                                 Content.builder()
                                     .role("model")
-                                    .parts(
-                                        ImmutableList.of(Part.builder().functionCall(fc).build()))
+                                    .parts(Part.fromText("\n\n"))
                                     .build())
-                            .partial(false)
+                            .partial(true)
                             .build());
+                    break;
                   }
-                  break;
-                }
 
-              case "response.completed":
-                {
-                  JSONObject resp = event.optJSONObject("response");
-                  if (resp != null) {
-                    JSONObject usage = resp.optJSONObject("usage");
-                    if (usage != null) {
-                      inputTokens.set(usage.optInt("input_tokens", 0));
-                      outputTokens.set(usage.optInt("output_tokens", 0));
+                case "response.output_text.delta":
+                  {
+                    String delta = extractTextDeltaFromStreamEvent(event);
+                    if (!delta.isEmpty()) {
+                      accumulatedText.append(delta);
+                      emitter.onNext(
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(Part.fromText(delta))
+                                      .build())
+                              .partial(true)
+                              .build());
                     }
+                    break;
                   }
-                  break;
-                }
 
-              default:
-                // Ignore reasoning items, response.created, response.in_progress, etc.
-                break;
+                case "response.output_text.done":
+                  {
+                    String fullText = event.optString("text", "");
+                    if (!fullText.isEmpty()) {
+                      accumulatedText.setLength(0);
+                      accumulatedText.append(fullText);
+                      finalTextEmitted.set(true);
+                      String finalContent = fullText;
+                      if (reasoningSummary.length() > 0) {
+                        finalContent =
+                            "\ud83e\udde0 **Thinking:**\n> "
+                                + reasoningSummary.toString().replace("\n", "\n> ")
+                                + "\n\n"
+                                + fullText;
+                      }
+                      emitter.onNext(
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(Part.fromText(finalContent))
+                                      .build())
+                              .partial(false)
+                              .build());
+                    }
+                    break;
+                  }
+
+                case "response.output_item.done":
+                  {
+                    if (finalTextEmitted.get()) break;
+                    JSONObject item = event.optJSONObject("item");
+                    if (item != null && "message".equals(item.optString("type"))) {
+                      String fullText = extractTextFromOutputMessageItem(item);
+                      if (!fullText.isEmpty()) {
+                        accumulatedText.setLength(0);
+                        accumulatedText.append(fullText);
+                        finalTextEmitted.set(true);
+                        String finalContent = fullText;
+                        if (reasoningSummary.length() > 0) {
+                          finalContent =
+                              "\ud83e\udde0 **Thinking:**\n> "
+                                  + reasoningSummary.toString().replace("\n", "\n> ")
+                                  + "\n\n"
+                                  + fullText;
+                        }
+                        emitter.onNext(
+                            LlmResponse.builder()
+                                .content(
+                                    Content.builder()
+                                        .role("model")
+                                        .parts(Part.fromText(finalContent))
+                                        .build())
+                                .partial(false)
+                                .build());
+                      }
+                    }
+                    break;
+                  }
+
+                case "response.function_call_arguments.delta":
+                  {
+                    String delta = extractTextDeltaFromStreamEvent(event);
+                    if (!delta.isEmpty()) {
+                      functionCallArgs.append(delta);
+                    }
+                    break;
+                  }
+
+                case "response.function_call_arguments.done":
+                  {
+                    if (functionCallName.length() > 0) {
+                      String argsStr =
+                          functionCallArgs.length() > 0 ? functionCallArgs.toString() : "{}";
+                      Map<String, Object> args;
+                      try {
+                        args = new JSONObject(argsStr).toMap();
+                      } catch (JSONException e) {
+                        logger.warn("Failed to parse function args: {}", argsStr);
+                        args = Map.of();
+                      }
+                      FunctionCall fc =
+                          FunctionCall.builder()
+                              .name(functionCallName.toString())
+                              .args(args)
+                              .build();
+                      emitter.onNext(
+                          LlmResponse.builder()
+                              .content(
+                                  Content.builder()
+                                      .role("model")
+                                      .parts(
+                                          ImmutableList.of(Part.builder().functionCall(fc).build()))
+                                      .build())
+                              .partial(false)
+                              .build());
+                    }
+                    break;
+                  }
+
+                case "response.completed":
+                  {
+                    JSONObject resp = event.optJSONObject("response");
+                    if (resp != null) {
+                      JSONObject usage = resp.optJSONObject("usage");
+                      if (usage != null) {
+                        inputTokens.set(usage.optInt("input_tokens", 0));
+                        outputTokens.set(usage.optInt("output_tokens", 0));
+                      }
+                    }
+                    break;
+                  }
+
+                default:
+                  break;
+              }
+            }
+
+            // Stream ended — emit final accumulated response
+            if (!emitter.isCancelled()) {
+              if (!finalTextEmitted.get()) {
+                emitFinalStreamResponse(
+                    emitter,
+                    accumulatedText,
+                    inFunctionCall,
+                    functionCallName,
+                    functionCallCallId,
+                    functionCallArgs,
+                    inputTokens.get(),
+                    outputTokens.get());
+              }
+              emitter.onComplete();
             }
           } catch (IOException e) {
             logger.error("IOException in Azure stream", e);
-            emitter.onError(e);
+            if (!emitter.isCancelled()) emitter.onError(e);
           } catch (Exception e) {
             logger.error("Error in Azure streaming", e);
-            emitter.onError(e);
+            if (!emitter.isCancelled()) emitter.onError(e);
+          } finally {
+            if (reader != null) {
+              try {
+                reader.close();
+              } catch (IOException e) {
+                logger.error("Error closing stream reader", e);
+              }
+            }
           }
         },
-        reader -> {
-          try {
-            if (reader != null) reader.close();
-          } catch (IOException e) {
-            logger.error("Error closing stream reader", e);
-          }
-        });
+        io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+  }
+
+  /** Delta may be a string or a nested object depending on API version. */
+  private static String extractTextDeltaFromStreamEvent(JSONObject event) {
+    if (event == null || event.isNull("delta")) {
+      return "";
+    }
+    Object delta = event.opt("delta");
+    if (delta instanceof String) {
+      return (String) delta;
+    }
+    if (delta instanceof JSONObject) {
+      JSONObject o = (JSONObject) delta;
+      return o.optString("text", o.optString("content", ""));
+    }
+    return "";
+  }
+
+  /** Full assistant text from a Responses API output message item (streaming completion). */
+  private static String extractTextFromOutputMessageItem(JSONObject messageItem) {
+    JSONArray content = messageItem.optJSONArray("content");
+    if (content == null) {
+      return "";
+    }
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < content.length(); i++) {
+      JSONObject part = content.optJSONObject(i);
+      if (part == null) {
+        continue;
+      }
+      String pType = part.optString("type", "");
+      if ("output_text".equals(pType) || "text".equals(pType)) {
+        sb.append(part.optString("text", ""));
+      }
+    }
+    return sb.toString();
   }
 
   private void emitFinalStreamResponse(
