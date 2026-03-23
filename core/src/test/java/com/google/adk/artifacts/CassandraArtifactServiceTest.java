@@ -32,7 +32,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -108,9 +107,7 @@ public class CassandraArtifactServiceTest {
     when(mockObjectMapper.readValue(artifactData, Part.class)).thenReturn(artifact);
 
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
     assertThat(loadedArtifact).isEqualTo(artifact);
   }
 

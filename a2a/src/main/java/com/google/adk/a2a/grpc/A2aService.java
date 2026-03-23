@@ -11,6 +11,7 @@ import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
+import com.google.adk.sessions.SessionKey;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.grpc.stub.StreamObserver;
@@ -167,8 +168,8 @@ class A2aService extends A2AServiceGrpc.A2AServiceImplBase {
               .setMaxLlmCalls(20)
               .build();
 
-      // Execute the agent using Runner with Session object
-      Flowable<Event> eventStream = runner.runAsync(session, userContent, runConfig);
+      SessionKey sessionKey = new SessionKey(session.appName(), session.userId(), session.id());
+      Flowable<Event> eventStream = runner.runAsync(sessionKey, userContent, runConfig);
 
       // Collect all events and aggregate into a single response
       // Since sendMessage is unary RPC, we need to send a single response
