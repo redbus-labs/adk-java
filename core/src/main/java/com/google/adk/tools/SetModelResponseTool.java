@@ -16,6 +16,7 @@
 
 package com.google.adk.tools;
 
+import com.google.adk.SchemaUtils;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Single;
@@ -58,6 +59,10 @@ public class SetModelResponseTool extends BaseTool {
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
     // This tool is a marker for the final response, it doesn't do anything but return its arguments
     // which will be captured as the final result.
-    return Single.just(args);
+    return Single.fromCallable(
+        () -> {
+          SchemaUtils.validateMapOnSchema(args, outputSchema, /* isInput= */ false);
+          return args;
+        });
   }
 }
