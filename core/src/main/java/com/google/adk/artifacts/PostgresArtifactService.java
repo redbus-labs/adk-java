@@ -26,6 +26,7 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.sql.SQLException;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A PostgreSQL-backed implementation of the {@link BaseArtifactService}.
@@ -165,11 +166,7 @@ public final class PostgresArtifactService implements BaseArtifactService {
 
   @Override
   public Maybe<Part> loadArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      @org.jspecify.annotations.Nullable Integer version) {
+      String appName, String userId, String sessionId, String filename, @Nullable Integer version) {
     return Maybe.fromCallable(
             () -> {
               try {

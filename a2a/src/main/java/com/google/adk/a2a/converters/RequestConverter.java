@@ -61,9 +61,10 @@ public final class RequestConverter {
     // Convert each A2A Part to GenAI Part
     if (message.getParts() != null) {
       for (Part<?> a2aPart : message.getParts()) {
-        com.google.genai.types.Part genaiPart = PartConverter.toGenaiPart(a2aPart);
-        if (genaiPart != null) {
-          genaiParts.add(genaiPart);
+        try {
+          genaiParts.add(PartConverter.toGenaiPart(a2aPart));
+        } catch (IllegalArgumentException e) {
+          logger.debug("Skipping unconvertible A2A part: {}", e.getMessage());
         }
       }
     }
@@ -127,8 +128,11 @@ public final class RequestConverter {
 
     // Emit exactly one ADK Event per A2A Part, preserving order.
     for (Part<?> a2aPart : message.getParts()) {
-      com.google.genai.types.Part genaiPart = PartConverter.toGenaiPart(a2aPart);
-      if (genaiPart == null) {
+      com.google.genai.types.Part genaiPart;
+      try {
+        genaiPart = PartConverter.toGenaiPart(a2aPart);
+      } catch (IllegalArgumentException e) {
+        logger.debug("Skipping unconvertible A2A part in aggregate: {}", e.getMessage());
         continue;
       }
 
@@ -164,8 +168,7 @@ public final class RequestConverter {
     if (a2aPart instanceof DataPart dataPart) {
       Map<String, Object> metadata =
           Optional.ofNullable(dataPart.getMetadata()).orElse(ImmutableMap.of());
-      String type =
-          metadata.getOrDefault(PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY, "").toString();
+      String type = metadata.getOrDefault(A2AMetadataKey.TYPE.getType(), "").toString();
       if (type.equals(A2ADataPartMetadataType.FUNCTION_CALL.getType())) {
         return "model";
       }

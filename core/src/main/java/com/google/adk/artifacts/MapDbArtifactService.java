@@ -22,6 +22,7 @@ import java.util.NavigableMap;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 import org.mapdb.BTreeMap; // BTreeMap is suitable for range queries
 import org.mapdb.DB;
 import org.mapdb.DBMaker;
@@ -166,11 +167,7 @@ public final class MapDbArtifactService implements BaseArtifactService {
    */
   @Override
   public Maybe<Part> loadArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      @org.jspecify.annotations.Nullable Integer version) {
+      String appName, String userId, String sessionId, String filename, @Nullable Integer version) {
     // The Callable should return the item (Part) or null.
     // Maybe.fromCallable will wrap the non-null item in a Maybe or emit empty if null.
     return Maybe.fromCallable(

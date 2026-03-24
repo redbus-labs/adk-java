@@ -175,9 +175,7 @@ public class PostgresArtifactServiceTest {
 
     // Act
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, (Integer) null)
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, null).blockingGet();
 
     // Assert
     assertThat(loadedArtifact).isNotNull();
@@ -228,9 +226,7 @@ public class PostgresArtifactServiceTest {
 
     // Act
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, (Integer) null)
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, null).blockingGet();
 
     // Assert
     assertThat(loadedArtifact).isNull();

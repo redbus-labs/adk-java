@@ -29,6 +29,7 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A Cassandra-backed implementation of the {@link BaseArtifactService}.
@@ -73,11 +74,7 @@ public final class CassandraArtifactService implements BaseArtifactService {
 
   @Override
   public Maybe<Part> loadArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      @org.jspecify.annotations.Nullable Integer version) {
+      String appName, String userId, String sessionId, String filename, @Nullable Integer version) {
     return Maybe.fromCallable(
         () -> {
           Row row;

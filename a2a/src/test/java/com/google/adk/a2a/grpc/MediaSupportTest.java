@@ -37,7 +37,6 @@ class MediaSupportTest {
     TextPart textPart = new TextPart("Hello, world!");
     Part genaiPart = PartConverter.toGenaiPart(textPart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.text()).isPresent();
     assertThat(genaiPart.text().get()).isEqualTo("Hello, world!");
 
@@ -58,7 +57,6 @@ class MediaSupportTest {
 
     Part genaiPart = PartConverter.toGenaiPart(imagePart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.fileData()).isPresent();
     FileData fileData = genaiPart.fileData().get();
     assertThat(fileData.fileUri()).isPresent();
@@ -75,7 +73,6 @@ class MediaSupportTest {
 
     Part genaiPart = PartConverter.toGenaiPart(imagePart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.inlineData()).isPresent();
     Blob blob = genaiPart.inlineData().get();
     assertThat(blob.mimeType()).isPresent();
@@ -92,7 +89,6 @@ class MediaSupportTest {
 
     Part genaiPart = PartConverter.toGenaiPart(audioPart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.fileData()).isPresent();
     FileData fileData = genaiPart.fileData().get();
     assertThat(fileData.mimeType()).isPresent();
@@ -107,7 +103,6 @@ class MediaSupportTest {
 
     Part genaiPart = PartConverter.toGenaiPart(audioPart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.inlineData()).isPresent();
     Blob blob = genaiPart.inlineData().get();
     assertThat(blob.mimeType()).isPresent();
@@ -122,7 +117,6 @@ class MediaSupportTest {
 
     Part genaiPart = PartConverter.toGenaiPart(videoPart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.fileData()).isPresent();
     FileData fileData = genaiPart.fileData().get();
     assertThat(fileData.mimeType()).isPresent();
@@ -137,7 +131,6 @@ class MediaSupportTest {
 
     Part genaiPart = PartConverter.toGenaiPart(videoPart);
 
-    assertThat(genaiPart).isNotNull();
     assertThat(genaiPart.inlineData()).isPresent();
     Blob blob = genaiPart.inlineData().get();
     assertThat(blob.mimeType()).isPresent();
@@ -229,10 +222,6 @@ class MediaSupportTest {
     Part imageGenai = PartConverter.toGenaiPart(imagePart);
     Part audioGenai = PartConverter.toGenaiPart(audioPart);
     Part videoGenai = PartConverter.toGenaiPart(videoPart);
-
-    assertThat(imageGenai).isNotNull();
-    assertThat(audioGenai).isNotNull();
-    assertThat(videoGenai).isNotNull();
 
     assertThat(imageGenai.fileData().get().mimeType().get()).isEqualTo("image/jpeg");
     assertThat(audioGenai.fileData().get().mimeType().get()).isEqualTo("audio/mpeg");
