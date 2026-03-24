@@ -135,7 +135,7 @@ public final class VertexAiSessionService implements BaseSessionService {
       JsonNode listSessionsResponseMap, String appName, String userId) {
     JsonNode sessionsNode = listSessionsResponseMap.get("sessions");
     if (sessionsNode == null || sessionsNode.isNull() || sessionsNode.isEmpty()) {
-      return ListSessionsResponse.builder().sessions(new ArrayList<>()).build();
+      return ListSessionsResponse.builder().build();
     }
     List<Map<String, Object>> apiSessions =
         objectMapper.convertValue(sessionsNode, new TypeReference<List<Map<String, Object>>>() {});
@@ -174,7 +174,7 @@ public final class VertexAiSessionService implements BaseSessionService {
   private ListEventsResponse parseListEventsResponse(JsonNode listEventsResponse) {
     JsonNode sessionEventsNode = listEventsResponse.get("sessionEvents");
     if (sessionEventsNode == null || sessionEventsNode.isEmpty()) {
-      return ListEventsResponse.builder().events(new ArrayList<>()).build();
+      return ListEventsResponse.builder().build();
     }
     return ListEventsResponse.builder()
         .events(

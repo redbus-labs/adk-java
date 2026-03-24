@@ -36,14 +36,25 @@ class MockApiAnswer implements Answer<ApiResponse> {
 
   private final Map<String, String> sessionMap;
   private final Map<String, String> eventMap;
+  private final String rawApiResponse;
 
   MockApiAnswer(Map<String, String> sessionMap, Map<String, String> eventMap) {
     this.sessionMap = sessionMap;
     this.eventMap = eventMap;
+    this.rawApiResponse = null;
+  }
+
+  MockApiAnswer(String rawApiResponse) {
+    this.sessionMap = null;
+    this.eventMap = null;
+    this.rawApiResponse = rawApiResponse;
   }
 
   @Override
   public ApiResponse answer(InvocationOnMock invocation) throws Throwable {
+    if (rawApiResponse != null) {
+      return responseWithBody(rawApiResponse);
+    }
     String httpMethod = invocation.getArgument(0);
     String path = invocation.getArgument(1);
     if (httpMethod.equals("POST") && SESSIONS_REGEX.matcher(path).matches()) {
