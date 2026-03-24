@@ -25,7 +25,7 @@ import io.lettuce.core.api.reactive.RedisReactiveCommands;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 import reactor.adapter.rxjava.RxJava3Adapter;
 
 /**
@@ -72,11 +72,11 @@ public final class RedisArtifactService implements BaseArtifactService {
 
   @Override
   public Maybe<Part> loadArtifact(
-      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
+      String appName, String userId, String sessionId, String filename, @Nullable Integer version) {
     String key = artifactKey(appName, userId, sessionId, filename);
     Single<String> data;
-    if (version.isPresent()) {
-      data = RxJava3Adapter.monoToSingle(commands.lindex(key, version.get()));
+    if (version != null) {
+      data = RxJava3Adapter.monoToSingle(commands.lindex(key, version));
     } else {
       data = RxJava3Adapter.monoToSingle(commands.lindex(key, -1));
     }

@@ -25,7 +25,6 @@ import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Maybe;
 import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -79,9 +78,7 @@ public class CassandraArtifactServiceIT {
     assertThat(version).isEqualTo(0);
 
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
     assertThat(loadedArtifact.text().get()).isEqualTo("hello world");
   }
 
@@ -100,7 +97,7 @@ public class CassandraArtifactServiceIT {
     artifactService.deleteArtifact(appName, userId, sessionId, filename).blockingAwait();
 
     Maybe<Part> loadedArtifact =
-        artifactService.loadArtifact(appName, userId, sessionId, filename, Optional.of(version));
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version);
     assertThat(loadedArtifact.blockingGet()).isNull();
   }
 
@@ -135,9 +132,7 @@ public class CassandraArtifactServiceIT {
     assertThat(version).isEqualTo(0);
 
     Part loadedBinaryArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
     assertThat(loadedBinaryArtifact.inlineData().get().data().get()).isEqualTo(binaryData);
     assertThat(loadedBinaryArtifact.inlineData().get().mimeType().get())
         .isEqualTo("application/octet-stream");

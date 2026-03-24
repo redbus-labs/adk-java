@@ -20,7 +20,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.adk.store.RedisHelper;
 import com.google.genai.types.Part;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -64,9 +63,7 @@ public class RedisArtifactServiceIT {
     assertThat(version).isEqualTo(0);
 
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
     assertThat(loadedArtifact.text().get()).isEqualTo("hello world");
   }
 
@@ -84,9 +81,7 @@ public class RedisArtifactServiceIT {
     assertThat(version).isEqualTo(0);
 
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
     assertThat(loadedArtifact.inlineData().get().data().get()).isEqualTo(binaryData);
     assertThat(loadedArtifact.inlineData().get().mimeType().get())
         .isEqualTo("application/octet-stream");

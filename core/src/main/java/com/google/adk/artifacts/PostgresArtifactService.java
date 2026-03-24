@@ -26,7 +26,7 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A PostgreSQL-backed implementation of the {@link BaseArtifactService}.
