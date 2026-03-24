@@ -11,9 +11,6 @@ import java.sql.SQLException;
 /**
  * @author Arun Parmar
  * @author Yashas Shetty (Modified to use shared table)
- * @param agent The agent to run
- * @throws IOException if initialization fails
- * @throws SQLException if database connection fails
  */
 public class PostgresRunner extends Runner {
   public PostgresRunner(BaseAgent agent) throws IOException, SQLException {

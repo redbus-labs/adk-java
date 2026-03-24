@@ -37,7 +37,7 @@ import org.json.JSONObject;
  * <p>The URL for the embedding service can be configured via the `EMBEDDING_GENERATOR_URL`
  * environment variable.
  *
- * <p>Example: `export EMBEDDING_GENERATOR_URL="http://www.redbus.com/<serviceprovider>/embeddings"`
+ * <p>Example: `export EMBEDDING_GENERATOR_URL="http://www.redbus.com/serviceprovider/embeddings"`
  */
 public class RedbusEmbeddingService implements EmbeddingService {
   public static final MediaType JSON = MediaType.get("application/json; charset=utf-8");

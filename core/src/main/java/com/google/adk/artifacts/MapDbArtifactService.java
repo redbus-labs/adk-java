@@ -46,7 +46,7 @@ public final class MapDbArtifactService implements BaseArtifactService {
   /**
    * Constructs a MapDbArtifactService.
    *
-   * @param dbFile The file path for the MapDB database file.
+   * @param filePath The file path for the MapDB database file.
    */
   public MapDbArtifactService(String filePath) {
     File dbFile = new File(filePath);
