@@ -8,9 +8,13 @@ import com.google.adk.a2a.common.GenAiFieldMissingException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Blob;
+import com.google.genai.types.CodeExecutionResult;
+import com.google.genai.types.ExecutableCode;
 import com.google.genai.types.FileData;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
+import com.google.genai.types.Language;
+import com.google.genai.types.Outcome;
 import com.google.genai.types.Part;
 import io.a2a.spec.DataPart;
 import io.a2a.spec.FilePart;
@@ -18,7 +22,6 @@ import io.a2a.spec.FileWithBytes;
 import io.a2a.spec.FileWithUri;
 import io.a2a.spec.TextPart;
 import java.util.Base64;
-import java.util.Optional;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -27,29 +30,27 @@ import org.junit.runners.JUnit4;
 public class PartConverterTest {
 
   @Test
-  public void toGenaiPart_withNullPart_returnsEmpty() {
-    assertThat(PartConverter.toGenaiPart(null)).isEmpty();
+  public void toGenaiPart_withNullPart_throwsException() {
+    assertThrows(IllegalArgumentException.class, () -> PartConverter.toGenaiPart(null));
   }
 
   @Test
   public void toGenaiPart_withTextPart_returnsGenaiTextPart() {
     TextPart textPart = new TextPart("Hello");
 
-    Optional<Part> result = PartConverter.toGenaiPart(textPart);
+    Part result = PartConverter.toGenaiPart(textPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().text()).hasValue("Hello");
+    assertThat(result.text()).hasValue("Hello");
   }
 
   @Test
   public void toGenaiPart_withFilePartUri_returnsGenaiFilePart() {
     FilePart filePart = new FilePart(new FileWithUri("text/plain", "file.txt", "http://file.txt"));
 
-    Optional<Part> result = PartConverter.toGenaiPart(filePart);
+    Part result = PartConverter.toGenaiPart(filePart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().fileData()).isPresent();
-    FileData fileData = result.get().fileData().get();
+    assertThat(result.fileData()).isPresent();
+    FileData fileData = result.fileData().get();
     assertThat(fileData.mimeType()).hasValue("text/plain");
     assertThat(fileData.fileUri()).hasValue("http://file.txt");
   }
@@ -60,26 +61,25 @@ public class PartConverterTest {
     String encoded = Base64.getEncoder().encodeToString(bytes);
     FilePart filePart = new FilePart(new FileWithBytes("text/plain", "file.txt", encoded));
 
-    Optional<Part> result = PartConverter.toGenaiPart(filePart);
+    Part result = PartConverter.toGenaiPart(filePart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().inlineData()).isPresent();
-    Blob blob = result.get().inlineData().get();
+    assertThat(result.inlineData()).isPresent();
+    Blob blob = result.inlineData().get();
     assertThat(blob.mimeType()).hasValue("text/plain");
     assertThat(blob.data().get()).isEqualTo(bytes);
   }
 
   @Test
-  public void toGenaiPart_withFilePartBytes_handlesNullBytes() {
+  public void toGenaiPart_withFilePartBytes_handlesNullBytes_throwsException() {
     FilePart filePart = new FilePart(new FileWithBytes("text/plain", "file.txt", null));
-    assertThat(PartConverter.toGenaiPart(filePart)).isEmpty();
+    assertThrows(GenAiFieldMissingException.class, () -> PartConverter.toGenaiPart(filePart));
   }
 
   @Test
   public void toGenaiPart_withFilePartBytes_handlesInvalidBase64() {
     FilePart filePart =
         new FilePart(new FileWithBytes("text/plain", "file.txt", "invalid-base64!"));
-    assertThat(PartConverter.toGenaiPart(filePart)).isEmpty();
+    assertThrows(IllegalArgumentException.class, () -> PartConverter.toGenaiPart(filePart));
   }
 
   @Test
@@ -90,14 +90,12 @@ public class PartConverterTest {
         new DataPart(
             data,
             ImmutableMap.of(
-                PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY,
-                A2ADataPartMetadataType.FUNCTION_CALL.getType()));
+                A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.FUNCTION_CALL.getType()));
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().functionCall()).isPresent();
-    FunctionCall functionCall = result.get().functionCall().get();
+    assertThat(result.functionCall()).isPresent();
+    FunctionCall functionCall = result.functionCall().get();
     assertThat(functionCall.name()).hasValue("func");
     assertThat(functionCall.id()).hasValue("1");
     assertThat(functionCall.args()).hasValue(ImmutableMap.of());
@@ -109,11 +107,10 @@ public class PartConverterTest {
         ImmutableMap.of("name", "func", "id", "1", "args", ImmutableMap.of("param", "value"));
     DataPart dataPart = new DataPart(data, null);
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().functionCall()).isPresent();
-    FunctionCall functionCall = result.get().functionCall().get();
+    assertThat(result.functionCall()).isPresent();
+    FunctionCall functionCall = result.functionCall().get();
     assertThat(functionCall.name()).hasValue("func");
     assertThat(functionCall.id()).hasValue("1");
     assertThat(functionCall.args()).hasValue(ImmutableMap.of("param", "value"));
@@ -127,14 +124,13 @@ public class PartConverterTest {
         new DataPart(
             data,
             ImmutableMap.of(
-                PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY,
+                A2AMetadataKey.TYPE.getType(),
                 A2ADataPartMetadataType.FUNCTION_RESPONSE.getType()));
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().functionResponse()).isPresent();
-    FunctionResponse functionResponse = result.get().functionResponse().get();
+    assertThat(result.functionResponse()).isPresent();
+    FunctionResponse functionResponse = result.functionResponse().get();
     assertThat(functionResponse.name()).hasValue("func");
     assertThat(functionResponse.id()).hasValue("1");
     assertThat(functionResponse.response()).hasValue(ImmutableMap.of());
@@ -147,11 +143,10 @@ public class PartConverterTest {
         ImmutableMap.of("name", "func", "id", "1", "response", ImmutableMap.of("result", "value"));
     DataPart dataPart = new DataPart(data, null);
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().functionResponse()).isPresent();
-    FunctionResponse functionResponse = result.get().functionResponse().get();
+    assertThat(result.functionResponse()).isPresent();
+    FunctionResponse functionResponse = result.functionResponse().get();
     assertThat(functionResponse.name()).hasValue("func");
     assertThat(functionResponse.id()).hasValue("1");
     assertThat(functionResponse.response()).hasValue(ImmutableMap.of("result", "value"));
@@ -162,10 +157,9 @@ public class PartConverterTest {
     ImmutableMap<String, Object> data = ImmutableMap.of("key", "value");
     DataPart dataPart = new DataPart(data, null);
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().text()).hasValue("{\"key\":\"value\"}");
+    assertThat(result.text()).hasValue("{\"key\":\"value\"}");
   }
 
   @Test
@@ -197,7 +191,7 @@ public class PartConverterTest {
     assertThat(((TextPart) result).getText()).isEqualTo("text");
     assertThat(((TextPart) result).getMetadata()).containsEntry("thought", true);
     assertThat(((TextPart) result).getMetadata())
-        .containsEntry(PartConverter.A2A_DATA_PART_METADATA_IS_PARTIAL_KEY, true);
+        .containsEntry(A2AMetadataKey.PARTIAL.getType(), true);
   }
 
   @Test
@@ -236,6 +230,39 @@ public class PartConverterTest {
   }
 
   @Test
+  public void fromGenaiPart_dataPart_executableCode_returnsDataPart() {
+    ExecutableCode executableCode =
+        ExecutableCode.builder().code("print('hello')").language(new Language("python")).build();
+    Part part = Part.builder().executableCode(executableCode).build();
+    io.a2a.spec.Part<?> result = PartConverter.fromGenaiPart(part, false);
+
+    assertThat(result).isInstanceOf(DataPart.class);
+    DataPart dataPart = (DataPart) result;
+    assertThat(dataPart.getData().get("code")).isEqualTo("print('hello')");
+    assertThat(dataPart.getData().get("language")).isEqualTo("python");
+    assertThat(dataPart.getMetadata().get(A2AMetadataKey.TYPE.getType()))
+        .isEqualTo("executable_code");
+  }
+
+  @Test
+  public void fromGenaiPart_dataPart_codeExecutionResult_returnsDataPart() {
+    CodeExecutionResult codeExecutionResult =
+        CodeExecutionResult.builder()
+            .outcome(new Outcome("OUTCOME_OK"))
+            .output("print('hello')")
+            .build();
+    Part part = Part.builder().codeExecutionResult(codeExecutionResult).build();
+    io.a2a.spec.Part<?> result = PartConverter.fromGenaiPart(part, false);
+
+    assertThat(result).isInstanceOf(DataPart.class);
+    DataPart dataPart = (DataPart) result;
+    assertThat(dataPart.getData().get("outcome")).isEqualTo("OUTCOME_OK");
+    assertThat(dataPart.getData().get("output")).isEqualTo("print('hello')");
+    assertThat(dataPart.getMetadata().get(A2AMetadataKey.TYPE.getType()))
+        .isEqualTo("code_execution_result");
+  }
+
+  @Test
   public void fromGenaiPart_withFunctionCallPart_returnsDataPart() {
     Part part =
         Part.builder()
@@ -264,8 +291,7 @@ public class PartConverterTest {
             true);
     assertThat(dataPart.getMetadata())
         .containsEntry(
-            PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY,
-            A2ADataPartMetadataType.FUNCTION_CALL.getType());
+            A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.FUNCTION_CALL.getType());
   }
 
   @Test
@@ -284,8 +310,7 @@ public class PartConverterTest {
         .containsExactly("name", "func", "id", "1", "response", ImmutableMap.of());
     assertThat(dataPart.getMetadata())
         .containsEntry(
-            PartConverter.A2A_DATA_PART_METADATA_TYPE_KEY,
-            A2ADataPartMetadataType.FUNCTION_RESPONSE.getType());
+            A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.FUNCTION_RESPONSE.getType());
   }
 
   @Test
@@ -293,11 +318,10 @@ public class PartConverterTest {
     ImmutableMap<String, Object> data = ImmutableMap.of("name", "func", "id", "1", "args", "");
     DataPart dataPart = new DataPart(data, null);
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().functionCall()).isPresent();
-    assertThat(result.get().functionCall().get().args()).hasValue(ImmutableMap.of());
+    assertThat(result.functionCall()).isPresent();
+    assertThat(result.functionCall().get().args()).hasValue(ImmutableMap.of());
   }
 
   @Test
@@ -305,10 +329,9 @@ public class PartConverterTest {
     ImmutableMap<String, Object> data = ImmutableMap.of("name", "func", "id", "1", "args", 123);
     DataPart dataPart = new DataPart(data, null);
 
-    Optional<Part> result = PartConverter.toGenaiPart(dataPart);
+    Part result = PartConverter.toGenaiPart(dataPart);
 
-    assertThat(result).isPresent();
-    assertThat(result.get().functionCall()).isPresent();
-    assertThat(result.get().functionCall().get().args()).hasValue(ImmutableMap.of("value", 123));
+    assertThat(result.functionCall()).isPresent();
+    assertThat(result.functionCall().get().args()).hasValue(ImmutableMap.of("value", 123));
   }
 }

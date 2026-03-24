@@ -52,11 +52,7 @@ public final class PartConverter {
 
   private static final Logger logger = LoggerFactory.getLogger(PartConverter.class);
   private static final ObjectMapper objectMapper = new ObjectMapper();
-  // Constants for metadata types. By convention metadata keys are prefixed with "adk_" to align
-  // with the Python and Golang libraries.
-  public static final String A2A_DATA_PART_METADATA_TYPE_KEY = "adk_type";
-  public static final String A2A_DATA_PART_METADATA_IS_LONG_RUNNING_KEY = "adk_is_long_running";
-  public static final String A2A_DATA_PART_METADATA_IS_PARTIAL_KEY = "adk_partial";
+  // Constants for metadata types.
   public static final String LANGUAGE_KEY = "language";
   public static final String OUTCOME_KEY = "outcome";
   public static final String CODE_KEY = "code";
@@ -78,13 +74,13 @@ public final class PartConverter {
   }
 
   /** Convert an A2A JSON part into a Google GenAI part representation. */
-  public static Optional<com.google.genai.types.Part> toGenaiPart(io.a2a.spec.Part<?> a2aPart) {
+  public static com.google.genai.types.Part toGenaiPart(io.a2a.spec.Part<?> a2aPart) {
     if (a2aPart == null) {
-      return Optional.empty();
+      throw new IllegalArgumentException("A2A part cannot be null");
     }
 
     if (a2aPart instanceof TextPart textPart) {
-      return Optional.of(com.google.genai.types.Part.builder().text(textPart.getText()).build());
+      return com.google.genai.types.Part.builder().text(textPart.getText()).build();
     }
 
     if (a2aPart instanceof FilePart filePart) {
@@ -95,73 +91,56 @@ public final class PartConverter {
       return convertDataPartToGenAiPart(dataPart);
     }
 
-    logger.warn("Unsupported A2A part type: {}", a2aPart.getClass());
-    return Optional.empty();
+    throw new IllegalArgumentException("Unsupported A2A part type: " + a2aPart.getClass());
   }
 
   public static ImmutableList<com.google.genai.types.Part> toGenaiParts(
       List<io.a2a.spec.Part<?>> a2aParts) {
-    return a2aParts.stream()
-        .map(PartConverter::toGenaiPart)
-        .flatMap(Optional::stream)
-        .collect(toImmutableList());
+    return a2aParts.stream().map(PartConverter::toGenaiPart).collect(toImmutableList());
   }
 
-  private static Optional<com.google.genai.types.Part> convertFilePartToGenAiPart(
-      FilePart filePart) {
+  private static com.google.genai.types.Part convertFilePartToGenAiPart(FilePart filePart) {
     FileContent fileContent = filePart.getFile();
     if (fileContent instanceof FileWithUri fileWithUri) {
-      return Optional.of(
-          com.google.genai.types.Part.builder()
-              .fileData(
-                  FileData.builder()
-                      .fileUri(fileWithUri.uri())
-                      .mimeType(fileWithUri.mimeType())
-                      .build())
-              .build());
+      return com.google.genai.types.Part.builder()
+          .fileData(
+              FileData.builder()
+                  .fileUri(fileWithUri.uri())
+                  .mimeType(fileWithUri.mimeType())
+                  .build())
+          .build();
     }
 
     if (fileContent instanceof FileWithBytes fileWithBytes) {
       String bytesString = fileWithBytes.bytes();
       if (bytesString == null) {
-        logger.warn("FileWithBytes missing byte content");
-        return Optional.empty();
+        throw new GenAiFieldMissingException("FileWithBytes missing byte content");
       }
-      try {
-        byte[] decoded = Base64.getDecoder().decode(bytesString);
-        return Optional.of(
-            com.google.genai.types.Part.builder()
-                .inlineData(Blob.builder().data(decoded).mimeType(fileWithBytes.mimeType()).build())
-                .build());
-      } catch (IllegalArgumentException e) {
-        logger.warn("Failed to decode base64 file content", e);
-        return Optional.empty();
-      }
+      byte[] decoded = Base64.getDecoder().decode(bytesString);
+      return com.google.genai.types.Part.builder()
+          .inlineData(Blob.builder().data(decoded).mimeType(fileWithBytes.mimeType()).build())
+          .build();
     }
 
-    logger.warn("Unsupported FilePart content: {}", fileContent.getClass());
-    return Optional.empty();
+    throw new IllegalArgumentException("Unsupported FilePart content: " + fileContent.getClass());
   }
 
-  private static Optional<com.google.genai.types.Part> convertDataPartToGenAiPart(
-      DataPart dataPart) {
+  private static com.google.genai.types.Part convertDataPartToGenAiPart(DataPart dataPart) {
     Map<String, Object> data =
         Optional.ofNullable(dataPart.getData()).map(HashMap::new).orElseGet(HashMap::new);
     Map<String, Object> metadata =
         Optional.ofNullable(dataPart.getMetadata()).map(HashMap::new).orElseGet(HashMap::new);
 
-    String metadataType = metadata.getOrDefault(A2A_DATA_PART_METADATA_TYPE_KEY, "").toString();
+    String metadataType = metadata.getOrDefault(A2AMetadataKey.TYPE.getType(), "").toString();
 
     if ((data.containsKey(NAME_KEY) && data.containsKey(ARGS_KEY))
         || metadataType.equals(A2ADataPartMetadataType.FUNCTION_CALL.getType())) {
-      String functionName = String.valueOf(data.getOrDefault(NAME_KEY, null));
-      String functionId = String.valueOf(data.getOrDefault(ID_KEY, null));
+      String functionName = String.valueOf(data.getOrDefault(NAME_KEY, ""));
+      String functionId = String.valueOf(data.getOrDefault(ID_KEY, ""));
       Map<String, Object> args = coerceToMap(data.get(ARGS_KEY));
-      return Optional.of(
-          com.google.genai.types.Part.builder()
-              .functionCall(
-                  FunctionCall.builder().name(functionName).id(functionId).args(args).build())
-              .build());
+      return com.google.genai.types.Part.builder()
+          .functionCall(FunctionCall.builder().name(functionName).id(functionId).args(args).build())
+          .build();
     }
 
     if ((data.containsKey(NAME_KEY) && data.containsKey(RESPONSE_KEY))
@@ -169,15 +148,14 @@ public final class PartConverter {
       String functionName = String.valueOf(data.getOrDefault(NAME_KEY, ""));
       String functionId = String.valueOf(data.getOrDefault(ID_KEY, ""));
       Map<String, Object> response = coerceToMap(data.get(RESPONSE_KEY));
-      return Optional.of(
-          com.google.genai.types.Part.builder()
-              .functionResponse(
-                  FunctionResponse.builder()
-                      .name(functionName)
-                      .id(functionId)
-                      .response(response)
-                      .build())
-              .build());
+      return com.google.genai.types.Part.builder()
+          .functionResponse(
+              FunctionResponse.builder()
+                  .name(functionName)
+                  .id(functionId)
+                  .response(response)
+                  .build())
+          .build();
     }
 
     if ((data.containsKey(CODE_KEY) && data.containsKey(LANGUAGE_KEY))
@@ -185,13 +163,11 @@ public final class PartConverter {
       String code = String.valueOf(data.getOrDefault(CODE_KEY, ""));
       String language =
           String.valueOf(
-              data.getOrDefault(LANGUAGE_KEY, Language.Known.LANGUAGE_UNSPECIFIED.toString())
-                  .toString());
-      return Optional.of(
-          com.google.genai.types.Part.builder()
-              .executableCode(
-                  ExecutableCode.builder().code(code).language(new Language(language)).build())
-              .build());
+              data.getOrDefault(LANGUAGE_KEY, Language.Known.LANGUAGE_UNSPECIFIED.toString()));
+      return com.google.genai.types.Part.builder()
+          .executableCode(
+              ExecutableCode.builder().code(code).language(new Language(language)).build())
+          .build();
     }
 
     if ((data.containsKey(OUTCOME_KEY) && data.containsKey(OUTPUT_KEY))
@@ -199,22 +175,17 @@ public final class PartConverter {
       String outcome =
           String.valueOf(data.getOrDefault(OUTCOME_KEY, Outcome.Known.OUTCOME_OK).toString());
       String output = String.valueOf(data.getOrDefault(OUTPUT_KEY, ""));
-      return Optional.of(
-          com.google.genai.types.Part.builder()
-              .codeExecutionResult(
-                  CodeExecutionResult.builder()
-                      .outcome(new Outcome(outcome))
-                      .output(output)
-                      .build())
-              .build());
+      return com.google.genai.types.Part.builder()
+          .codeExecutionResult(
+              CodeExecutionResult.builder().outcome(new Outcome(outcome)).output(output).build())
+          .build();
     }
 
     try {
       String json = objectMapper.writeValueAsString(data);
-      return Optional.of(com.google.genai.types.Part.builder().text(json).build());
+      return com.google.genai.types.Part.builder().text(json).build();
     } catch (JsonProcessingException e) {
-      logger.warn("Failed to serialize DataPart payload", e);
-      return Optional.empty();
+      throw new IllegalArgumentException("Failed to serialize DataPart payload", e);
     }
   }
 
@@ -243,7 +214,7 @@ public final class PartConverter {
     addValueIfPresent(data, WILL_CONTINUE_KEY, functionCall.willContinue());
     addValueIfPresent(data, PARTIAL_ARGS_KEY, functionCall.partialArgs());
 
-    metadata.put(A2A_DATA_PART_METADATA_TYPE_KEY, A2ADataPartMetadataType.FUNCTION_CALL.getType());
+    metadata.put(A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.FUNCTION_CALL.getType());
 
     return new DataPart(data.buildOrThrow(), metadata.buildOrThrow());
   }
@@ -270,7 +241,7 @@ public final class PartConverter {
     addValueIfPresent(data, PARTS_KEY, functionResponse.parts());
 
     metadata.put(
-        A2A_DATA_PART_METADATA_TYPE_KEY, A2ADataPartMetadataType.FUNCTION_RESPONSE.getType());
+        A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.FUNCTION_RESPONSE.getType());
 
     return new DataPart(data.buildOrThrow(), metadata.buildOrThrow());
   }
@@ -293,7 +264,7 @@ public final class PartConverter {
     addValueIfPresent(data, OUTPUT_KEY, codeExecutionResult.output());
 
     metadata.put(
-        A2A_DATA_PART_METADATA_TYPE_KEY, A2ADataPartMetadataType.CODE_EXECUTION_RESULT.getType());
+        A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.CODE_EXECUTION_RESULT.getType());
 
     return new DataPart(data.buildOrThrow(), metadata.buildOrThrow());
   }
@@ -315,8 +286,7 @@ public final class PartConverter {
             .orElse(Language.Known.LANGUAGE_UNSPECIFIED.toString()));
     addValueIfPresent(data, CODE_KEY, executableCode.code());
 
-    metadata.put(
-        A2A_DATA_PART_METADATA_TYPE_KEY, A2ADataPartMetadataType.EXECUTABLE_CODE.getType());
+    metadata.put(A2AMetadataKey.TYPE.getType(), A2ADataPartMetadataType.EXECUTABLE_CODE.getType());
 
     return new DataPart(data.buildOrThrow(), metadata.buildOrThrow());
   }
@@ -330,7 +300,7 @@ public final class PartConverter {
     }
     ImmutableMap.Builder<String, Object> metadata = ImmutableMap.builder();
     if (isPartial) {
-      metadata.put(A2A_DATA_PART_METADATA_IS_PARTIAL_KEY, true);
+      metadata.put(A2AMetadataKey.PARTIAL.getType(), true);
     }
 
     if (part.text().isPresent()) {
@@ -382,6 +352,50 @@ public final class PartConverter {
     return new FilePart(
         new FileWithBytes(blob.mimeType().orElse(null), blob.displayName().orElse(null), encoded),
         metadata.buildOrThrow());
+  }
+
+  /**
+   * Converts a remote call part to a user part.
+   *
+   * <p>Events are rephrased as if a user was telling what happened in the session up to the point.
+   * E.g.
+   *
+   * <pre>{@code
+   * For context:
+   * User said: Now help me with Z
+   * Agent A said: Agent B can help you with it!
+   * Agent B said: Agent C might know better.*
+   * }</pre>
+   *
+   * @param author The author of the part.
+   * @param part The part to convert.
+   * @return The converted part.
+   */
+  public static Part remoteCallAsUserPart(String author, Part part) {
+    if (part.text().isPresent()) {
+      String partText = String.format("[%s] said: %s", author, part.text().get());
+      return Part.builder().text(partText).build();
+    } else if (part.functionCall().isPresent()) {
+      FunctionCall functionCall = part.functionCall().get();
+      String partText =
+          String.format(
+              "[%s] called tool %s with parameters: %s",
+              author,
+              functionCall.name().orElse("<unknown>"),
+              functionCall.args().orElse(ImmutableMap.of()));
+      return Part.builder().text(partText).build();
+    } else if (part.functionResponse().isPresent()) {
+      FunctionResponse functionResponse = part.functionResponse().get();
+      String partText =
+          String.format(
+              "[%s] %s tool returned result: %s",
+              author,
+              functionResponse.name().orElse("<unknown>"),
+              functionResponse.response().orElse(ImmutableMap.of()));
+      return Part.builder().text(partText).build();
+    } else {
+      return part;
+    }
   }
 
   @SuppressWarnings("unchecked") // safe conversion from objectMapper.readValue

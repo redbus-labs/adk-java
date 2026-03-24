@@ -40,7 +40,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Connects to the managed Vertex AI Session Service. */
 // TODO: Use the genai HttpApiClient and ApiResponse methods once they are public.
@@ -65,8 +65,8 @@ public final class VertexAiSessionService implements BaseSessionService {
   public VertexAiSessionService(
       String project,
       String location,
-      Optional<GoogleCredentials> credentials,
-      Optional<HttpOptions> httpOptions) {
+      @Nullable GoogleCredentials credentials,
+      @Nullable HttpOptions httpOptions) {
     this.client = new VertexAiClient(project, location, credentials, httpOptions);
   }
 
@@ -128,15 +128,17 @@ public final class VertexAiSessionService implements BaseSessionService {
         .map(
             listSessionsResponseMap ->
                 parseListSessionsResponse(listSessionsResponseMap, appName, userId))
-        .defaultIfEmpty(ListSessionsResponse.builder().build());
+        .defaultIfEmpty(ListSessionsResponse.builder().sessions(new ArrayList<>()).build());
   }
 
   private ListSessionsResponse parseListSessionsResponse(
       JsonNode listSessionsResponseMap, String appName, String userId) {
+    JsonNode sessionsNode = listSessionsResponseMap.get("sessions");
+    if (sessionsNode == null || sessionsNode.isNull() || sessionsNode.isEmpty()) {
+      return ListSessionsResponse.builder().sessions(new ArrayList<>()).build();
+    }
     List<Map<String, Object>> apiSessions =
-        objectMapper.convertValue(
-            listSessionsResponseMap.get("sessions"),
-            new TypeReference<List<Map<String, Object>>>() {});
+        objectMapper.convertValue(sessionsNode, new TypeReference<List<Map<String, Object>>>() {});
 
     List<Session> sessions = new ArrayList<>();
     for (Map<String, Object> apiSession : apiSessions) {

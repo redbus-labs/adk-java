@@ -117,7 +117,7 @@ public class RemoteA2AAgent extends BaseAgent {
     if (this.description.isEmpty() && this.agentCard.description() != null) {
       this.description = this.agentCard.description();
     }
-    this.streaming = this.agentCard.capabilities().streaming();
+    this.streaming = builder.streaming && this.agentCard.capabilities().streaming();
   }
 
   public static Builder builder() {
@@ -133,6 +133,13 @@ public class RemoteA2AAgent extends BaseAgent {
     private List<? extends BaseAgent> subAgents;
     private List<Callbacks.BeforeAgentCallback> beforeAgentCallback;
     private List<Callbacks.AfterAgentCallback> afterAgentCallback;
+    private boolean streaming;
+
+    @CanIgnoreReturnValue
+    public Builder streaming(boolean streaming) {
+      this.streaming = streaming;
+      return this;
+    }
 
     @CanIgnoreReturnValue
     public Builder name(String name) {
@@ -181,6 +188,29 @@ public class RemoteA2AAgent extends BaseAgent {
     }
   }
 
+  public boolean isStreaming() {
+    return streaming;
+  }
+
+  private Message.Builder newA2AMessage(Message.Role role, List<io.a2a.spec.Part<?>> parts) {
+    return new Message.Builder().messageId(UUID.randomUUID().toString()).role(role).parts(parts);
+  }
+
+  private Message prepareMessage(InvocationContext invocationContext) {
+    Event userCall = EventConverter.findUserFunctionCall(invocationContext.session().events());
+    if (userCall != null) {
+      ImmutableList<io.a2a.spec.Part<?>> parts =
+          EventConverter.contentToParts(userCall.content(), userCall.partial().orElse(false));
+      return newA2AMessage(Message.Role.USER, parts)
+          .taskId(EventConverter.taskId(userCall))
+          .contextId(EventConverter.contextId(userCall))
+          .build();
+    }
+    return newA2AMessage(
+            Message.Role.USER, EventConverter.messagePartsFromContext(invocationContext))
+        .build();
+  }
+
   @Override
   protected Flowable<Event> runAsyncImpl(InvocationContext invocationContext) {
     // Construct A2A Message from the last ADK event
@@ -191,14 +221,7 @@ public class RemoteA2AAgent extends BaseAgent {
       return Flowable.empty();
     }
 
-    Optional<Message> a2aMessageOpt = EventConverter.convertEventsToA2AMessage(invocationContext);
-
-    if (a2aMessageOpt.isEmpty()) {
-      logger.warn("Failed to convert event to A2A message.");
-      return Flowable.empty();
-    }
-
-    Message originalMessage = a2aMessageOpt.get();
+    Message originalMessage = prepareMessage(invocationContext);
     String requestJson = serializeMessageToJson(originalMessage);
 
     return Flowable.create(
