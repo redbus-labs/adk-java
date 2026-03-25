@@ -15,7 +15,6 @@ import io.reactivex.rxjava3.core.Single;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -256,7 +255,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
           // Apply state delta from event actions
           EventActions actions = event.actions();
           if (actions != null) {
-            Map<String, Object> stateDelta = actions.stateDelta();
+            ConcurrentMap<String, Object> stateDelta = actions.stateDelta();
             if (stateDelta != null && !stateDelta.isEmpty()) {
               stateDelta.forEach(
                   (key, value) -> {
@@ -340,7 +339,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     if (event == null || event.actions() == null || event.actions().stateDelta() == null) {
       return;
     }
-    Map<String, Object> stateDelta = event.actions().stateDelta();
+    ConcurrentMap<String, Object> stateDelta = event.actions().stateDelta();
     stateDelta.entrySet().removeIf(entry -> entry.getKey().startsWith(State.TEMP_PREFIX));
   }
 
@@ -387,4 +386,6 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
   }
 
   private Session deserializeSession(String sessionJsonString) throws Exception {
-    return objectMapper.readValue(sessionJsonString, new TypeReference<Session>(
+    return objectMapper.readValue(sessionJsonString, new TypeReference<Session>() {});
+  }
+}
