@@ -216,19 +216,31 @@ public class AzureBaseLM extends BaseLlm {
     final AtomicInteger inputTokens = new AtomicInteger(0);
     final AtomicInteger outputTokens = new AtomicInteger(0);
 
+    System.out.println("[STREAM-DEBUG] Starting streaming request for model: " + modelName);
+    System.out.println("[STREAM-DEBUG] Payload size: " + payload.toString().length() + " bytes");
+
     return Flowable.create(
         emitter -> {
           BufferedReader reader = null;
           try {
+            System.out.println("[STREAM-DEBUG] Opening SSE connection...");
             reader = callApiStream(payload);
             if (reader == null) {
+              System.out.println("[STREAM-DEBUG] Reader is null — stream failed to open.");
               emitter.onComplete();
               return;
             }
+            System.out.println("[STREAM-DEBUG] SSE connection opened successfully.");
+            long streamStartMs = System.currentTimeMillis();
+            int chunkCount = 0;
+
             String lastEventName = null;
             String line;
             while ((line = reader.readLine()) != null) {
-              if (emitter.isCancelled()) break;
+              if (emitter.isCancelled()) {
+                System.out.println("[STREAM-DEBUG] Emitter cancelled, breaking out of read loop.");
+                break;
+              }
 
               logger.debug(
                   "SSE raw: {}", line.length() > 200 ? line.substring(0, 200) + "..." : line);
@@ -242,14 +254,22 @@ public class AzureBaseLM extends BaseLlm {
 
               String jsonStr = line.substring(5).trim();
               if (jsonStr.equals("[DONE]")) {
-                logger.info("[DONE] marker found, completing stream");
+                long elapsed = System.currentTimeMillis() - streamStartMs;
+                System.out.println(
+                    "[STREAM-DEBUG] [DONE] marker received after "
+                        + elapsed
+                        + "ms, total chunks: "
+                        + chunkCount);
                 break;
               }
 
+              chunkCount++;
               JSONObject event;
               try {
                 event = new JSONObject(jsonStr);
               } catch (JSONException e) {
+                System.out.println(
+                    "[STREAM-DEBUG] Failed to parse SSE chunk #" + chunkCount + ": " + jsonStr);
                 logger.warn("Failed to parse Azure SSE chunk: {}", jsonStr);
                 continue;
               }
@@ -260,6 +280,13 @@ public class AzureBaseLM extends BaseLlm {
               }
               lastEventName = null;
 
+              System.out.println(
+                  "[STREAM-DEBUG] Chunk #"
+                      + chunkCount
+                      + " eventType='"
+                      + eventType
+                      + "' keys="
+                      + event.keySet());
               logger.debug("SSE event type='{}' keys={}", eventType, event.keySet());
 
               switch (eventType) {
@@ -268,10 +295,18 @@ public class AzureBaseLM extends BaseLlm {
                     JSONObject item = event.optJSONObject("item");
                     if (item == null) break;
                     String itemType = item.optString("type", "");
+                    System.out.println(
+                        "[STREAM-DEBUG] output_item.added — itemType='" + itemType + "'");
                     if ("function_call".equals(itemType)) {
                       inFunctionCall.set(true);
                       String name = item.optString("name", "");
                       String callId = item.optString("call_id", "");
+                      System.out.println(
+                          "[STREAM-DEBUG] Function call starting: name='"
+                              + name
+                              + "' callId='"
+                              + callId
+                              + "'");
                       if (!name.isEmpty()) functionCallName.append(name);
                       if (!callId.isEmpty()) functionCallCallId.append(callId);
                     } else if ("reasoning".equals(itemType)) {
@@ -292,6 +327,11 @@ public class AzureBaseLM extends BaseLlm {
                   {
                     String delta = event.optString("delta", "");
                     if (!delta.isEmpty()) {
+                      System.out.println(
+                          "[STREAM-DEBUG] Reasoning delta ("
+                              + delta.length()
+                              + " chars): "
+                              + (delta.length() > 80 ? delta.substring(0, 80) + "..." : delta));
                       reasoningSummary.append(delta);
                       emitter.onNext(
                           LlmResponse.builder()
@@ -324,6 +364,15 @@ public class AzureBaseLM extends BaseLlm {
                   {
                     String delta = extractTextDeltaFromStreamEvent(event);
                     if (!delta.isEmpty()) {
+                      System.out.println(
+                          "[STREAM-DEBUG] Text delta ("
+                              + delta.length()
+                              + " chars): "
+                              + (delta.length() > 100 ? delta.substring(0, 100) + "..." : delta));
+                      System.out.println(
+                          "[STREAM-DEBUG] Accumulated text so far: "
+                              + accumulatedText.length()
+                              + " chars");
                       accumulatedText.append(delta);
                       emitter.onNext(
                           LlmResponse.builder()
@@ -341,6 +390,10 @@ public class AzureBaseLM extends BaseLlm {
                 case "response.output_text.done":
                   {
                     String fullText = event.optString("text", "");
+                    System.out.println(
+                        "[STREAM-DEBUG] output_text.done — full text length: "
+                            + fullText.length()
+                            + " chars");
                     if (!fullText.isEmpty()) {
                       accumulatedText.setLength(0);
                       accumulatedText.append(fullText);
@@ -368,6 +421,9 @@ public class AzureBaseLM extends BaseLlm {
 
                 case "response.output_item.done":
                   {
+                    System.out.println(
+                        "[STREAM-DEBUG] output_item.done — finalTextEmitted="
+                            + finalTextEmitted.get());
                     if (finalTextEmitted.get()) break;
                     JSONObject item = event.optJSONObject("item");
                     if (item != null && "message".equals(item.optString("type"))) {
@@ -402,6 +458,11 @@ public class AzureBaseLM extends BaseLlm {
                   {
                     String delta = extractTextDeltaFromStreamEvent(event);
                     if (!delta.isEmpty()) {
+                      System.out.println(
+                          "[STREAM-DEBUG] Function args delta ("
+                              + delta.length()
+                              + " chars): "
+                              + (delta.length() > 100 ? delta.substring(0, 100) + "..." : delta));
                       functionCallArgs.append(delta);
                     }
                     break;
@@ -409,6 +470,11 @@ public class AzureBaseLM extends BaseLlm {
 
                 case "response.function_call_arguments.done":
                   {
+                    System.out.println(
+                        "[STREAM-DEBUG] function_call_arguments.done — name='"
+                            + functionCallName
+                            + "' argsLength="
+                            + functionCallArgs.length());
                     if (functionCallName.length() > 0) {
                       String argsStr =
                           functionCallArgs.length() > 0 ? functionCallArgs.toString() : "{}";
@@ -440,12 +506,18 @@ public class AzureBaseLM extends BaseLlm {
 
                 case "response.completed":
                   {
+                    System.out.println("[STREAM-DEBUG] response.completed received.");
                     JSONObject resp = event.optJSONObject("response");
                     if (resp != null) {
                       JSONObject usage = resp.optJSONObject("usage");
                       if (usage != null) {
                         inputTokens.set(usage.optInt("input_tokens", 0));
                         outputTokens.set(usage.optInt("output_tokens", 0));
+                        System.out.println(
+                            "[STREAM-DEBUG] Token usage — input: "
+                                + inputTokens.get()
+                                + ", output: "
+                                + outputTokens.get());
                       }
                     }
                     break;
@@ -456,9 +528,23 @@ public class AzureBaseLM extends BaseLlm {
               }
             }
 
-            // Stream ended — emit final accumulated response
+            long totalElapsed = System.currentTimeMillis() - streamStartMs;
+            System.out.println(
+                "[STREAM-DEBUG] Stream read loop finished — elapsed: "
+                    + totalElapsed
+                    + "ms, chunks: "
+                    + chunkCount
+                    + ", accumulatedText: "
+                    + accumulatedText.length()
+                    + " chars, finalTextEmitted: "
+                    + finalTextEmitted.get()
+                    + ", inFunctionCall: "
+                    + inFunctionCall.get());
+
             if (!emitter.isCancelled()) {
               if (!finalTextEmitted.get()) {
+                System.out.println(
+                    "[STREAM-DEBUG] Emitting final accumulated response from post-loop.");
                 emitFinalStreamResponse(
                     emitter,
                     accumulatedText,
@@ -469,12 +555,15 @@ public class AzureBaseLM extends BaseLlm {
                     inputTokens.get(),
                     outputTokens.get());
               }
+              System.out.println("[STREAM-DEBUG] Calling emitter.onComplete().");
               emitter.onComplete();
             }
           } catch (IOException e) {
+            System.out.println("[STREAM-DEBUG] IOException in stream: " + e.getMessage());
             logger.error("IOException in Azure stream", e);
             if (!emitter.isCancelled()) emitter.onError(e);
           } catch (Exception e) {
+            System.out.println("[STREAM-DEBUG] Exception in stream: " + e.getMessage());
             logger.error("Error in Azure streaming", e);
             if (!emitter.isCancelled()) emitter.onError(e);
           } finally {
