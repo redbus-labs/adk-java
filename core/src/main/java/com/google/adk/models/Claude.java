@@ -31,8 +31,7 @@ import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUnion;
 import com.anthropic.models.messages.ToolUseBlockParam;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.google.adk.JsonBaseModel;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
@@ -170,9 +169,22 @@ public class Claude extends BaseLlm {
               .build());
     } else if (part.functionResponse().isPresent()) {
       String content = "";
-      if (part.functionResponse().get().response().isPresent()
-          && part.functionResponse().get().response().get().getOrDefault("result", null) != null) {
-        content = part.functionResponse().get().response().get().get("result").toString();
+      if (part.functionResponse().get().response().isPresent()) {
+        Map<String, Object> responseData = part.functionResponse().get().response().get();
+
+        Object contentObj = responseData.get("content");
+        Object resultObj = responseData.get("result");
+
+        if (contentObj instanceof List<?> list && !list.isEmpty()) {
+          // Native MCP format: list of content blocks
+          content = extractMcpContentBlocks(list);
+        } else if (resultObj != null) {
+          // ADK tool result object
+          content = resultObj instanceof String s ? s : serializeToJson(resultObj);
+        } else if (!responseData.isEmpty()) {
+          // Fallback: arbitrary JSON structure
+          content = serializeToJson(responseData);
+        }
       }
       return ContentBlockParam.ofToolResult(
           ToolResultBlockParam.builder()
@@ -182,6 +194,30 @@ public class Claude extends BaseLlm {
               .build());
     }
     throw new UnsupportedOperationException("Not supported yet.");
+  }
+
+  private String extractMcpContentBlocks(List<?> list) {
+    List<String> textBlocks = new ArrayList<>();
+    for (Object item : list) {
+      if (item instanceof Map<?, ?> m && "text".equals(m.get("type"))) {
+        Object textObj = m.get("text");
+        textBlocks.add(textObj != null ? String.valueOf(textObj) : "");
+      } else if (item instanceof String s) {
+        textBlocks.add(s);
+      } else {
+        textBlocks.add(serializeToJson(item));
+      }
+    }
+    return String.join("\n", textBlocks);
+  }
+
+  private String serializeToJson(Object obj) {
+    try {
+      return JsonBaseModel.getMapper().writeValueAsString(obj);
+    } catch (Exception e) {
+      logger.warn("Failed to serialize object to JSON", e);
+      return String.valueOf(obj);
+    }
   }
 
   private void updateTypeString(Map<String, Object> valueDict) {
@@ -221,10 +257,9 @@ public class Claude extends BaseLlm {
           .get()
           .forEach(
               (key, schema) -> {
-                ObjectMapper objectMapper = new ObjectMapper();
-                objectMapper.registerModule(new Jdk8Module());
                 Map<String, Object> schemaMap =
-                    objectMapper.convertValue(schema, new TypeReference<Map<String, Object>>() {});
+                    JsonBaseModel.getMapper()
+                        .convertValue(schema, new TypeReference<Map<String, Object>>() {});
                 updateTypeString(schemaMap);
                 properties.put(key, schemaMap);
               });
