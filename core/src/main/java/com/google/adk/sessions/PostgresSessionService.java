@@ -15,10 +15,10 @@ import io.reactivex.rxjava3.core.Single;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.jetbrains.annotations.Nullable;
@@ -340,7 +340,7 @@ public class PostgresSessionService implements BaseSessionService, AutoCloseable
     if (event == null || event.actions() == null || event.actions().stateDelta() == null) {
       return;
     }
-    Map<String, Object> stateDelta = event.actions().stateDelta();
+    ConcurrentMap<String, Object> stateDelta = event.actions().stateDelta();
     stateDelta.entrySet().removeIf(entry -> entry.getKey().startsWith(State.TEMP_PREFIX));
   }
 
