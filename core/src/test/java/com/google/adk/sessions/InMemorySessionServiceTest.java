@@ -274,7 +274,9 @@ public final class InMemorySessionServiceTest {
 
     Session session = sessionService.createSession("app-name", "user-id").blockingGet();
 
-    sessionService.deleteSession(session.appName(), session.userId(), session.id()).blockingAwait();
+    sessionService
+        .deleteSession(session1.appName(), session1.userId(), session1.id())
+        .blockingAwait();
 
     // Use reflection to access the private 'sessions' field
     Field field = InMemorySessionService.class.getDeclaredField("sessions");
@@ -308,7 +310,8 @@ public final class InMemorySessionServiceTest {
     field.setAccessible(true);
     @SuppressWarnings("unchecked")
     ConcurrentMap<String, ConcurrentMap<String, ConcurrentMap<String, ?>>> sessions =
-        (ConcurrentMap<String, ConcurrentMap<String, ConcurrentMap<String, ?>>>) field.get(sessionService);
+        (ConcurrentMap<String, ConcurrentMap<String, ConcurrentMap<String, ?>>>)
+            field.get(sessionService);
 
     assertThat(sessions.get("app-name")).isNotNull();
     assertThat(sessions.get("app-name").get("user-id")).isNotNull();
