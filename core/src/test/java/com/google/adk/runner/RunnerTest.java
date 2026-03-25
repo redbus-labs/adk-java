@@ -592,6 +592,29 @@ public final class RunnerTest {
   }
 
   @Test
+  public void callbackContextData_preservedAcrossInvocation() {
+    String testKey = "testKey";
+    String testValue = "testValue";
+
+    when(plugin.onUserMessageCallback(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              InvocationContext context = invocation.getArgument(0);
+              context.callbackContextData().put(testKey, testValue);
+              return Maybe.empty();
+            });
+
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    when(plugin.afterRunCallback(contextCaptor.capture())).thenReturn(Completable.complete());
+
+    var unused =
+        runner.runAsync("user", session.id(), createContent("test")).toList().blockingGet();
+
+    assertThat(contextCaptor.getValue().callbackContextData()).containsEntry(testKey, testValue);
+  }
+
+  @Test
   public void runAsync_withSessionKey_success() {
     var events =
         runner.runAsync(session.sessionKey(), createContent("from user")).toList().blockingGet();

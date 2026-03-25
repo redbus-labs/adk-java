@@ -477,13 +477,8 @@ public class Runner {
                                 session.appName(), session.userId(), session.id(), Optional.empty())
                             .flatMapPublisher(
                                 updatedSession ->
-                                    runAgentWithFreshSession(
-                                        session,
-                                        updatedSession,
-                                        event,
-                                        invocationId,
-                                        runConfig,
-                                        rootAgent))
+                                    runAgentWithUpdatedSession(
+                                        initialContext, updatedSession, event, rootAgent))
                             .compose(Tracing.<Event>withContext(capturedContext));
                       });
             })
@@ -495,19 +490,27 @@ public class Runner {
             });
   }
 
-  private Flowable<Event> runAgentWithFreshSession(
-      Session session,
-      Session updatedSession,
-      Event event,
-      String invocationId,
-      RunConfig runConfig,
-      BaseAgent rootAgent) {
+  /**
+   * Runs the agent with the updated session state.
+   *
+   * <p>This method is called after the user message has been persistent in the session. It creates
+   * a final {@link InvocationContext} that inherits state from the {@code initialContext} but uses
+   * the {@code updatedSession} to ensure the agent can access the latest conversation history.
+   *
+   * @param initialContext the context from the start of the invocation, used to preserve metadata
+   *     and callback data.
+   * @param updatedSession the session object containing the latest message.
+   * @param event the event representing the user message that was just appended.
+   * @param rootAgent the agent to be executed.
+   * @return a stream of events from the agent execution and subsequent plugin callbacks.
+   */
+  private Flowable<Event> runAgentWithUpdatedSession(
+      InvocationContext initialContext, Session updatedSession, Event event, BaseAgent rootAgent) {
     // Create context with updated session for beforeRunCallback
     InvocationContext contextWithUpdatedSession =
-        newInvocationContextBuilder(updatedSession)
-            .invocationId(invocationId)
+        initialContext.toBuilder()
+            .session(updatedSession)
             .agent(this.findAgentToRun(updatedSession, rootAgent))
-            .runConfig(runConfig)
             .userContent(event.content().orElseGet(Content::fromParts))
             .build();
 
@@ -536,7 +539,7 @@ public class Runner {
                         .flatMap(
                             registeredEvent -> {
                               // TODO: remove this hack after deprecating runAsync with Session.
-                              copySessionStates(updatedSession, session);
+                              copySessionStates(updatedSession, initialContext.session());
                               return contextWithUpdatedSession
                                   .pluginManager()
                                   .onEventCallback(contextWithUpdatedSession, registeredEvent)
