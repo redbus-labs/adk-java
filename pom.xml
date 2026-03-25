@@ -32,7 +32,6 @@
     <module>contrib/spring-ai</module>
     <module>contrib/samples</module>
     <module>contrib/firestore-session-service</module>
-    <module>contrib/sarvam-ai</module> <!-- Sarvam AI integration -->
     <module>tutorials/city-time-weather</module>
     <module>tutorials/live-audio-single-agent</module>
     <module>a2a</module>
