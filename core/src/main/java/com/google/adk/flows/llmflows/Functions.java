@@ -178,8 +178,12 @@ public final class Functions {
 
               if (events.size() > 1) {
                 return Maybe.just(mergedEvent)
-                    .doOnSuccess(event -> Tracing.traceToolResponse(event.id(), event))
-                    .compose(Tracing.<Event>trace("tool_response").setParent(parentContext));
+                    .compose(
+                        Tracing.<Event>trace("execute_tool (merged)")
+                            .setParent(parentContext)
+                            .onSuccess(
+                                (span, event) ->
+                                    Tracing.traceMergedToolCalls(span, event.id(), event)));
               }
               return Maybe.just(mergedEvent);
             });
@@ -269,10 +273,8 @@ public final class Functions {
                                                   tool,
                                                   toolContext,
                                                   functionCall,
-                                                  functionArgs,
-                                                  parentContext)
-                                              : callTool(
-                                                  tool, functionArgs, toolContext, parentContext))
+                                                  functionArgs)
+                                              : callTool(tool, functionArgs, toolContext))
                                   .compose(Tracing.withContext(parentContext)));
 
                   return postProcessFunctionResult(
@@ -296,8 +298,7 @@ public final class Functions {
       BaseTool tool,
       ToolContext toolContext,
       FunctionCall functionCall,
-      Map<String, Object> args,
-      Context parentContext) {
+      Map<String, Object> args) {
     // Case 1: Handle a call to stopStreaming
     if (functionCall.name().get().equals("stopStreaming") && args.containsKey("functionName")) {
       String functionNameToStop = (String) args.get("functionName");
@@ -365,7 +366,7 @@ public final class Functions {
     }
 
     // Case 3: Fallback for regular, non-streaming tools
-    return callTool(tool, args, toolContext, parentContext);
+    return callTool(tool, args, toolContext);
   }
 
   public static Set<String> getLongRunningFunctionCalls(
@@ -426,12 +427,22 @@ public final class Functions {
                         Event event =
                             buildResponseEvent(
                                 tool, finalFunctionResult, toolContext, invocationContext);
-                        Tracing.traceToolResponse(event.id(), event);
                         return Maybe.just(event);
                       });
             })
         .compose(
-            Tracing.<Event>trace("tool_response [" + tool.name() + "]").setParent(parentContext));
+            Tracing.<Event>trace("execute_tool [" + tool.name() + "]")
+                .setParent(parentContext)
+                .onSuccess(
+                    (span, event) ->
+                        Tracing.traceToolExecution(
+                            span,
+                            tool.name(),
+                            tool.description(),
+                            tool.getClass().getSimpleName(),
+                            functionArgs,
+                            event,
+                            null)));
   }
 
   private static Optional<Event> mergeParallelFunctionResponseEvents(
@@ -579,17 +590,10 @@ public final class Functions {
   }
 
   private static Maybe<Map<String, Object>> callTool(
-      BaseTool tool, Map<String, Object> args, ToolContext toolContext, Context parentContext) {
+      BaseTool tool, Map<String, Object> args, ToolContext toolContext) {
     return tool.runAsync(args, toolContext)
         .toMaybe()
-        .doOnSubscribe(
-            d ->
-                Tracing.traceToolCall(
-                    tool.name(), tool.description(), tool.getClass().getSimpleName(), args))
         .doOnError(t -> Span.current().recordException(t))
-        .compose(
-            Tracing.<Map<String, Object>>trace("tool_call [" + tool.name() + "]")
-                .setParent(parentContext))
         .onErrorResumeNext(
             e ->
                 Maybe.error(

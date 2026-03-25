@@ -1061,21 +1061,16 @@ public final class RunnerTest {
 
     List<SpanData> spans = openTelemetryRule.getSpans();
     List<SpanData> llmSpans = spans.stream().filter(s -> s.getName().equals("call_llm")).toList();
-    List<SpanData> toolCallSpans =
-        spans.stream().filter(s -> s.getName().equals("tool_call [echo_tool]")).toList();
-    List<SpanData> toolResponseSpans =
-        spans.stream().filter(s -> s.getName().equals("tool_response [echo_tool]")).toList();
+    List<SpanData> toolSpans =
+        spans.stream().filter(s -> s.getName().equals("execute_tool [echo_tool]")).toList();
 
     assertThat(llmSpans).hasSize(2);
-    assertThat(toolCallSpans).hasSize(1);
-    assertThat(toolResponseSpans).hasSize(1);
+    assertThat(toolSpans).hasSize(1);
 
     List<String> llmSpanIds = llmSpans.stream().map(s -> s.getSpanContext().getSpanId()).toList();
-    String toolCallParentId = toolCallSpans.get(0).getParentSpanContext().getSpanId();
-    String toolResponseParentId = toolResponseSpans.get(0).getParentSpanContext().getSpanId();
+    String toolParentId = toolSpans.get(0).getParentSpanContext().getSpanId();
 
-    assertThat(toolCallParentId).isEqualTo(toolResponseParentId);
-    assertThat(llmSpanIds).contains(toolCallParentId);
+    assertThat(llmSpanIds).contains(toolParentId);
   }
 
   @Test
@@ -1101,22 +1096,17 @@ public final class RunnerTest {
 
     List<SpanData> spans = openTelemetryRule.getSpans();
     List<SpanData> llmSpans = spans.stream().filter(s -> s.getName().equals("call_llm")).toList();
-    List<SpanData> toolCallSpans =
-        spans.stream().filter(s -> s.getName().equals("tool_call [echo_tool]")).toList();
-    List<SpanData> toolResponseSpans =
-        spans.stream().filter(s -> s.getName().equals("tool_response [echo_tool]")).toList();
+    List<SpanData> toolSpans =
+        spans.stream().filter(s -> s.getName().equals("execute_tool [echo_tool]")).toList();
 
     // In runLive, there is one call_llm span for the execution
     assertThat(llmSpans).hasSize(1);
-    assertThat(toolCallSpans).hasSize(1);
-    assertThat(toolResponseSpans).hasSize(1);
+    assertThat(toolSpans).hasSize(1);
 
     List<String> llmSpanIds = llmSpans.stream().map(s -> s.getSpanContext().getSpanId()).toList();
-    String toolCallParentId = toolCallSpans.get(0).getParentSpanContext().getSpanId();
-    String toolResponseParentId = toolResponseSpans.get(0).getParentSpanContext().getSpanId();
+    String toolParentId = toolSpans.get(0).getParentSpanContext().getSpanId();
 
-    assertThat(toolCallParentId).isEqualTo(toolResponseParentId);
-    assertThat(llmSpanIds).contains(toolCallParentId);
+    assertThat(llmSpanIds).contains(toolParentId);
   }
 
   @Test

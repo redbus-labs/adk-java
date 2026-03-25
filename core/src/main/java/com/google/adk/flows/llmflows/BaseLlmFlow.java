@@ -233,7 +233,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                           callLlmContext)
                                       .doOnSubscribe(
                                           s ->
-                                              Tracing.traceCallLlm(
+                                              traceCallLlm(
                                                   span,
                                                   context,
                                                   eventForCallbackUsage.id(),
@@ -520,6 +520,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                           .doOnComplete(
                               () ->
                                   Tracing.traceSendData(
+                                      Span.current(),
                                       invocationContext,
                                       eventIdForSendData,
                                       llmRequestAfterPreprocess.contents()))
@@ -529,6 +530,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                 span.setStatus(StatusCode.ERROR, error.getMessage());
                                 span.recordException(error);
                                 Tracing.traceSendData(
+                                    Span.current(),
                                     invocationContext,
                                     eventIdForSendData,
                                     llmRequestAfterPreprocess.contents());
@@ -704,6 +706,19 @@ public abstract class BaseLlmFlow implements BaseFlow {
     }
 
     return processorEvents.concatWith(Flowable.just(modelResponseEvent)).concatWith(functionEvents);
+  }
+
+  /**
+   * Traces an LLM call without an associated exception. This is an overload for {@link
+   * Tracing#traceCallLlm} for successful calls.
+   */
+  private void traceCallLlm(
+      Span span,
+      InvocationContext context,
+      String eventId,
+      LlmRequest llmRequest,
+      LlmResponse llmResponse) {
+    Tracing.traceCallLlm(span, context, eventId, llmRequest, llmResponse, null);
   }
 
   private Event buildModelResponseEvent(
