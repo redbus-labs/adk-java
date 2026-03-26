@@ -21,7 +21,6 @@ import static com.google.common.truth.Truth.assertThat;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.ToolResultBlockParam;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
@@ -51,11 +50,9 @@ public final class ClaudeTest {
   }
 
   @Test
-  public void testPartToAnthropicMessageBlock_mcpNativeFormat() throws Exception {
+  public void testPartToAnthropicMessageBlock_mcpTool_legacyTextOutputKey() throws Exception {
     Map<String, Object> responseData =
-        ImmutableMap.of(
-            "content",
-            ImmutableList.of(ImmutableMap.of("type", "text", "text", "Extracted native MCP text")));
+        ImmutableMap.of("text_output", ImmutableMap.of("text", "Legacy result text"));
     FunctionResponse funcParam =
         FunctionResponse.builder().name("test_tool").response(responseData).id("call_123").build();
     Part part = Part.builder().functionResponse(funcParam).build();
@@ -64,21 +61,8 @@ public final class ClaudeTest {
         (ContentBlockParam) partToAnthropicMessageBlockMethod.invoke(claude, part);
 
     ToolResultBlockParam toolResult = result.asToolResult();
-    assertThat(toolResult.content().get().asString()).isEqualTo("Extracted native MCP text");
-  }
-
-  @Test
-  public void testPartToAnthropicMessageBlock_legacyResultKey() throws Exception {
-    Map<String, Object> responseData = ImmutableMap.of("result", "Legacy result text");
-    FunctionResponse funcParam =
-        FunctionResponse.builder().name("test_tool").response(responseData).id("call_123").build();
-    Part part = Part.builder().functionResponse(funcParam).build();
-
-    ContentBlockParam result =
-        (ContentBlockParam) partToAnthropicMessageBlockMethod.invoke(claude, part);
-
-    ToolResultBlockParam toolResult = result.asToolResult();
-    assertThat(toolResult.content().get().asString()).isEqualTo("Legacy result text");
+    assertThat(toolResult.content().get().asString())
+        .isEqualTo("{\"text_output\":{\"text\":\"Legacy result text\"}}");
   }
 
   @Test

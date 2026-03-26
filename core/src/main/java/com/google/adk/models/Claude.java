@@ -172,17 +172,11 @@ public class Claude extends BaseLlm {
       if (part.functionResponse().get().response().isPresent()) {
         Map<String, Object> responseData = part.functionResponse().get().response().get();
 
-        Object contentObj = responseData.get("content");
         Object resultObj = responseData.get("result");
-
-        if (contentObj instanceof List<?> list && !list.isEmpty()) {
-          // Native MCP format: list of content blocks
-          content = extractMcpContentBlocks(list);
-        } else if (resultObj != null) {
-          // ADK tool result object
-          content = resultObj instanceof String s ? s : serializeToJson(resultObj);
-        } else if (!responseData.isEmpty()) {
-          // Fallback: arbitrary JSON structure
+        if (resultObj != null) {
+          content = resultObj.toString();
+        } else {
+          // Fallback to json serialization of the function response.
           content = serializeToJson(responseData);
         }
       }
@@ -194,21 +188,6 @@ public class Claude extends BaseLlm {
               .build());
     }
     throw new UnsupportedOperationException("Not supported yet.");
-  }
-
-  private String extractMcpContentBlocks(List<?> list) {
-    List<String> textBlocks = new ArrayList<>();
-    for (Object item : list) {
-      if (item instanceof Map<?, ?> m && "text".equals(m.get("type"))) {
-        Object textObj = m.get("text");
-        textBlocks.add(textObj != null ? String.valueOf(textObj) : "");
-      } else if (item instanceof String s) {
-        textBlocks.add(s);
-      } else {
-        textBlocks.add(serializeToJson(item));
-      }
-    }
-    return String.join("\n", textBlocks);
   }
 
   private String serializeToJson(Object obj) {

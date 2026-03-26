@@ -49,14 +49,11 @@ public final class AbstractMcpToolTest {
 
     Map<String, Object> map = AbstractMcpTool.wrapCallResult(objectMapper, "my_tool", result);
 
-    assertThat(map).containsKey("content");
-    List<?> content = (List<?>) map.get("content");
+    assertThat(map).containsKey("text_output");
+    List<?> content = (List<?>) map.get("text_output");
     assertThat(content).hasSize(1);
 
     Map<?, ?> contentItem = (Map<?, ?>) content.get(0);
-    assertThat(contentItem).containsEntry("type", "text");
     assertThat(contentItem).containsEntry("text", "success");
-
-    assertThat(map).containsEntry("isError", false);
   }
 }

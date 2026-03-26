@@ -16,6 +16,7 @@
 
 package com.google.adk.tools.mcp;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.tools.BaseTool;
@@ -23,9 +24,13 @@ import com.google.adk.tools.mcp.McpToolException.McpToolDeclarationException;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.FunctionDeclaration;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.spec.McpSchema.Content;
 import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
+import io.modelcontextprotocol.spec.McpSchema.TextContent;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.spec.McpSchema.ToolAnnotations;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -110,7 +115,51 @@ public abstract class AbstractMcpTool<T> extends BaseTool {
     if (callResult == null) {
       return ImmutableMap.of("error", "MCP framework error: CallToolResult was null");
     }
+    List<Content> contents = callResult.content();
+    Boolean isToolError = callResult.isError();
 
-    return objectMapper.convertValue(callResult, new TypeReference<Map<String, Object>>() {});
+    if (isToolError != null && isToolError) {
+      String errorMessage = "Tool execution failed.";
+      if (contents != null
+          && !contents.isEmpty()
+          && contents.get(0) instanceof TextContent textContent) {
+        if (textContent.text() != null && !textContent.text().isEmpty()) {
+          errorMessage += " Details: " + textContent.text();
+        }
+      }
+      return ImmutableMap.of("error", errorMessage);
+    }
+
+    if (contents == null || contents.isEmpty()) {
+      return ImmutableMap.of();
+    }
+
+    List<String> textOutputs = new ArrayList<>();
+    for (Content content : contents) {
+      if (content instanceof TextContent textContent) {
+        if (textContent.text() != null) {
+          textOutputs.add(textContent.text());
+        }
+      }
+    }
+
+    if (textOutputs.isEmpty()) {
+      return ImmutableMap.of(
+          "error",
+          "Tool '" + mcpToolName + "' returned content that is not TextContent.",
+          "content_details",
+          contents.toString());
+    }
+
+    List<Map<String, Object>> resultMaps = new ArrayList<>();
+    for (String textOutput : textOutputs) {
+      try {
+        resultMaps.add(
+            objectMapper.readValue(textOutput, new TypeReference<Map<String, Object>>() {}));
+      } catch (JsonProcessingException e) {
+        resultMaps.add(ImmutableMap.of("text", textOutput));
+      }
+    }
+    return ImmutableMap.of("text_output", resultMaps);
   }
 }
