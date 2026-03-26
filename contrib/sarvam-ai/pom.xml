@@ -104,27 +104,14 @@
                         <artifactId>maven-surefire-junit5-tree-reporter</artifactId>
                         <version>0.1.0</version>
                     </dependency>
-                    <!-- Explicitly add JUnit Jupiter Engine for Surefire's classpath -->
-                    <dependency>
-                        <groupId>org.junit.jupiter</groupId>
-                        <artifactId>junit-jupiter-engine</artifactId>
-                        <version>${junit.version}</version>
-                    </dependency>
-                    <!-- Explicitly add Mockito JUnit Jupiter for Surefire's classpath -->
-                    <dependency>
-                        <groupId>org.mockito</groupId>
-                        <artifactId>mockito-junit-jupiter</artifactId>
-                        <version>${mockito.version}</version>
-                    </dependency>
                 </dependencies>
                 <configuration>
+                    <argLine>${surefire.argLine}</argLine>
                     <reportFormat>plain</reportFormat>
                     <statelessTestsetInfoReporter implementation="org.apache.maven.plugin.surefire.extensions.junit5.JUnit5StatelessTestsetInfoTreeReporter"/>
                     <includes>
                         <include>**/*Test.java</include>
                     </includes>
-                    <!-- Explicitly define test source directory -->
-                    <testSourceDirectory>${project.basedir}/src/test/java</testSourceDirectory>
                 </configuration>
             </plugin>
         </plugins>
