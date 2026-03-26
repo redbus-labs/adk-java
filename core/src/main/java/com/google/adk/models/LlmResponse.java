@@ -33,7 +33,7 @@ import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.GroundingMetadata;
 import java.util.List;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Represents a response received from the LLM. */
 @AutoValue

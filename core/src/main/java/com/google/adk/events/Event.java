@@ -39,7 +39,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 // TODO - b/413761119 update Agent.java when resolved.
 /** Represents an event in a session. */

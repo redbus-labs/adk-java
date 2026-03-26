@@ -24,7 +24,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** A {@link State} object that also keeps track of the changes to the state. */
 @SuppressWarnings("ShouldNotSubclass")

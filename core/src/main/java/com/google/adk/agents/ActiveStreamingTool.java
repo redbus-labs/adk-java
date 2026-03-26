@@ -18,7 +18,7 @@
 package com.google.adk.agents;
 
 import io.reactivex.rxjava3.disposables.Disposable;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Manages streaming tool related resources during invocation. */
 public class ActiveStreamingTool {

@@ -19,7 +19,7 @@ package com.google.adk.models;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auto.value.AutoValue;
 import java.util.Optional;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Credentials for accessing Gemini models through Vertex. */
 @AutoValue

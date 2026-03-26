@@ -40,7 +40,7 @@ import io.reactivex.rxjava3.core.Single;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

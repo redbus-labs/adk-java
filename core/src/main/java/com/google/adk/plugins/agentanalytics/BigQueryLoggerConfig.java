@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiFunction;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Configuration for the BigQueryAgentAnalyticsPlugin. */
 @AutoValue
