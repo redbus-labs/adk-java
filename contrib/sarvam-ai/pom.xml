@@ -106,6 +106,7 @@
                     </dependency>
                 </dependencies>
                 <configuration>
+                    <argLine>${surefire.argLine}</argLine>
                     <reportFormat>plain</reportFormat>
                     <statelessTestsetInfoReporter implementation="org.apache.maven.plugin.surefire.extensions.junit5.JUnit5StatelessTestsetInfoTreeReporter"/>
                     <includes>
