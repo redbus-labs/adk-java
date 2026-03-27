@@ -45,8 +45,6 @@ import com.google.adk.agents.Callbacks.OnToolErrorCallbackSync;
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
 import com.google.adk.codeexecutors.BaseCodeExecutor;
 import com.google.adk.events.Event;
-import com.google.adk.examples.BaseExampleProvider;
-import com.google.adk.examples.Example;
 import com.google.adk.flows.llmflows.AutoFlow;
 import com.google.adk.flows.llmflows.BaseLlmFlow;
 import com.google.adk.flows.llmflows.SingleFlow;
@@ -98,8 +96,6 @@ public class LlmAgent extends BaseAgent {
   private final List<Object> toolsUnion;
   private final ImmutableList<BaseToolset> toolsets;
   private final Optional<GenerateContentConfig> generateContentConfig;
-  // TODO: Remove exampleProvider field - examples should only be provided via ExampleTool
-  private final Optional<BaseExampleProvider> exampleProvider;
   private final IncludeContents includeContents;
 
   private final boolean planning;
@@ -133,7 +129,6 @@ public class LlmAgent extends BaseAgent {
     this.globalInstruction =
         requireNonNullElse(builder.globalInstruction, new Instruction.Static(""));
     this.generateContentConfig = Optional.ofNullable(builder.generateContentConfig);
-    this.exampleProvider = Optional.ofNullable(builder.exampleProvider);
     this.includeContents = requireNonNullElse(builder.includeContents, IncludeContents.DEFAULT);
     this.planning = builder.planning != null && builder.planning;
     this.maxSteps = Optional.ofNullable(builder.maxSteps);
@@ -181,7 +176,6 @@ public class LlmAgent extends BaseAgent {
     private Instruction globalInstruction;
     private ImmutableList<Object> toolsUnion;
     private GenerateContentConfig generateContentConfig;
-    private BaseExampleProvider exampleProvider;
     private IncludeContents includeContents;
     private Boolean planning;
     private Integer maxSteps;
@@ -251,26 +245,6 @@ public class LlmAgent extends BaseAgent {
     @CanIgnoreReturnValue
     public Builder generateContentConfig(GenerateContentConfig generateContentConfig) {
       this.generateContentConfig = generateContentConfig;
-      return this;
-    }
-
-    // TODO: Remove these example provider methods and only use ExampleTool for providing examples.
-    // Direct example methods should be deprecated in favor of using ExampleTool consistently.
-    @CanIgnoreReturnValue
-    public Builder exampleProvider(BaseExampleProvider exampleProvider) {
-      this.exampleProvider = exampleProvider;
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder exampleProvider(List<Example> examples) {
-      this.exampleProvider = (unused) -> examples;
-      return this;
-    }
-
-    @CanIgnoreReturnValue
-    public Builder exampleProvider(Example... examples) {
-      this.exampleProvider = (unused) -> ImmutableList.copyOf(examples);
       return this;
     }
 
@@ -621,32 +595,6 @@ public class LlmAgent extends BaseAgent {
           this.disallowTransferToParent != null && this.disallowTransferToParent;
       this.disallowTransferToPeers =
           this.disallowTransferToPeers != null && this.disallowTransferToPeers;
-
-      if (this.outputSchema != null) {
-        if (!this.disallowTransferToParent || !this.disallowTransferToPeers) {
-          logger.warn(
-              "Invalid config for agent {}: outputSchema cannot co-exist with agent transfer"
-                  + " configurations. Setting disallowTransferToParent=true and"
-                  + " disallowTransferToPeers=true.",
-              this.name);
-          this.disallowTransferToParent = true;
-          this.disallowTransferToPeers = true;
-        }
-
-        if (this.subAgents != null && !this.subAgents.isEmpty()) {
-          throw new IllegalArgumentException(
-              "Invalid config for agent "
-                  + this.name
-                  + ": if outputSchema is set, subAgents must be empty to disable agent"
-                  + " transfer.");
-        }
-        if (this.toolsUnion != null && !this.toolsUnion.isEmpty()) {
-          throw new IllegalArgumentException(
-              "Invalid config for agent "
-                  + this.name
-                  + ": if outputSchema is set, tools must be empty.");
-        }
-      }
     }
 
     @Override
@@ -894,11 +842,6 @@ public class LlmAgent extends BaseAgent {
     return generateContentConfig;
   }
 
-  // TODO: Remove this getter - examples should only be provided via ExampleTool
-  public Optional<BaseExampleProvider> exampleProvider() {
-    return exampleProvider;
-  }
-
   public IncludeContents includeContents() {
     return includeContents;
   }
@@ -911,7 +854,7 @@ public class LlmAgent extends BaseAgent {
     return toolsUnion;
   }
 
-  public ImmutableList<BaseToolset> toolsets() {
+  public List<BaseToolset> toolsets() {
     return toolsets;
   }
 

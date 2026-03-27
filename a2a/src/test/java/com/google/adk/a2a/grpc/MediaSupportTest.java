@@ -14,7 +14,6 @@ import io.a2a.spec.FileWithBytes;
 import io.a2a.spec.FileWithUri;
 import io.a2a.spec.TextPart;
 import java.util.Base64;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /** Tests for image, audio, and video support in A2A. */
@@ -36,11 +35,10 @@ class MediaSupportTest {
   void testTextPart_conversion() {
     // A2A TextPart to GenAI Part
     TextPart textPart = new TextPart("Hello, world!");
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(textPart);
+    Part genaiPart = PartConverter.toGenaiPart(textPart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().text()).isPresent();
-    assertThat(genaiPart.get().text().get()).isEqualTo("Hello, world!");
+    assertThat(genaiPart.text()).isPresent();
+    assertThat(genaiPart.text().get()).isEqualTo("Hello, world!");
 
     // GenAI Part to A2A TextPart
     Part genaiTextPart = Part.builder().text("Hello, world!").build();
@@ -57,11 +55,10 @@ class MediaSupportTest {
     FilePart imagePart =
         new FilePart(new FileWithUri("image/png", "test.png", "https://example.com/image.png"));
 
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(imagePart);
+    Part genaiPart = PartConverter.toGenaiPart(imagePart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().fileData()).isPresent();
-    FileData fileData = genaiPart.get().fileData().get();
+    assertThat(genaiPart.fileData()).isPresent();
+    FileData fileData = genaiPart.fileData().get();
     assertThat(fileData.fileUri()).isPresent();
     assertThat(fileData.fileUri().get()).isEqualTo("https://example.com/image.png");
     assertThat(fileData.mimeType()).isPresent();
@@ -74,11 +71,10 @@ class MediaSupportTest {
     FilePart imagePart =
         new FilePart(new FileWithBytes("image/png", "test.png", SAMPLE_IMAGE_BASE64));
 
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(imagePart);
+    Part genaiPart = PartConverter.toGenaiPart(imagePart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().inlineData()).isPresent();
-    Blob blob = genaiPart.get().inlineData().get();
+    assertThat(genaiPart.inlineData()).isPresent();
+    Blob blob = genaiPart.inlineData().get();
     assertThat(blob.mimeType()).isPresent();
     assertThat(blob.mimeType().get()).isEqualTo("image/png");
     assertThat(blob.data()).isPresent();
@@ -91,11 +87,10 @@ class MediaSupportTest {
     FilePart audioPart =
         new FilePart(new FileWithUri("audio/mpeg", "test.mp3", "https://example.com/audio.mp3"));
 
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(audioPart);
+    Part genaiPart = PartConverter.toGenaiPart(audioPart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().fileData()).isPresent();
-    FileData fileData = genaiPart.get().fileData().get();
+    assertThat(genaiPart.fileData()).isPresent();
+    FileData fileData = genaiPart.fileData().get();
     assertThat(fileData.mimeType()).isPresent();
     assertThat(fileData.mimeType().get()).isEqualTo("audio/mpeg");
   }
@@ -106,11 +101,10 @@ class MediaSupportTest {
     FilePart audioPart =
         new FilePart(new FileWithBytes("audio/wav", "test.wav", SAMPLE_AUDIO_BASE64));
 
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(audioPart);
+    Part genaiPart = PartConverter.toGenaiPart(audioPart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().inlineData()).isPresent();
-    Blob blob = genaiPart.get().inlineData().get();
+    assertThat(genaiPart.inlineData()).isPresent();
+    Blob blob = genaiPart.inlineData().get();
     assertThat(blob.mimeType()).isPresent();
     assertThat(blob.mimeType().get()).isEqualTo("audio/wav");
   }
@@ -121,11 +115,10 @@ class MediaSupportTest {
     FilePart videoPart =
         new FilePart(new FileWithUri("video/mp4", "test.mp4", "https://example.com/video.mp4"));
 
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(videoPart);
+    Part genaiPart = PartConverter.toGenaiPart(videoPart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().fileData()).isPresent();
-    FileData fileData = genaiPart.get().fileData().get();
+    assertThat(genaiPart.fileData()).isPresent();
+    FileData fileData = genaiPart.fileData().get();
     assertThat(fileData.mimeType()).isPresent();
     assertThat(fileData.mimeType().get()).isEqualTo("video/mp4");
   }
@@ -136,11 +129,10 @@ class MediaSupportTest {
     FilePart videoPart =
         new FilePart(new FileWithBytes("video/mp4", "test.mp4", SAMPLE_VIDEO_BASE64));
 
-    Optional<Part> genaiPart = PartConverter.toGenaiPart(videoPart);
+    Part genaiPart = PartConverter.toGenaiPart(videoPart);
 
-    assertThat(genaiPart).isPresent();
-    assertThat(genaiPart.get().inlineData()).isPresent();
-    Blob blob = genaiPart.get().inlineData().get();
+    assertThat(genaiPart.inlineData()).isPresent();
+    Blob blob = genaiPart.inlineData().get();
     assertThat(blob.mimeType()).isPresent();
     assertThat(blob.mimeType().get()).isEqualTo("video/mp4");
   }
@@ -227,16 +219,12 @@ class MediaSupportTest {
     FilePart videoPart =
         new FilePart(new FileWithUri("video/mp4", "movie.mp4", "https://example.com/movie.mp4"));
 
-    Optional<Part> imageGenai = PartConverter.toGenaiPart(imagePart);
-    Optional<Part> audioGenai = PartConverter.toGenaiPart(audioPart);
-    Optional<Part> videoGenai = PartConverter.toGenaiPart(videoPart);
+    Part imageGenai = PartConverter.toGenaiPart(imagePart);
+    Part audioGenai = PartConverter.toGenaiPart(audioPart);
+    Part videoGenai = PartConverter.toGenaiPart(videoPart);
 
-    assertThat(imageGenai).isPresent();
-    assertThat(audioGenai).isPresent();
-    assertThat(videoGenai).isPresent();
-
-    assertThat(imageGenai.get().fileData().get().mimeType().get()).isEqualTo("image/jpeg");
-    assertThat(audioGenai.get().fileData().get().mimeType().get()).isEqualTo("audio/mpeg");
-    assertThat(videoGenai.get().fileData().get().mimeType().get()).isEqualTo("video/mp4");
+    assertThat(imageGenai.fileData().get().mimeType().get()).isEqualTo("image/jpeg");
+    assertThat(audioGenai.fileData().get().mimeType().get()).isEqualTo("audio/mpeg");
+    assertThat(videoGenai.fileData().get().mimeType().get()).isEqualTo("video/mp4");
   }
 }

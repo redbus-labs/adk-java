@@ -29,7 +29,7 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A Cassandra-backed implementation of the {@link BaseArtifactService}.
@@ -74,11 +74,11 @@ public final class CassandraArtifactService implements BaseArtifactService {
 
   @Override
   public Maybe<Part> loadArtifact(
-      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
+      String appName, String userId, String sessionId, String filename, @Nullable Integer version) {
     return Maybe.fromCallable(
         () -> {
           Row row;
-          if (version.isPresent()) {
+          if (version != null) {
             row =
                 session
                     .execute(
@@ -87,7 +87,7 @@ public final class CassandraArtifactService implements BaseArtifactService {
                         userId,
                         sessionId,
                         filename,
-                        version.get())
+                        version)
                     .one();
           } else {
             row =
@@ -197,9 +197,7 @@ public final class CassandraArtifactService implements BaseArtifactService {
 
       // Load the artifact
       Part loadedArtifact =
-          artifactService
-              .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-              .blockingGet();
+          artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
       System.out.println("Loaded artifact content: " + loadedArtifact.text().get());
 
       CassandraHelper.close();

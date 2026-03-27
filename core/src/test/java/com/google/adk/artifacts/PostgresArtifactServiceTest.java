@@ -33,7 +33,6 @@ import com.google.genai.types.Part;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -176,9 +175,7 @@ public class PostgresArtifactServiceTest {
 
     // Act
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.empty())
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, null).blockingGet();
 
     // Assert
     assertThat(loadedArtifact).isNotNull();
@@ -212,9 +209,7 @@ public class PostgresArtifactServiceTest {
 
     // Act
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.of(version))
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, version).blockingGet();
 
     // Assert
     assertThat(loadedArtifact).isNotNull();
@@ -236,9 +231,7 @@ public class PostgresArtifactServiceTest {
 
     // Act
     Part loadedArtifact =
-        artifactService
-            .loadArtifact(appName, userId, sessionId, filename, Optional.empty())
-            .blockingGet();
+        artifactService.loadArtifact(appName, userId, sessionId, filename, null).blockingGet();
 
     // Assert
     assertThat(loadedArtifact).isNull();
