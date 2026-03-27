@@ -20,6 +20,7 @@ import com.google.auth.Credentials;
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -104,66 +105,208 @@ public abstract class BigQueryLoggerConfig {
 
   public static Builder builder() {
     return new AutoValue_BigQueryLoggerConfig.Builder()
-        .setEnabled(true)
-        .setMaxContentLength(500 * 1024)
-        .setDatasetId("agent_analytics")
-        .setTableName("events")
-        .setClusteringFields(ImmutableList.of("event_type", "agent", "user_id"))
-        .setLogMultiModalContent(true)
-        .setRetryConfig(RetryConfig.builder().build())
-        .setBatchSize(1)
-        .setBatchFlushInterval(Duration.ofSeconds(1))
-        .setShutdownTimeout(Duration.ofSeconds(10))
-        .setQueueMaxSize(10000)
-        .setLogSessionMetadata(true)
-        .setCustomTags(ImmutableMap.of())
+        .enabled(true)
+        .maxContentLength(500 * 1024)
+        .datasetId("agent_analytics")
+        .tableName("events")
+        .clusteringFields(ImmutableList.of("event_type", "agent", "user_id"))
+        .logMultiModalContent(true)
+        .retryConfig(RetryConfig.builder().build())
+        .batchSize(1)
+        .batchFlushInterval(Duration.ofSeconds(1))
+        .shutdownTimeout(Duration.ofSeconds(10))
+        .queueMaxSize(10000)
+        .logSessionMetadata(true)
+        .customTags(ImmutableMap.of())
         // TODO(b/491851868): Enable auto-schema upgrade once implemented.
-        .setAutoSchemaUpgrade(false);
+        .autoSchemaUpgrade(false);
   }
 
   /** Builder for {@link BigQueryLoggerConfig}. */
   @AutoValue.Builder
   public abstract static class Builder {
-    public abstract Builder setEnabled(boolean enabled);
 
-    public abstract Builder setEventAllowlist(@Nullable List<String> eventAllowlist);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setEnabled(boolean enabled) {
+      return enabled(enabled);
+    }
 
-    public abstract Builder setEventDenylist(@Nullable List<String> eventDenylist);
+    @CanIgnoreReturnValue
+    public abstract Builder enabled(boolean enabled);
 
-    public abstract Builder setMaxContentLength(int maxContentLength);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setEventAllowlist(@Nullable List<String> eventAllowlist) {
+      return eventAllowlist(eventAllowlist);
+    }
 
-    public abstract Builder setProjectId(String projectId);
+    @CanIgnoreReturnValue
+    public abstract Builder eventAllowlist(@Nullable List<String> eventAllowlist);
 
-    public abstract Builder setDatasetId(String datasetId);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setEventDenylist(@Nullable List<String> eventDenylist) {
+      return eventDenylist(eventDenylist);
+    }
 
-    public abstract Builder setTableName(String tableName);
+    @CanIgnoreReturnValue
+    public abstract Builder eventDenylist(@Nullable List<String> eventDenylist);
 
-    public abstract Builder setClusteringFields(List<String> clusteringFields);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setMaxContentLength(int maxContentLength) {
+      return maxContentLength(maxContentLength);
+    }
 
-    public abstract Builder setLogMultiModalContent(boolean logMultiModalContent);
+    @CanIgnoreReturnValue
+    public abstract Builder maxContentLength(int maxContentLength);
 
-    public abstract Builder setRetryConfig(RetryConfig retryConfig);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setProjectId(String projectId) {
+      return projectId(projectId);
+    }
 
-    public abstract Builder setBatchSize(int batchSize);
+    @CanIgnoreReturnValue
+    public abstract Builder projectId(String projectId);
 
-    public abstract Builder setBatchFlushInterval(Duration batchFlushInterval);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setDatasetId(String datasetId) {
+      return datasetId(datasetId);
+    }
 
-    public abstract Builder setShutdownTimeout(Duration shutdownTimeout);
+    @CanIgnoreReturnValue
+    public abstract Builder datasetId(String datasetId);
 
-    public abstract Builder setQueueMaxSize(int queueMaxSize);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setTableName(String tableName) {
+      return tableName(tableName);
+    }
 
-    public abstract Builder setContentFormatter(
+    @CanIgnoreReturnValue
+    public abstract Builder tableName(String tableName);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setClusteringFields(List<String> clusteringFields) {
+      return clusteringFields(clusteringFields);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder clusteringFields(List<String> clusteringFields);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setLogMultiModalContent(boolean logMultiModalContent) {
+      return logMultiModalContent(logMultiModalContent);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder logMultiModalContent(boolean logMultiModalContent);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setRetryConfig(RetryConfig retryConfig) {
+      return retryConfig(retryConfig);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder retryConfig(RetryConfig retryConfig);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setBatchSize(int batchSize) {
+      return batchSize(batchSize);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder batchSize(int batchSize);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setBatchFlushInterval(Duration batchFlushInterval) {
+      return batchFlushInterval(batchFlushInterval);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder batchFlushInterval(Duration batchFlushInterval);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setShutdownTimeout(Duration shutdownTimeout) {
+      return shutdownTimeout(shutdownTimeout);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder shutdownTimeout(Duration shutdownTimeout);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setQueueMaxSize(int queueMaxSize) {
+      return queueMaxSize(queueMaxSize);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder queueMaxSize(int queueMaxSize);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setContentFormatter(
+        @Nullable BiFunction<Object, String, Object> contentFormatter) {
+      return contentFormatter(contentFormatter);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder contentFormatter(
         @Nullable BiFunction<Object, String, Object> contentFormatter);
 
-    public abstract Builder setConnectionId(String connectionId);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setConnectionId(String connectionId) {
+      return connectionId(connectionId);
+    }
 
-    public abstract Builder setLogSessionMetadata(boolean logSessionMetadata);
+    @CanIgnoreReturnValue
+    public abstract Builder connectionId(String connectionId);
 
-    public abstract Builder setCustomTags(Map<String, Object> customTags);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setLogSessionMetadata(boolean logSessionMetadata) {
+      return logSessionMetadata(logSessionMetadata);
+    }
 
-    public abstract Builder setAutoSchemaUpgrade(boolean autoSchemaUpgrade);
+    @CanIgnoreReturnValue
+    public abstract Builder logSessionMetadata(boolean logSessionMetadata);
 
-    public abstract Builder setCredentials(Credentials credentials);
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setCustomTags(Map<String, Object> customTags) {
+      return customTags(customTags);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder customTags(Map<String, Object> customTags);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setAutoSchemaUpgrade(boolean autoSchemaUpgrade) {
+      return autoSchemaUpgrade(autoSchemaUpgrade);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder autoSchemaUpgrade(boolean autoSchemaUpgrade);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setCredentials(Credentials credentials) {
+      return credentials(credentials);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder credentials(Credentials credentials);
 
     public abstract BigQueryLoggerConfig build();
   }
@@ -181,22 +324,51 @@ public abstract class BigQueryLoggerConfig {
 
     public static Builder builder() {
       return new AutoValue_BigQueryLoggerConfig_RetryConfig.Builder()
-          .setMaxRetries(3)
-          .setInitialDelay(Duration.ofSeconds(1))
-          .setMultiplier(2.0)
-          .setMaxDelay(Duration.ofSeconds(10));
+          .maxRetries(3)
+          .initialDelay(Duration.ofSeconds(1))
+          .multiplier(2.0)
+          .maxDelay(Duration.ofSeconds(10));
     }
 
     /** Builder for {@link RetryConfig}. */
     @AutoValue.Builder
     public abstract static class Builder {
-      public abstract Builder setMaxRetries(int maxRetries);
 
-      public abstract Builder setInitialDelay(Duration initialDelay);
+      @Deprecated
+      @CanIgnoreReturnValue
+      public final Builder setMaxRetries(int maxRetries) {
+        return maxRetries(maxRetries);
+      }
 
-      public abstract Builder setMultiplier(double multiplier);
+      @CanIgnoreReturnValue
+      public abstract Builder maxRetries(int maxRetries);
 
-      public abstract Builder setMaxDelay(Duration maxDelay);
+      @Deprecated
+      @CanIgnoreReturnValue
+      public final Builder setInitialDelay(Duration initialDelay) {
+        return initialDelay(initialDelay);
+      }
+
+      @CanIgnoreReturnValue
+      public abstract Builder initialDelay(Duration initialDelay);
+
+      @Deprecated
+      @CanIgnoreReturnValue
+      public final Builder setMultiplier(double multiplier) {
+        return multiplier(multiplier);
+      }
+
+      @CanIgnoreReturnValue
+      public abstract Builder multiplier(double multiplier);
+
+      @Deprecated
+      @CanIgnoreReturnValue
+      public final Builder setMaxDelay(Duration maxDelay) {
+        return maxDelay(maxDelay);
+      }
+
+      @CanIgnoreReturnValue
+      public abstract Builder maxDelay(Duration maxDelay);
 
       public abstract RetryConfig build();
     }
