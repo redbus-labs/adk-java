@@ -129,10 +129,10 @@ public class LlmAgent extends BaseAgent {
         requireNonNullElse(builder.globalInstruction, new Instruction.Static(""));
     this.generateContentConfig = Optional.ofNullable(builder.generateContentConfig);
     this.includeContents = requireNonNullElse(builder.includeContents, IncludeContents.DEFAULT);
-    this.planning = builder.planning != null && builder.planning;
+    this.planning = requireNonNullElse(builder.planning, false);
     this.maxSteps = Optional.ofNullable(builder.maxSteps);
-    this.disallowTransferToParent = builder.disallowTransferToParent;
-    this.disallowTransferToPeers = builder.disallowTransferToPeers;
+    this.disallowTransferToParent = requireNonNullElse(builder.disallowTransferToParent, false);
+    this.disallowTransferToPeers = requireNonNullElse(builder.disallowTransferToPeers, false);
     this.beforeModelCallback = requireNonNullElse(builder.beforeModelCallback, ImmutableList.of());
     this.afterModelCallback = requireNonNullElse(builder.afterModelCallback, ImmutableList.of());
     this.onModelErrorCallback =
@@ -566,8 +566,7 @@ public class LlmAgent extends BaseAgent {
       return this;
     }
 
-    @Nullable
-    private static <B, A> ImmutableList<A> convertCallbacks(
+    private static <B, A> @Nullable ImmutableList<A> convertCallbacks(
         @Nullable List<? extends B> callbacks, Function<B, A> converter, String callbackType) {
       return Optional.ofNullable(callbacks)
           .map(

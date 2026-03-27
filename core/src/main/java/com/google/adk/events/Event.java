@@ -348,7 +348,7 @@ public class Event extends JsonBaseModel {
     private String invocationId;
     private String author;
     private @Nullable Content content;
-    private EventActions actions;
+    private @Nullable EventActions actions;
     private @Nullable Set<String> longRunningToolIds;
     private @Nullable Boolean partial;
     private @Nullable Boolean turnComplete;
@@ -399,7 +399,7 @@ public class Event extends JsonBaseModel {
 
     @CanIgnoreReturnValue
     @JsonProperty("actions")
-    public Builder actions(EventActions value) {
+    public Builder actions(@Nullable EventActions value) {
       this.actions = value;
       return this;
     }

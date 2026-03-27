@@ -40,8 +40,8 @@ public class App {
   private final String name;
   private final BaseAgent rootAgent;
   private final ImmutableList<? extends Plugin> plugins;
-  @Nullable private final EventsCompactionConfig eventsCompactionConfig;
-  @Nullable private final ContextCacheConfig contextCacheConfig;
+  private final @Nullable EventsCompactionConfig eventsCompactionConfig;
+  private final @Nullable ContextCacheConfig contextCacheConfig;
 
   private App(
       String name,
