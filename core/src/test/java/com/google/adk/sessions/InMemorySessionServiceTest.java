@@ -275,7 +275,7 @@ public final class InMemorySessionServiceTest {
     Session session = sessionService.createSession("app-name", "user-id").blockingGet();
 
     sessionService
-        .deleteSession(session1.appName(), session1.userId(), session1.id())
+        .deleteSession(session.appName(), session.userId(), session.id())
         .blockingAwait();
 
     // Use reflection to access the private 'sessions' field
