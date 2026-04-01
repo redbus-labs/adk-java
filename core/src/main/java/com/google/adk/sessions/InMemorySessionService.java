@@ -200,7 +200,6 @@ public final class InMemorySessionService implements BaseSessionService {
           // If appSessionsMap is now empty, return null to automatically remove the appName key
           return appSessionsMap.isEmpty() ? null : appSessionsMap;
         });
-    
     return Completable.complete();
   }
 
