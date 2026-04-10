@@ -100,7 +100,22 @@ public final class PostgresArtifactService implements BaseArtifactService {
   @Override
   public Single<Integer> saveArtifact(
       String appName, String userId, String sessionId, String filename, Part artifact) {
-    return saveArtifact(appName, userId, sessionId, filename, artifact, null, null);
+    return Single.fromCallable(
+            () -> {
+              try {
+                // Extract data from Part
+                byte[] data = extractBytesFromPart(artifact);
+                String mimeType = extractMimeTypeFromPart(artifact);
+
+                // Save to database without metadata (metadata = null)
+                // Applications should use saveArtifact(..., metadata) if they need custom metadata
+                return dbHelper.saveArtifact(
+                    appName, userId, sessionId, filename, data, mimeType, null);
+              } catch (SQLException e) {
+                throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
+              }
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   /**
@@ -132,41 +147,6 @@ public final class PostgresArtifactService implements BaseArtifactService {
       String filename,
       Part artifact,
       String metadata) {
-    return saveArtifact(appName, userId, sessionId, filename, artifact, metadata, null);
-  }
-
-  /**
-   * Save an artifact with custom metadata and invocation ID.
-   *
-   * <p>This overloaded method allows the caller to provide both metadata and the invocation ID that
-   * produced this artifact. The invocation ID links the artifact to the specific agent invocation
-   * for traceability, debugging, cost attribution, and rollback cleanup.
-   *
-   * <p>Example usage:
-   *
-   * <pre>{@code
-   * String metadata = "{\"projectId\":\"ABC\",\"cost\":0.005}";
-   * String invocationId = invocationContext.invocationId();
-   * artifactService.saveArtifact(appName, userId, sessionId, filename, part, metadata, invocationId);
-   * }</pre>
-   *
-   * @param appName the application name
-   * @param userId the user ID
-   * @param sessionId the session ID
-   * @param filename the artifact filename
-   * @param artifact the artifact as a Part object
-   * @param metadata custom metadata JSON string (can be null)
-   * @param invocationId the invocation ID that produced this artifact (can be null)
-   * @return a Single emitting the version number of the saved artifact
-   */
-  public Single<Integer> saveArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      Part artifact,
-      String metadata,
-      String invocationId) {
     return Single.fromCallable(
             () -> {
               try {
@@ -174,9 +154,9 @@ public final class PostgresArtifactService implements BaseArtifactService {
                 byte[] data = extractBytesFromPart(artifact);
                 String mimeType = extractMimeTypeFromPart(artifact);
 
-                // Save to database with caller-provided metadata and invocation ID
+                // Save to database with caller-provided metadata
                 return dbHelper.saveArtifact(
-                    appName, userId, sessionId, filename, data, mimeType, metadata, invocationId);
+                    appName, userId, sessionId, filename, data, mimeType, metadata);
               } catch (SQLException e) {
                 throw new RuntimeException("Failed to save artifact: " + e.getMessage(), e);
               }
@@ -186,35 +166,13 @@ public final class PostgresArtifactService implements BaseArtifactService {
 
   @Override
   public Maybe<Part> loadArtifact(
-      String appName, String userId, String sessionId, String filename, Optional<Integer> version) {
-    return loadArtifact(appName, userId, sessionId, filename, version, null);
-  }
-
-  /**
-   * Load an artifact by version or latest, optionally filtered by invocation ID.
-   *
-   * @param appName the application name
-   * @param userId the user ID
-   * @param sessionId the session ID
-   * @param filename the artifact filename
-   * @param version the version number, or empty for latest
-   * @param invocationId the invocation ID to filter by, or null for no filter
-   * @return a Maybe emitting the Part if found
-   */
-  public Maybe<Part> loadArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      Optional<Integer> version,
-      String invocationId) {
+      String appName, String userId, String sessionId, String filename, @Nullable Integer version) {
     return Maybe.fromCallable(
             () -> {
               try {
-                // Load from database with optional invocation ID filter
+                // Load from database
                 ArtifactData artifactData =
-                    dbHelper.loadArtifact(
-                        appName, userId, sessionId, filename, version.orElse(null), invocationId);
+                    dbHelper.loadArtifact(appName, userId, sessionId, filename, version);
 
                 if (artifactData == null) {
                   return null;

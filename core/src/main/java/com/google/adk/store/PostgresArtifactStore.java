@@ -222,7 +222,7 @@ public class PostgresArtifactStore {
       byte[] data,
       String mimeType)
       throws SQLException {
-    return saveArtifact(appName, userId, sessionId, filename, data, mimeType, null, null);
+    return saveArtifact(appName, userId, sessionId, filename, data, mimeType, null);
   }
 
   /**
@@ -247,46 +247,14 @@ public class PostgresArtifactStore {
       String mimeType,
       String metadata)
       throws SQLException {
-    return saveArtifact(appName, userId, sessionId, filename, data, mimeType, metadata, null);
-  }
-
-  /**
-   * Save artifact to database with metadata and invocation ID. Returns the assigned version number.
-   *
-   * <p>The invocation ID links the artifact to the specific agent invocation that produced it,
-   * enabling traceability, debugging, cost attribution, and cleanup of artifacts from
-   * failed/rolled-back invocations.
-   *
-   * @param appName the application name
-   * @param userId the user ID
-   * @param sessionId the session ID
-   * @param filename the artifact filename
-   * @param data the artifact binary data
-   * @param mimeType the MIME type
-   * @param metadata the metadata JSON string (can be null)
-   * @param invocationId the invocation ID that produced this artifact (can be null)
-   * @return the version number assigned to this artifact
-   * @throws SQLException if save operation fails
-   */
-  public int saveArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      byte[] data,
-      String mimeType,
-      String metadata,
-      String invocationId)
-      throws SQLException {
     logger.debug(
-        "Saving artifact: app={}, user={}, session={}, file={}, size={}KB, mime={}, invocationId={}",
+        "Saving artifact: app={}, user={}, session={}, file={}, size={}KB, mime={}",
         appName,
         userId,
         sessionId,
         filename,
         data.length / 1024,
-        mimeType,
-        invocationId);
+        mimeType);
 
     Connection conn = null;
     try {
@@ -299,8 +267,8 @@ public class PostgresArtifactStore {
 
       String sql =
           String.format(
-              "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata, invocation_id) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)",
+              "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
               tableName);
 
       try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -312,7 +280,6 @@ public class PostgresArtifactStore {
         pstmt.setString(6, mimeType);
         pstmt.setBytes(7, data);
         pstmt.setString(8, metadata);
-        pstmt.setString(9, invocationId);
 
         int rowsAffected = pstmt.executeUpdate();
 
@@ -321,14 +288,13 @@ public class PostgresArtifactStore {
           conn.commit();
 
           logger.info(
-              "✅ Artifact saved: app={}, user={}, session={}, file={}, version={}, size={}KB, invocationId={}",
+              "✅ Artifact saved: app={}, user={}, session={}, file={}, version={}, size={}KB",
               appName,
               userId,
               sessionId,
               filename,
               nextVersion,
-              data.length / 1024,
-              invocationId);
+              data.length / 1024);
           return nextVersion;
         } else {
           conn.rollback();
@@ -442,68 +408,40 @@ public class PostgresArtifactStore {
   public ArtifactData loadArtifact(
       String appName, String userId, String sessionId, String filename, Integer version)
       throws SQLException {
-    return loadArtifact(appName, userId, sessionId, filename, version, null);
-  }
-
-  /**
-   * Load artifact by version or latest, optionally filtered by invocation ID. Returns ArtifactData
-   * object or null if not found.
-   *
-   * @param appName the application name
-   * @param userId the user ID
-   * @param sessionId the session ID
-   * @param filename the artifact filename
-   * @param version the version number, or null for latest
-   * @param invocationId the invocation ID to filter by, or null for no filter
-   * @return ArtifactData object or null if not found
-   * @throws SQLException if load operation fails
-   */
-  public ArtifactData loadArtifact(
-      String appName,
-      String userId,
-      String sessionId,
-      String filename,
-      Integer version,
-      String invocationId)
-      throws SQLException {
     logger.debug(
-        "Loading artifact: app={}, user={}, session={}, file={}, version={}, invocationId={}",
+        "Loading artifact: app={}, user={}, session={}, file={}, version={}",
         appName,
         userId,
         sessionId,
         filename,
-        version != null ? version : "latest",
-        invocationId != null ? invocationId : "any");
+        version != null ? version : "latest");
 
-    StringBuilder sql = new StringBuilder();
-    sql.append("SELECT data, mime_type, version, created_at, metadata, invocation_id FROM ")
-        .append(tableName)
-        .append(" WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ?");
-
+    String sql;
     if (version != null) {
-      sql.append(" AND version = ?");
-    }
-    if (invocationId != null) {
-      sql.append(" AND invocation_id = ?");
-    }
-
-    if (version == null) {
-      sql.append(" ORDER BY version DESC LIMIT 1");
+      // Load specific version
+      sql =
+          String.format(
+              "SELECT data, mime_type, version, created_at, metadata FROM %s "
+                  + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? AND version = ?",
+              tableName);
+    } else {
+      // Load latest version
+      sql =
+          String.format(
+              "SELECT data, mime_type, version, created_at, metadata FROM %s "
+                  + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? "
+                  + "ORDER BY version DESC LIMIT 1",
+              tableName);
     }
 
     try (Connection conn = getConnection();
-        PreparedStatement pstmt = conn.prepareStatement(sql.toString())) {
-      int paramIdx = 1;
-      pstmt.setString(paramIdx++, appName);
-      pstmt.setString(paramIdx++, userId);
-      pstmt.setString(paramIdx++, sessionId);
-      pstmt.setString(paramIdx++, filename);
-
+        PreparedStatement pstmt = conn.prepareStatement(sql)) {
+      pstmt.setString(1, appName);
+      pstmt.setString(2, userId);
+      pstmt.setString(3, sessionId);
+      pstmt.setString(4, filename);
       if (version != null) {
-        pstmt.setInt(paramIdx++, version);
-      }
-      if (invocationId != null) {
-        pstmt.setString(paramIdx++, invocationId);
+        pstmt.setInt(5, version);
       }
 
       try (ResultSet rs = pstmt.executeQuery()) {
@@ -513,20 +451,17 @@ public class PostgresArtifactStore {
           int loadedVersion = rs.getInt("version");
           Timestamp createdAt = rs.getTimestamp("created_at");
           String metadata = rs.getString("metadata");
-          String resultInvocationId = rs.getString("invocation_id");
 
           logger.info(
-              "✅ Artifact loaded: app={}, user={}, session={}, file={}, version={}, size={}KB, invocationId={}",
+              "✅ Artifact loaded: app={}, user={}, session={}, file={}, version={}, size={}KB",
               appName,
               userId,
               sessionId,
               filename,
               loadedVersion,
-              data.length / 1024,
-              resultInvocationId);
+              data.length / 1024);
 
-          return new ArtifactData(
-              data, mimeType, loadedVersion, createdAt, metadata, resultInvocationId);
+          return new ArtifactData(data, mimeType, loadedVersion, createdAt, metadata);
         } else {
           logger.warn(
               "⚠️  Artifact not found: app={}, user={}, session={}, file={}, version={}",
@@ -733,21 +668,14 @@ public class PostgresArtifactStore {
     public final int version;
     public final Timestamp createdAt;
     public final String metadata;
-    public final String invocationId;
 
     public ArtifactData(
-        byte[] data,
-        String mimeType,
-        int version,
-        Timestamp createdAt,
-        String metadata,
-        String invocationId) {
+        byte[] data, String mimeType, int version, Timestamp createdAt, String metadata) {
       this.data = data;
       this.mimeType = mimeType;
       this.version = version;
       this.createdAt = createdAt;
       this.metadata = metadata;
-      this.invocationId = invocationId;
     }
   }
 }

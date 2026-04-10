@@ -168,7 +168,7 @@ public class PostgresArtifactServiceTest {
 
     ArtifactData artifactData =
         new ArtifactData(
-            contentBytes, "text/plain", 1, new Timestamp(System.currentTimeMillis()), null, null);
+            contentBytes, "text/plain", 1, new Timestamp(System.currentTimeMillis()), null);
 
     when(mockStore.loadArtifact(eq(appName), eq(userId), eq(sessionId), eq(filename), isNull()))
         .thenReturn(artifactData);
@@ -197,12 +197,7 @@ public class PostgresArtifactServiceTest {
 
     ArtifactData artifactData =
         new ArtifactData(
-            contentBytes,
-            "text/plain",
-            version,
-            new Timestamp(System.currentTimeMillis()),
-            null,
-            null);
+            contentBytes, "text/plain", version, new Timestamp(System.currentTimeMillis()), null);
 
     when(mockStore.loadArtifact(eq(appName), eq(userId), eq(sessionId), eq(filename), eq(version)))
         .thenReturn(artifactData);
