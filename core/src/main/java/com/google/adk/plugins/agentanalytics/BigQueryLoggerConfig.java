@@ -43,6 +43,9 @@ public abstract class BigQueryLoggerConfig {
   // Max length for text content before truncation.
   public abstract int maxContentLength();
 
+  // BigQuery location.
+  public abstract String location();
+
   // Project ID for the BigQuery table.
   public abstract String projectId();
 
@@ -93,8 +96,15 @@ public abstract class BigQueryLoggerConfig {
   // Automatically add new columns to existing tables when the plugin
   // schema evolves.  Only additive changes are made (columns are never
   // dropped or altered).
-  // TODO(b/491852782): Implement auto-schema upgrade.
   public abstract boolean autoSchemaUpgrade();
+
+  // Automatically create per-event-type BigQuery views that unnest
+  // JSON columns into typed, queryable columns.
+  public abstract boolean createViews();
+
+  // Prefix for auto-created per-event-type view names.
+  // Default "v" produces views like ``v_llm_request``.
+  public abstract String viewPrefix();
 
   @Nullable
   public abstract Credentials credentials();
@@ -105,6 +115,7 @@ public abstract class BigQueryLoggerConfig {
     return new AutoValue_BigQueryLoggerConfig.Builder()
         .enabled(true)
         .maxContentLength(500 * 1024)
+        .location("us") // Default location.
         .datasetId("agent_analytics")
         .tableName("events")
         .clusteringFields(ImmutableList.of("event_type", "agent", "user_id"))
@@ -118,8 +129,9 @@ public abstract class BigQueryLoggerConfig {
         .customTags(ImmutableMap.of())
         .eventAllowlist(ImmutableList.of())
         .eventDenylist(ImmutableList.of())
-        // TODO(b/491851868): Enable auto-schema upgrade once implemented.
-        .autoSchemaUpgrade(false);
+        .autoSchemaUpgrade(true)
+        .createViews(false)
+        .viewPrefix("v");
   }
 
   /** Builder for {@link BigQueryLoggerConfig}. */
@@ -137,6 +149,9 @@ public abstract class BigQueryLoggerConfig {
 
     @CanIgnoreReturnValue
     public abstract Builder maxContentLength(int maxContentLength);
+
+    @CanIgnoreReturnValue
+    public abstract Builder location(String location);
 
     @CanIgnoreReturnValue
     public abstract Builder projectId(String projectId);
@@ -183,6 +198,12 @@ public abstract class BigQueryLoggerConfig {
 
     @CanIgnoreReturnValue
     public abstract Builder autoSchemaUpgrade(boolean autoSchemaUpgrade);
+
+    @CanIgnoreReturnValue
+    public abstract Builder createViews(boolean createViews);
+
+    @CanIgnoreReturnValue
+    public abstract Builder viewPrefix(String viewPrefix);
 
     @CanIgnoreReturnValue
     public abstract Builder credentials(Credentials credentials);
