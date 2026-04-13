@@ -188,6 +188,18 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   private static LlmResponse createServerContentResponse(LiveServerContent serverContent) {
     LlmResponse.Builder builder = LlmResponse.builder();
     serverContent.modelTurn().ifPresent(builder::content);
+
+    if (serverContent.outputTranscription().isPresent()) {
+      Part part =
+          Part.builder().text(serverContent.outputTranscription().get().text().toString()).build();
+      builder.content(Content.builder().role("model").parts(ImmutableList.of(part)).build());
+    }
+    if (serverContent.inputTranscription().isPresent()) {
+      Part part =
+          Part.builder().text(serverContent.inputTranscription().get().text().toString()).build();
+      builder.content(Content.builder().role("user").parts(ImmutableList.of(part)).build());
+    }
+
     return builder
         .partial(serverContent.turnComplete().map(completed -> !completed).orElse(false))
         .turnComplete(serverContent.turnComplete().orElse(false))
