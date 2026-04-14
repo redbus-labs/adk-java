@@ -461,31 +461,14 @@ public abstract class BaseLlmFlow implements BaseFlow {
 
   private Flowable<Event> run(
       Context spanContext, InvocationContext invocationContext, int stepsCompleted) {
-    Flowable<Event> currentStepEvents = runOneStep(spanContext, invocationContext);
-
-    Flowable<Event> processedEvents =
-        currentStepEvents
-            .concatMap(
-                event ->
-                    invocationContext
-                        .sessionService()
-                        .appendEvent(invocationContext.session(), event)
-                        .flatMap(
-                            registeredEvent ->
-                                invocationContext
-                                    .pluginManager()
-                                    .onEventCallback(invocationContext, registeredEvent)
-                                    .defaultIfEmpty(registeredEvent))
-                        .toFlowable())
-            .cache();
-
+    Flowable<Event> currentStepEvents = runOneStep(spanContext, invocationContext).cache();
     if (stepsCompleted + 1 >= maxSteps) {
       logger.debug("Ending flow execution because max steps reached.");
-      return processedEvents;
+      return currentStepEvents;
     }
 
-    return processedEvents.concatWith(
-        processedEvents
+    return currentStepEvents.concatWith(
+        currentStepEvents
             .toList()
             .flatMapPublisher(
                 eventList -> {

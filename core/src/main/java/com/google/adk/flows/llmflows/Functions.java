@@ -71,10 +71,8 @@ public final class Functions {
   private static final Logger logger = LoggerFactory.getLogger(Functions.class);
 
   /** Generates a unique ID for a function call. */
-  public static String generateClientFunctionCallId(FunctionCall functionCall) {
-    String source =
-        functionCall.name().orElse("") + functionCall.args().orElse(ImmutableMap.of()).toString();
-    return AF_FUNCTION_CALL_ID_PREFIX + UUID.nameUUIDFromBytes(source.getBytes()).toString();
+  public static String generateClientFunctionCallId() {
+    return AF_FUNCTION_CALL_ID_PREFIX + UUID.randomUUID();
   }
 
   /**
@@ -103,7 +101,7 @@ public final class Functions {
         FunctionCall functionCall = part.functionCall().get();
         if (functionCall.id().isEmpty() || functionCall.id().get().isEmpty()) {
           FunctionCall updatedFunctionCall =
-              functionCall.toBuilder().id(generateClientFunctionCallId(functionCall)).build();
+              functionCall.toBuilder().id(generateClientFunctionCallId()).build();
           newParts.add(part.toBuilder().functionCall(updatedFunctionCall).build());
           modified = true;
         } else {
@@ -623,7 +621,7 @@ public final class Functions {
             .build();
 
     return Event.builder()
-        .id(toolContext.functionCallId().orElseGet(Event::generateEventId))
+        .id(Event.generateEventId())
         .invocationId(invocationContext.invocationId())
         .author(invocationContext.agent().name())
         .branch(invocationContext.branch().orElse(null))
@@ -659,7 +657,7 @@ public final class Functions {
             .collect(toImmutableMap(Map.Entry::getKey, Map.Entry::getValue))
             .entrySet()) {
 
-      FunctionCall.Builder builder =
+      FunctionCall requestConfirmationFunctionCall =
           FunctionCall.builder()
               .name(REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)
               .args(
@@ -667,9 +665,9 @@ public final class Functions {
                       "originalFunctionCall",
                       functionCallsById.get(entry.getKey()),
                       "toolConfirmation",
-                      entry.getValue()));
-      FunctionCall requestConfirmationFunctionCall =
-          builder.id(generateClientFunctionCallId(builder.build())).build();
+                      entry.getValue()))
+              .id(generateClientFunctionCallId())
+              .build();
 
       longRunningToolIds.add(requestConfirmationFunctionCall.id().get());
       parts.add(Part.builder().functionCall(requestConfirmationFunctionCall).build());
@@ -682,15 +680,8 @@ public final class Functions {
     var contentBuilder = Content.builder().parts(parts);
     functionResponseEvent.content().flatMap(Content::role).ifPresent(contentBuilder::role);
 
-    String deterministicId =
-        "req-conf-"
-            + functionResponseEvent.actions().requestedToolConfirmations().keySet().stream()
-                .sorted()
-                .collect(java.util.stream.Collectors.joining("-"));
-
     return Optional.of(
         Event.builder()
-            .id(deterministicId)
             .invocationId(invocationContext.invocationId())
             .author(invocationContext.agent().name())
             .branch(invocationContext.branch().orElse(null))

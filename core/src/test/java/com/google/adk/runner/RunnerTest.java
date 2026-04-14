@@ -46,12 +46,9 @@ import com.google.adk.apps.App;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.Functions;
-import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.BaseSessionService;
-import com.google.adk.sessions.GetSessionConfig;
-import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.sessions.SessionKey;
 import com.google.adk.summarizer.EventsCompactionConfig;
@@ -83,7 +80,6 @@ import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -592,22 +588,12 @@ public final class RunnerTest {
   @Test
   public void onEventCallback_success() {
     when(plugin.onEventCallback(any(), any()))
-        .thenAnswer(
-            invocation -> {
-              Event event = invocation.getArgument(1);
-              return Maybe.just(
-                  Event.builder()
-                      .id(event.id())
-                      .invocationId(event.invocationId())
-                      .author("model")
-                      .content(createContent("from plugin"))
-                      .build());
-            });
+        .thenReturn(Maybe.just(TestUtils.createEvent("form plugin")));
 
     List<Event> events =
         runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
 
-    assertThat(simplifyEvents(events)).containsExactly("model: from plugin");
+    assertThat(simplifyEvents(events)).containsExactly("author: content for event form plugin");
 
     verify(plugin).onEventCallback(any(), any());
   }
@@ -1699,110 +1685,5 @@ public final class RunnerTest {
     assertThat(artifactsSavedCounter.get()).isEqualTo(2);
     // agent was run
     assertThat(simplifyEvents(events.values())).containsExactly("test agent: from llm");
-  }
-
-  @Test
-  public void runAsync_ensuresSequentialConsistencyForTools() {
-    // Arrange
-    TestLlm testLlm =
-        createTestLlm(
-            createFunctionCallLlmResponse("call_1", "tool1", ImmutableMap.of("arg", "value1")),
-            createTextLlmResponse("Final response"));
-
-    LlmAgent agent =
-        createTestAgentBuilder(testLlm)
-            .tools(
-                ImmutableList.of(
-                    FunctionTool.create(RaceConditionTools.class, "tool1"),
-                    FunctionTool.create(RaceConditionTools.class, "tool2")))
-            .build();
-
-    BaseSessionService delegate = new InMemorySessionService();
-    BaseSessionService delayedSessionService = createDelayedSessionService(delegate, 0);
-
-    Runner runner =
-        Runner.builder()
-            .app(App.builder().name("test").rootAgent(agent).build())
-            .sessionService(delayedSessionService)
-            .build();
-    Session session = runner.sessionService().createSession("test", "user").blockingGet();
-
-    // Act
-    var unused =
-        runner
-            .runAsync("user", session.id(), Content.fromParts(Part.fromText("start")))
-            .toList()
-            .blockingGet();
-
-    // Assert
-    ImmutableList<LlmRequest> requests = ImmutableList.copyOf(testLlm.getRequests());
-    assertThat(requests).hasSize(2);
-
-    // Second request should contain the result of tool1
-    LlmRequest secondRequest = requests.get(1);
-    List<Content> history = secondRequest.contents();
-
-    boolean foundToolResponse =
-        history.stream()
-            .flatMap(content -> content.parts().stream().flatMap(List::stream))
-            .filter(part -> part.functionResponse().isPresent())
-            .map(part -> part.functionResponse().get())
-            .anyMatch(
-                response ->
-                    response.name().orElse("").equals("tool1")
-                        && response
-                            .response()
-                            .map(
-                                r ->
-                                    java.util.Objects.equals(
-                                        r, ImmutableMap.of("result", "result_value1")))
-                            .orElse(false));
-
-    assertThat(foundToolResponse).isTrue();
-  }
-
-  @SuppressWarnings({"unchecked", "deprecation"})
-  private static BaseSessionService createDelayedSessionService(
-      BaseSessionService delegate, long delayMs) {
-    BaseSessionService delayedSessionService = mock(BaseSessionService.class);
-    when(delayedSessionService.createSession(anyString(), anyString(), any(Map.class), anyString()))
-        .thenAnswer(
-            inv ->
-                delegate.createSession(
-                    (String) inv.getArgument(0),
-                    (String) inv.getArgument(1),
-                    (Map<String, Object>) inv.getArgument(2),
-                    (String) inv.getArgument(3)));
-    when(delayedSessionService.createSession(anyString(), anyString()))
-        .thenAnswer(
-            inv ->
-                delegate.createSession((String) inv.getArgument(0), (String) inv.getArgument(1)));
-    when(delayedSessionService.getSession(anyString(), anyString(), anyString(), any()))
-        .thenAnswer(
-            inv ->
-                delegate.getSession(
-                    (String) inv.getArgument(0),
-                    (String) inv.getArgument(1),
-                    (String) inv.getArgument(2),
-                    (Optional<GetSessionConfig>) inv.getArgument(3)));
-    when(delayedSessionService.appendEvent(any(), any()))
-        .thenAnswer(
-            inv ->
-                delegate
-                    .appendEvent(inv.getArgument(0), inv.getArgument(1))
-                    .delay(delayMs, MILLISECONDS));
-    return delayedSessionService;
-  }
-
-  public static class RaceConditionTools {
-    private RaceConditionTools() {}
-
-    public static ImmutableMap<String, Object> tool1(String arg) {
-      return ImmutableMap.of("result", "result_" + arg);
-    }
-
-    public static ImmutableMap<String, Object> tool2(String input) {
-      return ImmutableMap.of("status", "received_" + input);
-    }
   }
 }
