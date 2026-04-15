@@ -21,7 +21,6 @@ import static com.google.adk.plugins.agentanalytics.BigQueryUtils.maybeUpgradeSc
 import static com.google.adk.plugins.agentanalytics.JsonFormatter.convertToJsonNode;
 import static com.google.adk.plugins.agentanalytics.JsonFormatter.smartTruncate;
 import static com.google.adk.plugins.agentanalytics.JsonFormatter.toJavaObject;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.CallbackContext;
@@ -41,8 +40,6 @@ import com.google.adk.tools.FunctionTool;
 import com.google.adk.tools.ToolContext;
 import com.google.adk.tools.mcp.AbstractMcpTool;
 import com.google.adk.utils.AgentEnums.AgentOrigin;
-import com.google.api.gax.core.FixedCredentialsProvider;
-import com.google.api.gax.retrying.RetrySettings;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.bigquery.BigQuery;
 import com.google.cloud.bigquery.BigQueryException;
@@ -53,11 +50,7 @@ import com.google.cloud.bigquery.StandardTableDefinition;
 import com.google.cloud.bigquery.Table;
 import com.google.cloud.bigquery.TableId;
 import com.google.cloud.bigquery.TableInfo;
-import com.google.cloud.bigquery.storage.v1.BigQueryWriteClient;
-import com.google.cloud.bigquery.storage.v1.BigQueryWriteSettings;
-import com.google.cloud.bigquery.storage.v1.StreamWriter;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.VerifyException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
@@ -70,10 +63,6 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
@@ -88,7 +77,6 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       Logger.getLogger(BigQueryAgentAnalyticsPlugin.class.getName());
   private static final ImmutableList<String> DEFAULT_AUTH_SCOPES =
       ImmutableList.of("https://www.googleapis.com/auth/cloud-platform");
-  private static final AtomicLong threadCounter = new AtomicLong(0);
   private static final ImmutableMap<String, String> HITL_EVENT_TYPES =
       ImmutableMap.of(
           "adk_request_credential",
@@ -100,11 +88,8 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
   private final BigQueryLoggerConfig config;
   private final BigQuery bigQuery;
-  private final BigQueryWriteClient writeClient;
-  private final ScheduledExecutorService executor;
   private final Object tableEnsuredLock = new Object();
-  @VisibleForTesting final BatchProcessor batchProcessor;
-  @VisibleForTesting final TraceManager traceManager;
+  private final PluginState state;
   private volatile boolean tableEnsured = false;
 
   public BigQueryAgentAnalyticsPlugin(BigQueryLoggerConfig config) throws IOException {
@@ -113,28 +98,14 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
   public BigQueryAgentAnalyticsPlugin(BigQueryLoggerConfig config, BigQuery bigQuery)
       throws IOException {
+    this(config, bigQuery, new PluginState(config));
+  }
+
+  BigQueryAgentAnalyticsPlugin(BigQueryLoggerConfig config, BigQuery bigQuery, PluginState state) {
     super("bigquery_agent_analytics");
     this.config = config;
     this.bigQuery = bigQuery;
-    ThreadFactory threadFactory =
-        r -> new Thread(r, "bq-analytics-plugin-" + threadCounter.getAndIncrement());
-    this.executor = Executors.newScheduledThreadPool(1, threadFactory);
-    this.writeClient = createWriteClient(config);
-    this.traceManager = createTraceManager();
-
-    if (config.enabled()) {
-      StreamWriter writer = createWriter(config);
-      this.batchProcessor =
-          new BatchProcessor(
-              writer,
-              config.batchSize(),
-              config.batchFlushInterval(),
-              config.queueMaxSize(),
-              executor);
-      this.batchProcessor.start();
-    } else {
-      this.batchProcessor = null;
-    }
+    this.state = state;
   }
 
   private static BigQuery createBigQuery(BigQueryLoggerConfig config) throws IOException {
@@ -194,7 +165,7 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
     try {
       if (config.createViews()) {
-        var unused = executor.submit(() -> createAnalyticsViews(bigQuery, config));
+        var unused = state.getExecutor().submit(() -> createAnalyticsViews(bigQuery, config));
       }
     } catch (RuntimeException e) {
       logger.log(Level.WARNING, "Failed to create/update BigQuery views for table: " + tableId, e);
@@ -207,48 +178,6 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     } else {
       logger.log(Level.WARNING, logMessage, e);
     }
-  }
-
-  protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) throws IOException {
-    if (config.credentials() != null) {
-      return BigQueryWriteClient.create(
-          BigQueryWriteSettings.newBuilder()
-              .setCredentialsProvider(FixedCredentialsProvider.create(config.credentials()))
-              .build());
-    }
-    return BigQueryWriteClient.create();
-  }
-
-  protected String getStreamName(BigQueryLoggerConfig config) {
-    return String.format(
-        "projects/%s/datasets/%s/tables/%s/streams/_default",
-        config.projectId(), config.datasetId(), config.tableName());
-  }
-
-  protected StreamWriter createWriter(BigQueryLoggerConfig config) {
-    BigQueryLoggerConfig.RetryConfig retryConfig = config.retryConfig();
-    RetrySettings retrySettings =
-        RetrySettings.newBuilder()
-            .setMaxAttempts(retryConfig.maxRetries())
-            .setInitialRetryDelay(
-                org.threeten.bp.Duration.ofMillis(retryConfig.initialDelay().toMillis()))
-            .setRetryDelayMultiplier(retryConfig.multiplier())
-            .setMaxRetryDelay(org.threeten.bp.Duration.ofMillis(retryConfig.maxDelay().toMillis()))
-            .build();
-
-    String streamName = getStreamName(config);
-    try {
-      return StreamWriter.newBuilder(streamName, writeClient)
-          .setRetrySettings(retrySettings)
-          .setWriterSchema(BigQuerySchema.getArrowSchema())
-          .build();
-    } catch (Exception e) {
-      throw new VerifyException("Failed to create StreamWriter for " + streamName, e);
-    }
-  }
-
-  protected TraceManager createTraceManager() {
-    return new TraceManager();
   }
 
   private void logEvent(
@@ -265,7 +194,7 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       Object content,
       boolean isContentTruncated,
       Optional<EventData> eventData) {
-    if (!config.enabled() || batchProcessor == null) {
+    if (!config.enabled()) {
       return;
     }
     if (!config.eventAllowlist().isEmpty() && !config.eventAllowlist().contains(eventType)) {
@@ -274,6 +203,11 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     if (config.eventDenylist().contains(eventType)) {
       return;
     }
+    if (state.isProcessed(invocationContext.invocationId())) {
+      return;
+    }
+    String invocationId = invocationContext.invocationId();
+    BatchProcessor processor = state.getBatchProcessor(invocationId);
     // Ensure table exists before logging.
     ensureTableExistsOnce();
     // Log common fields
@@ -301,11 +235,12 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     row.put("attributes", convertToJsonNode(getAttributes(data, invocationContext)));
 
     addTraceDetails(row, invocationContext, eventData);
-    batchProcessor.append(row);
+    processor.append(row);
   }
 
   private void addTraceDetails(
       Map<String, Object> row, InvocationContext invocationContext, Optional<EventData> eventData) {
+    TraceManager traceManager = state.getTraceManager(invocationContext.invocationId());
     String traceId =
         eventData
             .flatMap(EventData::traceIdOverride)
@@ -336,7 +271,7 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
   private Map<String, Object> getAttributes(
       EventData eventData, InvocationContext invocationContext) {
     Map<String, Object> attributes = new HashMap<>(eventData.extraAttributes());
-
+    TraceManager traceManager = state.getTraceManager(invocationContext.invocationId());
     attributes.put("root_agent_name", traceManager.getRootAgentName());
     eventData.model().ifPresent(m -> attributes.put("model", m));
     eventData.modelVersion().ifPresent(mv -> attributes.put("model_version", mv));
@@ -375,25 +310,17 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
   @Override
   public Completable close() {
-    if (batchProcessor != null) {
-      batchProcessor.close();
-    }
-    if (writeClient != null) {
-      writeClient.close();
-    }
-    try {
-      executor.shutdown();
-      if (!executor.awaitTermination(config.shutdownTimeout().toMillis(), MILLISECONDS)) {
-        executor.shutdownNow();
-      }
-    } catch (InterruptedException e) {
-      executor.shutdownNow();
-      Thread.currentThread().interrupt();
-    }
+    state.close();
     return Completable.complete();
   }
 
+  @VisibleForTesting
+  PluginState getState() {
+    return state;
+  }
+
   private Optional<EventData> getCompletedEventData(InvocationContext invocationContext) {
+    TraceManager traceManager = state.getTraceManager(invocationContext.invocationId());
     String traceId = traceManager.getTraceId(invocationContext);
     // Pop the invocation span from the trace manager.
     Optional<RecordData> popped = traceManager.popSpan();
@@ -426,7 +353,12 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       InvocationContext invocationContext, Content userMessage) {
     return Maybe.fromAction(
         () -> {
-          traceManager.ensureInvocationSpan(invocationContext);
+          if (state.isProcessed(invocationContext.invocationId())) {
+            return;
+          }
+          state
+              .getTraceManager(invocationContext.invocationId())
+              .ensureInvocationSpan(invocationContext);
           logEvent("USER_MESSAGE_RECEIVED", invocationContext, userMessage, Optional.empty());
           if (userMessage.parts().isPresent()) {
             for (Part part : userMessage.parts().get()) {
@@ -454,6 +386,9 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
   public Maybe<Event> onEventCallback(InvocationContext invocationContext, Event event) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(invocationContext.invocationId())) {
+            return;
+          }
           EventData.Builder eventDataBuilder =
               EventData.builder()
                   .setExtraAttributes(
@@ -510,9 +445,16 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
   @Override
   public Maybe<Content> beforeRunCallback(InvocationContext invocationContext) {
-    traceManager.ensureInvocationSpan(invocationContext);
     return Maybe.fromAction(
-        () -> logEvent("INVOCATION_STARTING", invocationContext, null, Optional.empty()));
+        () -> {
+          if (state.isProcessed(invocationContext.invocationId())) {
+            return;
+          }
+          state
+              .getTraceManager(invocationContext.invocationId())
+              .ensureInvocationSpan(invocationContext);
+          logEvent("INVOCATION_STARTING", invocationContext, null, Optional.empty());
+        });
   }
 
   @Override
@@ -524,8 +466,17 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
               invocationContext,
               null,
               getCompletedEventData(invocationContext));
-          batchProcessor.flush();
-          traceManager.clearStack();
+          // Mark invocation ID as processed to avoid memory leaks.
+          state.markProcessed(invocationContext.invocationId());
+          BatchProcessor processor = state.removeProcessor(invocationContext.invocationId());
+          if (processor != null) {
+            processor.flush();
+            processor.close();
+          }
+          TraceManager traceManager = state.removeTraceManager(invocationContext.invocationId());
+          if (traceManager != null) {
+            traceManager.clearStack();
+          }
         });
   }
 
@@ -533,7 +484,12 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
   public Maybe<Content> beforeAgentCallback(BaseAgent agent, CallbackContext callbackContext) {
     return Maybe.fromAction(
         () -> {
-          traceManager.pushSpan("agent:" + agent.name());
+          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+            return;
+          }
+          state
+              .getTraceManager(callbackContext.invocationContext().invocationId())
+              .pushSpan("agent:" + agent.name());
           logEvent("AGENT_STARTING", callbackContext.invocationContext(), null, Optional.empty());
         });
   }
@@ -563,6 +519,9 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       CallbackContext callbackContext, LlmRequest.Builder llmRequest) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+            return;
+          }
           Map<String, Object> attributes = new HashMap<>();
           Map<String, Object> llmConfig = new HashMap<>();
           LlmRequest req = llmRequest.build();
@@ -622,7 +581,9 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
                   .setModel(req.model().orElse(""))
                   .setExtraAttributes(attributes)
                   .build();
-          traceManager.pushSpan("llm_request");
+          state
+              .getTraceManager(callbackContext.invocationContext().invocationId())
+              .pushSpan("llm_request");
           logEvent("LLM_REQUEST", callbackContext.invocationContext(), req, Optional.of(eventData));
         });
   }
@@ -632,6 +593,11 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       CallbackContext callbackContext, LlmResponse llmResponse) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+            return;
+          }
+          TraceManager traceManager =
+              state.getTraceManager(callbackContext.invocationContext().invocationId());
           // TODO(b/495809488): Add formatting of the content
           ParsedContent parsedContent =
               JsonFormatter.parse(llmResponse.content().orElse(null), config.maxContentLength());
@@ -728,6 +694,11 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       CallbackContext callbackContext, LlmRequest.Builder llmRequest, Throwable error) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+            return;
+          }
+          TraceManager traceManager =
+              state.getTraceManager(callbackContext.invocationContext().invocationId());
           InvocationContext invocationContext = callbackContext.invocationContext();
           Optional<RecordData> popped = traceManager.popSpan();
           String spanId = popped.map(RecordData::spanId).orElse(null);
@@ -758,11 +729,14 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(toolContext.invocationContext().invocationId())) {
+            return;
+          }
           TruncationResult res = smartTruncate(toolArgs, config.maxContentLength());
           ImmutableMap<String, Object> contentMap =
               ImmutableMap.of(
                   "tool_origin", getToolOrigin(tool), "tool", tool.name(), "args", res.node());
-          traceManager.pushSpan("tool");
+          state.getTraceManager(toolContext.invocationContext().invocationId()).pushSpan("tool");
           logEvent("TOOL_STARTING", toolContext.invocationContext(), contentMap, Optional.empty());
         });
   }
@@ -775,6 +749,14 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       Map<String, Object> result) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(toolContext.invocationContext().invocationId())) {
+            return;
+          }
+          state
+              .getTraceManager(toolContext.invocationContext().invocationId())
+              .ensureInvocationSpan(toolContext.invocationContext());
+          TraceManager traceManager =
+              state.getTraceManager(toolContext.invocationContext().invocationId());
           Optional<RecordData> popped = traceManager.popSpan();
           TruncationResult truncationResult = smartTruncate(result, config.maxContentLength());
           ImmutableMap<String, Object> contentMap =
@@ -812,6 +794,11 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Throwable error) {
     return Maybe.fromAction(
         () -> {
+          if (state.isProcessed(toolContext.invocationContext().invocationId())) {
+            return;
+          }
+          TraceManager traceManager =
+              state.getTraceManager(toolContext.invocationContext().invocationId());
           Optional<RecordData> popped = traceManager.popSpan();
           TruncationResult truncationResult = smartTruncate(toolArgs, config.maxContentLength());
           String toolOrigin = getToolOrigin(tool);
