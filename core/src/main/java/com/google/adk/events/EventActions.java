@@ -281,7 +281,7 @@ public class EventActions extends JsonBaseModel {
 
     @CanIgnoreReturnValue
     @JsonProperty("skipSummarization")
-    public Builder skipSummarization(boolean skipSummarization) {
+    public Builder skipSummarization(@Nullable Boolean skipSummarization) {
       this.skipSummarization = skipSummarization;
       return this;
     }
@@ -324,7 +324,7 @@ public class EventActions extends JsonBaseModel {
 
     @CanIgnoreReturnValue
     @JsonProperty("escalate")
-    public Builder escalate(boolean escalate) {
+    public Builder escalate(@Nullable Boolean escalate) {
       this.escalate = escalate;
       return this;
     }

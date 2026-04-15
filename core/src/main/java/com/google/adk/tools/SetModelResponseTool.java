@@ -22,7 +22,6 @@ import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Single;
 import java.util.Map;
 import java.util.Optional;
-import javax.annotation.Nonnull;
 
 /**
  * Internal tool used for output schema workaround.
@@ -36,7 +35,7 @@ public class SetModelResponseTool extends BaseTool {
 
   private final Schema outputSchema;
 
-  public SetModelResponseTool(@Nonnull Schema outputSchema) {
+  public SetModelResponseTool(Schema outputSchema) {
     super(
         NAME,
         "Set your final response using the required output schema. "

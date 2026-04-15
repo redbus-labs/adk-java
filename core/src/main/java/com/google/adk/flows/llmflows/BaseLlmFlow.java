@@ -233,7 +233,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                           callLlmContext)
                                       .doOnSubscribe(
                                           s ->
-                                              Tracing.traceCallLlm(
+                                              traceCallLlm(
                                                   span,
                                                   context,
                                                   eventForCallbackUsage.id(),
@@ -415,6 +415,11 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                 })
                             .concatMap(
                                 event -> {
+                                  // Update event ID for the new resulting events
+                                  String oldId = event.id();
+                                  String newId = Event.generateEventId();
+                                  logger.debug("Resetting event ID from {} to {}", oldId, newId);
+                                  event = event.toBuilder().id(newId).build();
                                   Flowable<Event> postProcessedEvents = Flowable.just(event);
                                   if (event.actions().transferToAgent().isPresent()) {
                                     String agentToTransfer =
@@ -520,6 +525,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                           .doOnComplete(
                               () ->
                                   Tracing.traceSendData(
+                                      Span.current(),
                                       invocationContext,
                                       eventIdForSendData,
                                       llmRequestAfterPreprocess.contents()))
@@ -529,6 +535,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                 span.setStatus(StatusCode.ERROR, error.getMessage());
                                 span.recordException(error);
                                 Tracing.traceSendData(
+                                    Span.current(),
                                     invocationContext,
                                     eventIdForSendData,
                                     llmRequestAfterPreprocess.contents());
@@ -670,7 +677,9 @@ public abstract class BaseLlmFlow implements BaseFlow {
         && updatedResponse.errorCode().isEmpty()
         && !updatedResponse.interrupted().orElse(false)
         && !updatedResponse.turnComplete().orElse(false)
-        && updatedResponse.usageMetadata().isEmpty()) {
+        && updatedResponse.usageMetadata().isEmpty()
+        && updatedResponse.inputTranscription().isEmpty()
+        && updatedResponse.outputTranscription().isEmpty()) {
       return processorEvents;
     }
 
@@ -706,6 +715,19 @@ public abstract class BaseLlmFlow implements BaseFlow {
     return processorEvents.concatWith(Flowable.just(modelResponseEvent)).concatWith(functionEvents);
   }
 
+  /**
+   * Traces an LLM call without an associated exception. This is an overload for {@link
+   * Tracing#traceCallLlm} for successful calls.
+   */
+  private void traceCallLlm(
+      Span span,
+      InvocationContext context,
+      String eventId,
+      LlmRequest llmRequest,
+      LlmResponse llmResponse) {
+    Tracing.traceCallLlm(span, context, eventId, llmRequest, llmResponse, null);
+  }
+
   private Event buildModelResponseEvent(
       Event baseEventForLlmResponse, LlmRequest llmRequest, LlmResponse llmResponse) {
     Event.Builder eventBuilder =
@@ -720,7 +742,9 @@ public abstract class BaseLlmFlow implements BaseFlow {
             .avgLogprobs(llmResponse.avgLogprobs().orElse(null))
             .finishReason(llmResponse.finishReason().orElse(null))
             .usageMetadata(llmResponse.usageMetadata().orElse(null))
-            .modelVersion(llmResponse.modelVersion().orElse(null));
+            .modelVersion(llmResponse.modelVersion().orElse(null))
+            .inputTranscription(llmResponse.inputTranscription().orElse(null))
+            .outputTranscription(llmResponse.outputTranscription().orElse(null));
 
     Event event = eventBuilder.build();
 

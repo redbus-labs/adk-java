@@ -37,7 +37,6 @@ import org.mockito.MockitoAnnotations;
 public class VertexAiSessionServiceTest {
 
   private static final ObjectMapper mapper = JsonBaseModel.getMapper();
-
   private static final String MOCK_SESSION_STRING_1 =
       """
       {
@@ -316,6 +315,24 @@ public class VertexAiSessionServiceTest {
   @Test
   public void listSessions_empty() {
     assertThat(vertexAiSessionService.listSessions("789", "user1").blockingGet().sessions())
+        .isEmpty();
+  }
+
+  @Test
+  public void listSessions_missingSessionsField_returnsEmpty() {
+    when(mockApiClient.request("GET", "reasoningEngines/123/sessions?filter=user_id=userX", ""))
+        .thenAnswer(new MockApiAnswer("{}"));
+
+    assertThat(vertexAiSessionService.listSessions("123", "userX").blockingGet().sessions())
+        .isEmpty();
+  }
+
+  @Test
+  public void listSessions_nullSessionsField_returnsEmpty() {
+    when(mockApiClient.request("GET", "reasoningEngines/123/sessions?filter=user_id=userY", ""))
+        .thenAnswer(new MockApiAnswer("{\"sessions\": null}"));
+
+    assertThat(vertexAiSessionService.listSessions("123", "userY").blockingGet().sessions())
         .isEmpty();
   }
 

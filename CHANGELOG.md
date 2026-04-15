@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.1.0](https://github.com/google/adk-java/compare/v1.0.0...v1.1.0) (2026-04-10)
+
+
+### Features
+
+* Add ChatCompletionsRequest object ([88eb0f5](https://github.com/google/adk-java/commit/88eb0f523c14266840ffc4b3d9ed827c9cdb1510))
+* Add ChatCompletionsResponse object ([55becb8](https://github.com/google/adk-java/commit/55becb81b6dcc15a9a82ec842a0096132813ae64))
+* Add ChatCompletionsResponse to LlmResponse conversion ([ec88c64](https://github.com/google/adk-java/commit/ec88c64d311946c1d427c4374be75d6163160478))
+* add README for ADK LangChain4j integration library ([f861ef9](https://github.com/google/adk-java/commit/f861ef9c0d5c6a5ef27e7be1d8ac27a399ba6fad))
+* add support for Gemma models in LlmRegistry ([9d6cc80](https://github.com/google/adk-java/commit/9d6cc80660d81fc217d058b7c8edb1ff906e2c30))
+* add transcription in event ([cb9d2e3](https://github.com/google/adk-java/commit/cb9d2e3e9225c550fd1f1a1445cebe569d30a20a))
+* Implement Trace management, add HITL support ([7407e37](https://github.com/google/adk-java/commit/7407e37a043f7b25a66663eb04a6bafbef620583))
+* Support Sub-agent Escalation event in Parallel Agent (Issue [#561](https://github.com/google/adk-java/issues/561)) ([88c8b0e](https://github.com/google/adk-java/commit/88c8b0e5a4863fa623fa17ff616d13570b60c4d0))
+* Update event IDs in BaseLlmFlow's post processing section ([d0e1085](https://github.com/google/adk-java/commit/d0e108510487d97d186052caa164649e1c90f176))
+
+
+### Bug Fixes
+
+* Fix A2A protocol chunk streaming and task completion states ([c95f669](https://github.com/google/adk-java/commit/c95f669bb6fbadbf07d62a8ff8a3e533e17032f4))
+* Fix critical race condition in ADK Runner ([51f4d1f](https://github.com/google/adk-java/commit/51f4d1f9a4d4d67a92f4a97989e5bd1ab24910e1))
+* Fix critical race condition in ADK Runner ([3091156](https://github.com/google/adk-java/commit/30911560ff2f928e40f6de9426c7c8295b16bacb))
+* Fix race condition and stale session in ADK Runner ([7964e93](https://github.com/google/adk-java/commit/7964e93dc12c3d24079facfd5d64ed913ec082aa))
+
+## [1.0.0](https://github.com/google/adk-java/compare/v1.0.0-rc.1...v1.0.0) (2026-03-30)
+
+
+### Features
+
+* add `InMemoryArtifactService` to `AgentExecutor` and update `pom.xml` dependencies ([24f8d5e](https://github.com/google/adk-java/commit/24f8d5e2562e1c0812ce6e248500797d9801fafd))
+* enabling output_schema and tools to coexist ([40ca6a7](https://github.com/google/adk-java/commit/40ca6a7c5163f711e02a54163d6066f7cd86e64d))
+
+
+### Bug Fixes
+
+* add media/image support in Spring AI MessageConverter ([8ab7f07](https://github.com/google/adk-java/commit/8ab7f072cdaa363e07b7a786044376c021c4c009)), closes [#705](https://github.com/google/adk-java/issues/705)
+* add schema validation to SetModelResponseTool (issue [#587](https://github.com/google/adk-java/issues/587) already implemented, but adding tests from PR [#603](https://github.com/google/adk-java/issues/603)) ([cdc5199](https://github.com/google/adk-java/commit/cdc5199eb0f92cb95db2ee7ff139d67317968457))
+* Ensure callbackContextData is preserved across session update ([d1e05ca](https://github.com/google/adk-java/commit/d1e05caf524b7cafb3f321550659296ea70d9286))
+* **firestore:** Remove hardcoded dependency version ([6a5a55e](https://github.com/google/adk-java/commit/6a5a55eb3e531c6f8a7083712308c4800f680ca5))
+* Fixing tracing for function calls ([84dff10](https://github.com/google/adk-java/commit/84dff10a3ee7f47e30a40409e56b5e9365c69815))
+* handle null `AiMessage.text()` to prevent NPE and add unit test (PR [#1035](https://github.com/google/adk-java/issues/1035)) ([3e21e7a](https://github.com/google/adk-java/commit/3e21e7ac46b634341819b3543388a38caef85516))
+* parallel agent execution ([677b6d7](https://github.com/google/adk-java/commit/677b6d7452aa28fab42d554d18c150d59ca88eec))
+* Removing deprecated methods from Runner ([3633a7d](https://github.com/google/adk-java/commit/3633a7dd071265087ea2ff148d419969b0c888ef))
+* resolve MCP tool parsing errors in Claude integration ([5a2abbf](https://github.com/google/adk-java/commit/5a2abbfe6f9e4e1ebdd5b918e34fcdb144603b5a))
+* revert changes to AbstractMcpTool, maintaining backwards compatible text_output field in the response ([5f34d59](https://github.com/google/adk-java/commit/5f34d598435a2a8d875a5dbb14344c201db0e75f))
+* Using App conformant agent names ([f3eb936](https://github.com/google/adk-java/commit/f3eb936772740b7dc7a803a40d0d39fdbccc4af4))
+
+
+### Documentation
+
+* add pull request template ([6bb721b](https://github.com/google/adk-java/commit/6bb721b9a6000dac9dfda498fb6dd2c45862e25c))
+
+
+### Miscellaneous Chores
+
+* set release version to 1.0.0 ([dd1c941](https://github.com/google/adk-java/commit/dd1c94184835838fa47de024cf458c2ea0786aff))
+* set version to 1.0.0-rc.2 ([678b496](https://github.com/google/adk-java/commit/678b49653fa93606e2e57926213f0facaf9d6666))
+
 ## [1.0.0-rc.1](https://github.com/google/adk-java/compare/v0.9.0...v1.0.0-rc.1) (2026-03-20)
 
 

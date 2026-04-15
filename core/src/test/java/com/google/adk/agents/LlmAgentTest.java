@@ -494,12 +494,10 @@ public final class LlmAgentTest {
     List<SpanData> spans = openTelemetryRule.getSpans();
     SpanData agentSpan = findSpanByName(spans, "invoke_agent test agent");
     List<SpanData> llmSpans = findSpansByName(spans, "call_llm");
-    List<SpanData> toolCallSpans = findSpansByName(spans, "tool_call [echo_tool]");
-    List<SpanData> toolResponseSpans = findSpansByName(spans, "tool_response [echo_tool]");
+    List<SpanData> toolSpans = findSpansByName(spans, "execute_tool [echo_tool]");
 
     assertThat(llmSpans).hasSize(2);
-    assertThat(toolCallSpans).hasSize(1);
-    assertThat(toolResponseSpans).hasSize(1);
+    assertThat(toolSpans).hasSize(1);
 
     String agentSpanId = agentSpan.getSpanContext().getSpanId();
     llmSpans.forEach(s -> assertEquals(agentSpanId, s.getParentSpanContext().getSpanId()));
@@ -507,9 +505,7 @@ public final class LlmAgentTest {
     // The tool calls and responses are children of the first LLM call that produced the function
     // call.
     String firstLlmSpanId = llmSpans.get(0).getSpanContext().getSpanId();
-    toolCallSpans.forEach(s -> assertEquals(firstLlmSpanId, s.getParentSpanContext().getSpanId()));
-    toolResponseSpans.forEach(
-        s -> assertEquals(firstLlmSpanId, s.getParentSpanContext().getSpanId()));
+    toolSpans.forEach(s -> assertEquals(firstLlmSpanId, s.getParentSpanContext().getSpanId()));
   }
 
   @Test

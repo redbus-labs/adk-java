@@ -19,7 +19,7 @@ package com.google.adk.tools;
 import com.google.adk.agents.ReadonlyContext;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.List;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /** Base interface for toolsets. */
 public interface BaseToolset extends AutoCloseable {
