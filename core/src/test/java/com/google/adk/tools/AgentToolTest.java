@@ -496,6 +496,46 @@ public final class AgentToolTest {
   }
 
   @Test
+  public void call_withMultipleStateDeltasInResponse_propagatesAllStateDeltas() throws Exception {
+    AfterAgentCallback firstCallback =
+        (callbackContext) -> {
+          callbackContext.state().put("key1", "val1");
+          return Maybe.empty();
+        };
+    AfterAgentCallback secondCallback =
+        (callbackContext) -> {
+          callbackContext.state().put("key2", "val2");
+          return Maybe.empty();
+        };
+    LlmAgent firstAgent =
+        createTestAgentBuilder(createTestLlm(LlmResponse.builder().build()))
+            .name("first_agent")
+            .afterAgentCallback(firstCallback)
+            .build();
+    LlmAgent secondAgent =
+        createTestAgentBuilder(createTestLlm(LlmResponse.builder().build()))
+            .name("second_agent")
+            .afterAgentCallback(secondCallback)
+            .build();
+    SequentialAgent sequentialAgent =
+        SequentialAgent.builder()
+            .name("sequence")
+            .description("Process the query through multiple steps")
+            .subAgents(ImmutableList.of(firstAgent, secondAgent))
+            .build();
+    ToolContext toolContext = createToolContext(sequentialAgent);
+    assertThat(toolContext.state()).isEmpty();
+
+    Map<String, Object> unused =
+        AgentTool.create(sequentialAgent)
+            .runAsync(ImmutableMap.of("request", "test"), toolContext)
+            .blockingGet();
+
+    assertThat(toolContext.state()).containsEntry("key1", "val1");
+    assertThat(toolContext.state()).containsEntry("key2", "val2");
+  }
+
+  @Test
   public void
       declaration_sequentialAgentWithFirstSubAgentInputSchema_returnsDeclarationWithSchema() {
     Schema inputSchema =

@@ -166,6 +166,14 @@ public class AgentTool extends BaseTool {
         .sessionService()
         .createSession(toolContext.agentName(), "tmp-user", toolContext.state(), null)
         .flatMapPublisher(session -> runner.runAsync(session.userId(), session.id(), content))
+        .doOnNext(
+            event -> {
+              if (event.actions() != null
+                  && event.actions().stateDelta() != null
+                  && !event.actions().stateDelta().isEmpty()) {
+                updateState(event.actions().stateDelta(), toolContext.state());
+              }
+            })
         .lastElement()
         .map(Optional::of)
         .defaultIfEmpty(Optional.empty())
@@ -176,13 +184,6 @@ public class AgentTool extends BaseTool {
               }
               Event lastEvent = optionalLastEvent.get();
               Optional<String> outputText = lastEvent.content().map(Content::text);
-
-              // Forward state delta to parent session.
-              if (lastEvent.actions() != null
-                  && lastEvent.actions().stateDelta() != null
-                  && !lastEvent.actions().stateDelta().isEmpty()) {
-                updateState(lastEvent.actions().stateDelta(), toolContext.state());
-              }
 
               if (outputText.isEmpty()) {
                 return ImmutableMap.of();
