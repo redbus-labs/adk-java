@@ -136,7 +136,7 @@ final class ChatCompletionsCommon {
       if (name != null) {
         fcBuilder.name(name);
       }
-      if (arguments != null) {
+      if (arguments != null && !arguments.isEmpty()) {
         try {
           Map<String, Object> args =
               objectMapper.readValue(arguments, new TypeReference<Map<String, Object>>() {});

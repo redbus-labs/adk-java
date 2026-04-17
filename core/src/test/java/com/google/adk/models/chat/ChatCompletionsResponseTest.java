@@ -22,10 +22,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.models.chat.ChatCompletionsResponse.ChatCompletion;
 import com.google.adk.models.chat.ChatCompletionsResponse.ChatCompletionChunk;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.genai.types.Content;
 import com.google.genai.types.CustomMetadata;
+import com.google.genai.types.FinishReason;
 import com.google.genai.types.FinishReason.Known;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.Part;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -482,7 +487,6 @@ public final class ChatCompletionsResponseTest {
         objectMapper.readValue(json, ChatCompletion.class);
 
     LlmResponse response = completion.toLlmResponse();
-
     assertThat(response.content().get().parts().get().get(0).thoughtSignature().get())
         .isEqualTo(Base64.getDecoder().decode("c2ln"));
   }
@@ -646,7 +650,7 @@ public final class ChatCompletionsResponseTest {
     Part part = toolCall.toPart();
 
     assertThat(part).isNotNull();
-    assertThat(part.thoughtSignature().get()).isEqualTo(Base64.getDecoder().decode("c2ln"));
+    assertThat(part.thoughtSignature()).hasValue(Base64.getDecoder().decode("c2ln"));
   }
 
   @Test
@@ -668,6 +672,187 @@ public final class ChatCompletionsResponseTest {
 
   @Test
   public void testToLlmResponse_noChoices() throws Exception {
+    String json =
+        """
+        {
+          "id": "chatcmpl-123",
+          "object": "chat.completion",
+          "created": 1677652288,
+          "model": "gpt-4"
+        }
+        """;
+
+    ChatCompletionsResponse.ChatCompletion completion =
+        objectMapper.readValue(json, ChatCompletionsResponse.ChatCompletion.class);
+
+    LlmResponse response = completion.toLlmResponse();
+
+    assertThat(response.modelVersion()).hasValue("gpt-4");
+    assertThat(response.content()).isPresent();
+    assertThat(response.content().get().parts()).isEmpty();
+  }
+
+  @Test
+  public void testChunkCollection_accumulatesMultipleToolCalls() throws Exception {
+    ChatCompletionsResponse.ChatCompletionChunkCollection collection =
+        new ChatCompletionsResponse.ChatCompletionChunkCollection();
+
+    String chunk1Json =
+        """
+        {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_id_1","type":"function","function":{"name":"roll_die","arguments":""}}]}}]}
+        """;
+    String chunk2Json =
+        """
+        {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"sides\\\":8}"}}]}}]}
+        """;
+    String chunk3Json =
+        """
+        {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_id_2","type":"function","function":{"name":"roll_die","arguments":""}}]}}]}
+        """;
+    String chunk4Json =
+        """
+        {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\\\"sides\\\":8}"}}]}}]}
+        """;
+    String chunk5Json =
+        """
+        {"choices":[{"finish_reason":"tool_calls"}]}
+        """;
+
+    ImmutableList<LlmResponse> unused1 =
+        collection.processChunk(
+            objectMapper.readValue(chunk1Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> unused2 =
+        collection.processChunk(
+            objectMapper.readValue(chunk2Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> unused3 =
+        collection.processChunk(
+            objectMapper.readValue(chunk3Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> unused4 =
+        collection.processChunk(
+            objectMapper.readValue(chunk4Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> responses =
+        collection.processChunk(
+            objectMapper.readValue(chunk5Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+
+    LlmResponse expectedFinalResponse =
+        LlmResponse.builder()
+            .content(
+                Content.builder()
+                    .role("")
+                    .parts(
+                        Arrays.asList(
+                            Part.builder()
+                                .functionCall(
+                                    FunctionCall.builder()
+                                        .id("call_id_1")
+                                        .name("roll_die")
+                                        .args(ImmutableMap.of("sides", 8))
+                                        .build())
+                                .build(),
+                            Part.builder()
+                                .functionCall(
+                                    FunctionCall.builder()
+                                        .id("call_id_2")
+                                        .name("roll_die")
+                                        .args(ImmutableMap.of("sides", 8))
+                                        .build())
+                                .build()))
+                    .build())
+            .finishReason(new FinishReason(Known.STOP.toString()))
+            .customMetadata(ImmutableList.of())
+            .modelVersion("")
+            .build();
+
+    LlmResponse finalResponse = responses.get(1);
+
+    assertThat(finalResponse).isEqualTo(expectedFinalResponse);
+  }
+
+  @Test
+  public void testChunkCollection_simpleText() throws Exception {
+    ChatCompletionsResponse.ChatCompletionChunkCollection collection =
+        new ChatCompletionsResponse.ChatCompletionChunkCollection();
+
+    String chunk1Json =
+        """
+        {"choices":[{"delta":{"content":"Hello "}}]}
+        """;
+    String chunk2Json =
+        """
+        {"choices":[{"delta":{"content":"World!"}}]}
+        """;
+    String chunk3Json =
+        """
+        {"choices":[{"finish_reason":"stop"}]}
+        """;
+
+    ImmutableList<LlmResponse> unused1 =
+        collection.processChunk(
+            objectMapper.readValue(chunk1Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> unused2 =
+        collection.processChunk(
+            objectMapper.readValue(chunk2Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> responses =
+        collection.processChunk(
+            objectMapper.readValue(chunk3Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+
+    LlmResponse expectedFinalResponse =
+        LlmResponse.builder()
+            .content(
+                Content.builder()
+                    .role("")
+                    .parts(ImmutableList.of(Part.fromText("Hello World!")))
+                    .build())
+            .finishReason(new FinishReason(Known.STOP.toString()))
+            .customMetadata(ImmutableList.of())
+            .modelVersion("")
+            .build();
+
+    LlmResponse finalResponse = responses.get(1);
+
+    assertThat(finalResponse).isEqualTo(expectedFinalResponse);
+  }
+
+  @Test
+  public void testChunkCollection_withRefusal() throws Exception {
+    ChatCompletionsResponse.ChatCompletionChunkCollection collection =
+        new ChatCompletionsResponse.ChatCompletionChunkCollection();
+
+    String chunk1Json =
+        """
+        {"choices":[{"delta":{"refusal":"I cannot do that."}}]}
+        """;
+    String chunk2Json =
+        """
+        {"choices":[{"finish_reason":"stop"}]}
+        """;
+
+    ImmutableList<LlmResponse> unused1 =
+        collection.processChunk(
+            objectMapper.readValue(chunk1Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+    ImmutableList<LlmResponse> responses =
+        collection.processChunk(
+            objectMapper.readValue(chunk2Json, ChatCompletionsResponse.ChatCompletionChunk.class));
+
+    LlmResponse expectedFinalResponse =
+        LlmResponse.builder()
+            .content(
+                Content.builder()
+                    .role("")
+                    .parts(ImmutableList.of(Part.fromText("I cannot do that.")))
+                    .build())
+            .finishReason(new FinishReason(Known.STOP.toString()))
+            .customMetadata(ImmutableList.of())
+            .modelVersion("")
+            .build();
+
+    LlmResponse finalResponse = responses.get(1);
+
+    assertThat(finalResponse).isEqualTo(expectedFinalResponse);
+  }
+
+  @Test
+  public void testChunkCollection_noChoices() throws Exception {
     String json =
         """
         {
