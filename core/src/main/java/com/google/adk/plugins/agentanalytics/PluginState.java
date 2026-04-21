@@ -1,9 +1,11 @@
 package com.google.adk.plugins.agentanalytics;
 
+import static com.google.adk.plugins.agentanalytics.BigQueryUtils.getVersionHeaderValue;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.google.api.gax.core.FixedCredentialsProvider;
 import com.google.api.gax.retrying.RetrySettings;
+import com.google.api.gax.rpc.FixedHeaderProvider;
 import com.google.cloud.bigquery.storage.v1.BigQueryWriteClient;
 import com.google.cloud.bigquery.storage.v1.BigQueryWriteSettings;
 import com.google.cloud.bigquery.storage.v1.StreamWriter;
@@ -11,8 +13,10 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.VerifyException;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -67,13 +71,14 @@ class PluginState {
   }
 
   protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) throws IOException {
+    BigQueryWriteSettings.Builder settingsBuilder =
+        BigQueryWriteSettings.newBuilder()
+            .setHeaderProvider(
+                FixedHeaderProvider.create(ImmutableMap.of("user-agent", getVersionHeaderValue())));
     if (config.credentials() != null) {
-      return BigQueryWriteClient.create(
-          BigQueryWriteSettings.newBuilder()
-              .setCredentialsProvider(FixedCredentialsProvider.create(config.credentials()))
-              .build());
+      settingsBuilder.setCredentialsProvider(FixedCredentialsProvider.create(config.credentials()));
     }
-    return BigQueryWriteClient.create();
+    return BigQueryWriteClient.create(settingsBuilder.build());
   }
 
   protected StreamWriter createWriter() {
@@ -89,6 +94,7 @@ class PluginState {
     String streamName = getStreamName(config);
     try {
       return StreamWriter.newBuilder(streamName, writeClient)
+          .setTraceId(BigQueryUtils.getVersionHeaderValue() + ":" + UUID.randomUUID())
           .setRetrySettings(retrySettings)
           .setWriterSchema(BigQuerySchema.getArrowSchema())
           .build();

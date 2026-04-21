@@ -17,6 +17,7 @@
 package com.google.adk.plugins.agentanalytics;
 
 import static com.google.adk.plugins.agentanalytics.BigQueryUtils.createAnalyticsViews;
+import static com.google.adk.plugins.agentanalytics.BigQueryUtils.getVersionHeaderValue;
 import static com.google.adk.plugins.agentanalytics.BigQueryUtils.maybeUpgradeSchema;
 import static com.google.adk.plugins.agentanalytics.JsonFormatter.convertToJsonNode;
 import static com.google.adk.plugins.agentanalytics.JsonFormatter.smartTruncate;
@@ -40,6 +41,7 @@ import com.google.adk.tools.FunctionTool;
 import com.google.adk.tools.ToolContext;
 import com.google.adk.tools.mcp.AbstractMcpTool;
 import com.google.adk.utils.AgentEnums.AgentOrigin;
+import com.google.api.gax.rpc.FixedHeaderProvider;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.bigquery.BigQuery;
 import com.google.cloud.bigquery.BigQueryException;
@@ -110,6 +112,8 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
   private static BigQuery createBigQuery(BigQueryLoggerConfig config) throws IOException {
     BigQueryOptions.Builder builder = BigQueryOptions.newBuilder();
+    builder.setHeaderProvider(
+        FixedHeaderProvider.create(ImmutableMap.of("user-agent", getVersionHeaderValue())));
     if (config.credentials() != null) {
       builder.setCredentials(config.credentials());
     } else {

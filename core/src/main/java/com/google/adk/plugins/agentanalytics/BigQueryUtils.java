@@ -22,6 +22,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static java.util.stream.Collectors.toCollection;
 
+import com.google.adk.Version;
 import com.google.cloud.bigquery.BigQuery;
 import com.google.cloud.bigquery.BigQueryException;
 import com.google.cloud.bigquery.Field;
@@ -135,6 +136,13 @@ final class BigQueryUtils {
                   "JSON_VALUE(content, '$.tool') AS tool_name",
                   "JSON_QUERY(content, '$.args') AS tool_args"))
           .buildOrThrow();
+
+  private static final String FRAMEWORK_PREFIX = "google-adk-bq-logger-java";
+
+  /** Returns the telemetry header value. */
+  static String getVersionHeaderValue() {
+    return FRAMEWORK_PREFIX + "/" + Version.JAVA_ADK_VERSION;
+  }
 
   /** Creates and/or replaces the analytics views in BigQuery. */
   static void createAnalyticsViews(BigQuery bigQuery, BigQueryLoggerConfig config) {
