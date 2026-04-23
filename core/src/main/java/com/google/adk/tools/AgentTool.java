@@ -26,6 +26,7 @@ import com.google.adk.agents.ConfigAgentUtils;
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.events.Event;
+import com.google.adk.plugins.Plugin;
 import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.State;
@@ -46,6 +47,7 @@ public class AgentTool extends BaseTool {
 
   private final BaseAgent agent;
   private final boolean skipSummarization;
+  private final boolean includePlugins;
 
   public static BaseTool fromConfig(ToolArgsConfig args, String configAbsPath)
       throws ConfigurationException {
@@ -62,21 +64,34 @@ public class AgentTool extends BaseTool {
     }
 
     BaseAgent agent = resolvedAgents.get(0);
-    return AgentTool.create(agent, args.getOrDefault("skipSummarization", false).booleanValue());
+    return AgentTool.create(
+        agent,
+        args.getOrDefault("skipSummarization", false).booleanValue(),
+        args.getOrDefault("includePlugins", false).booleanValue());
+  }
+
+  public static AgentTool create(
+      BaseAgent agent, boolean skipSummarization, boolean includePlugins) {
+    return new AgentTool(agent, skipSummarization, includePlugins);
   }
 
   public static AgentTool create(BaseAgent agent, boolean skipSummarization) {
-    return new AgentTool(agent, skipSummarization);
+    return new AgentTool(agent, skipSummarization, /* includePlugins= */ false);
   }
 
   public static AgentTool create(BaseAgent agent) {
-    return new AgentTool(agent, false);
+    return new AgentTool(agent, /* skipSummarization= */ false, /* includePlugins= */ false);
   }
 
   protected AgentTool(BaseAgent agent, boolean skipSummarization) {
+    this(agent, skipSummarization, /* includePlugins= */ false);
+  }
+
+  protected AgentTool(BaseAgent agent, boolean skipSummarization, boolean includePlugins) {
     super(agent.name(), agent.description());
     this.agent = agent;
     this.skipSummarization = skipSummarization;
+    this.includePlugins = includePlugins;
   }
 
   @VisibleForTesting
@@ -159,9 +174,11 @@ public class AgentTool extends BaseTool {
       content = Content.fromParts(Part.fromText(input.toString()));
     }
 
-    Runner runner = new InMemoryRunner(this.agent, toolContext.agentName());
-    // Session state is final, can't update to toolContext state
-    // session.toBuilder().setState(toolContext.getState());
+    ImmutableList<Plugin> plugins =
+        this.includePlugins
+            ? ImmutableList.of(toolContext.invocationContext().pluginManager())
+            : ImmutableList.of();
+    Runner runner = new InMemoryRunner(this.agent, toolContext.agentName(), plugins);
     return runner
         .sessionService()
         .createSession(toolContext.agentName(), "tmp-user", toolContext.state(), null)
