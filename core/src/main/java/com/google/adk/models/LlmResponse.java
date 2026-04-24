@@ -106,6 +106,14 @@ public abstract class LlmResponse extends JsonBaseModel {
   @JsonProperty("modelVersion")
   public abstract Optional<String> modelVersion();
 
+  /** Model speech transcription from Gemini Live API (travels alongside audio content). */
+  @JsonProperty("outputTranscription")
+  public abstract Optional<String> outputTranscription();
+
+  /** User speech transcription from Gemini Live API (travels alongside audio content). */
+  @JsonProperty("inputTranscription")
+  public abstract Optional<String> inputTranscription();
+
   public abstract Builder toBuilder();
 
   /** Builder for constructing {@link LlmResponse} instances. */
@@ -174,6 +182,16 @@ public abstract class LlmResponse extends JsonBaseModel {
     public abstract Builder modelVersion(@Nullable String modelVersion);
 
     public abstract Builder modelVersion(Optional<String> modelVersion);
+
+    @JsonProperty("outputTranscription")
+    public abstract Builder outputTranscription(@Nullable String outputTranscription);
+
+    public abstract Builder outputTranscription(Optional<String> outputTranscription);
+
+    @JsonProperty("inputTranscription")
+    public abstract Builder inputTranscription(@Nullable String inputTranscription);
+
+    public abstract Builder inputTranscription(Optional<String> inputTranscription);
 
     @CanIgnoreReturnValue
     public final Builder response(GenerateContentResponse response) {

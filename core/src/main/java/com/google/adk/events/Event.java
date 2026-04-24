@@ -62,6 +62,8 @@ public class Event extends JsonBaseModel {
   private Optional<String> branch = Optional.empty();
   private Optional<GroundingMetadata> groundingMetadata = Optional.empty();
   private Optional<String> modelVersion = Optional.empty();
+  private Optional<String> outputTranscription = Optional.empty();
+  private Optional<String> inputTranscription = Optional.empty();
   private long timestamp;
 
   private Event() {}
@@ -252,6 +254,26 @@ public class Event extends JsonBaseModel {
     this.modelVersion = modelVersion;
   }
 
+  /** Model speech transcription from Gemini Live API. */
+  @JsonProperty("outputTranscription")
+  public Optional<String> outputTranscription() {
+    return outputTranscription;
+  }
+
+  public void setOutputTranscription(Optional<String> outputTranscription) {
+    this.outputTranscription = outputTranscription;
+  }
+
+  /** User speech transcription from Gemini Live API. */
+  @JsonProperty("inputTranscription")
+  public Optional<String> inputTranscription() {
+    return inputTranscription;
+  }
+
+  public void setInputTranscription(Optional<String> inputTranscription) {
+    this.inputTranscription = inputTranscription;
+  }
+
   /** The timestamp of the event. */
   @JsonProperty("timestamp")
   public long timestamp() {
@@ -348,6 +370,8 @@ public class Event extends JsonBaseModel {
     private Optional<String> branch = Optional.empty();
     private Optional<GroundingMetadata> groundingMetadata = Optional.empty();
     private Optional<String> modelVersion = Optional.empty();
+    private Optional<String> outputTranscription = Optional.empty();
+    private Optional<String> inputTranscription = Optional.empty();
     private Optional<Long> timestamp = Optional.empty();
 
     @JsonCreator
@@ -587,6 +611,32 @@ public class Event extends JsonBaseModel {
       return modelVersion;
     }
 
+    @CanIgnoreReturnValue
+    @JsonProperty("outputTranscription")
+    public Builder outputTranscription(@Nullable String value) {
+      this.outputTranscription = Optional.ofNullable(value);
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder outputTranscription(Optional<String> value) {
+      this.outputTranscription = value;
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    @JsonProperty("inputTranscription")
+    public Builder inputTranscription(@Nullable String value) {
+      this.inputTranscription = Optional.ofNullable(value);
+      return this;
+    }
+
+    @CanIgnoreReturnValue
+    public Builder inputTranscription(Optional<String> value) {
+      this.inputTranscription = value;
+      return this;
+    }
+
     public Event build() {
       Event event = new Event();
       event.setId(id);
@@ -605,6 +655,8 @@ public class Event extends JsonBaseModel {
       event.branch(branch);
       event.setGroundingMetadata(groundingMetadata);
       event.setModelVersion(modelVersion);
+      event.setOutputTranscription(outputTranscription);
+      event.setInputTranscription(inputTranscription);
       event.setActions(actions().orElseGet(() -> EventActions.builder().build()));
       event.setTimestamp(timestamp().orElseGet(() -> Instant.now().toEpochMilli()));
       return event;
@@ -640,7 +692,9 @@ public class Event extends JsonBaseModel {
             .interrupted(this.interrupted)
             .branch(this.branch)
             .groundingMetadata(this.groundingMetadata)
-            .modelVersion(this.modelVersion);
+            .modelVersion(this.modelVersion)
+            .outputTranscription(this.outputTranscription)
+            .inputTranscription(this.inputTranscription);
     if (this.timestamp != 0) {
       builder.timestamp(this.timestamp);
     }
@@ -672,7 +726,9 @@ public class Event extends JsonBaseModel {
         && Objects.equals(interrupted, other.interrupted)
         && Objects.equals(branch, other.branch)
         && Objects.equals(groundingMetadata, other.groundingMetadata)
-        && Objects.equals(modelVersion, other.modelVersion);
+        && Objects.equals(modelVersion, other.modelVersion)
+        && Objects.equals(outputTranscription, other.outputTranscription)
+        && Objects.equals(inputTranscription, other.inputTranscription);
   }
 
   @Override
@@ -700,6 +756,8 @@ public class Event extends JsonBaseModel {
         branch,
         groundingMetadata,
         modelVersion,
+        outputTranscription,
+        inputTranscription,
         timestamp);
   }
 }
