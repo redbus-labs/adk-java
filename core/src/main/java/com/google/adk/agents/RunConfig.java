@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.AudioTranscriptionConfig;
 import com.google.genai.types.Modality;
+import com.google.genai.types.RealtimeInputConfig;
 import com.google.genai.types.SpeechConfig;
 import javax.annotation.Nullable;
 import org.slf4j.Logger;
@@ -68,6 +69,8 @@ public abstract class RunConfig {
 
   public abstract @Nullable AudioTranscriptionConfig inputAudioTranscription();
 
+  public abstract @Nullable RealtimeInputConfig realtimeInputConfig();
+
   public abstract int maxLlmCalls();
 
   public abstract boolean autoCreateSession();
@@ -94,6 +97,7 @@ public abstract class RunConfig {
         .setSpeechConfig(runConfig.speechConfig())
         .setOutputAudioTranscription(runConfig.outputAudioTranscription())
         .setInputAudioTranscription(runConfig.inputAudioTranscription())
+        .setRealtimeInputConfig(runConfig.realtimeInputConfig())
         .setAutoCreateSession(runConfig.autoCreateSession());
   }
 
@@ -123,6 +127,10 @@ public abstract class RunConfig {
     @CanIgnoreReturnValue
     public abstract Builder setInputAudioTranscription(
         @Nullable AudioTranscriptionConfig inputAudioTranscription);
+
+    @CanIgnoreReturnValue
+    public abstract Builder setRealtimeInputConfig(
+        @Nullable RealtimeInputConfig realtimeInputConfig);
 
     @CanIgnoreReturnValue
     public abstract Builder setMaxLlmCalls(int maxLlmCalls);

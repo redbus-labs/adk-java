@@ -130,19 +130,24 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
 
     if (message.serverContent().isPresent()) {
       LiveServerContent serverContent = message.serverContent().get();
+      boolean hasModelTurn = serverContent.modelTurn().isPresent();
       serverContent.modelTurn().ifPresent(builder::content);
       builder
           .partial(serverContent.turnComplete().map(completed -> !completed).orElse(false))
           .turnComplete(serverContent.turnComplete().orElse(false))
           .interrupted(serverContent.interrupted());
-      if (serverContent.outputTranscription().isPresent()) {
+      // Gemini 3.1 can send audio + transcription in the SAME server event.
+      // Only use transcription-as-content when there is no modelTurn (audio)
+      // in this event; otherwise the transcription would overwrite the audio
+      // data since builder.content() is a setter, not an adder.
+      if (!hasModelTurn && serverContent.outputTranscription().isPresent()) {
         Part part =
             Part.builder()
                 .text(serverContent.outputTranscription().get().text().toString())
                 .build();
         builder.content(Content.builder().role("model").parts(ImmutableList.of(part)).build());
       }
-      if (serverContent.inputTranscription().isPresent()) {
+      if (!hasModelTurn && serverContent.inputTranscription().isPresent()) {
         Part part =
             Part.builder().text(serverContent.inputTranscription().get().text().toString()).build();
         builder.content(Content.builder().role("user").parts(ImmutableList.of(part)).build());
@@ -242,9 +247,17 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   public Completable sendRealtime(Blob blob) {
     return Completable.fromFuture(
         sessionFuture.thenCompose(
-            session ->
-                session.sendRealtimeInput(
-                    LiveSendRealtimeInputParameters.builder().media(blob).build())));
+            session -> {
+              LiveSendRealtimeInputParameters.Builder builder =
+                  LiveSendRealtimeInputParameters.builder();
+              String mimeType = blob.mimeType().orElse("").toLowerCase();
+              if (mimeType.startsWith("video/") || mimeType.startsWith("image/")) {
+                builder.video(blob);
+              } else {
+                builder.audio(blob);
+              }
+              return session.sendRealtimeInput(builder.build());
+            }));
   }
 
   /** Helper to send client content parameters. */

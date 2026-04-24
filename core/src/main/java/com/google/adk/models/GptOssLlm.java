@@ -100,16 +100,16 @@ public class GptOssLlm extends BaseLlm {
    * @param modelName The name of the GPT OSS model to use (e.g., "gpt-oss-4").
    * @param vertexCredentials The Vertex AI credentials to access the model.
    */
-//   public GptOssLlm(String modelName, VertexCredentials vertexCredentials) {
-//     super(modelName);
-//     Objects.requireNonNull(vertexCredentials, "vertexCredentials cannot be null");
-//     Client.Builder apiClientBuilder =
-//         Client.builder().httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build());
-//     vertexCredentials.project().ifPresent(apiClientBuilder::project);
-//     vertexCredentials.location().ifPresent(apiClientBuilder::location);
-//     vertexCredentials.credentials().ifPresent(apiClientBuilder::credentials);
-//     this.apiClient = apiClientBuilder.build();
-//   }
+  //   public GptOssLlm(String modelName, VertexCredentials vertexCredentials) {
+  //     super(modelName);
+  //     Objects.requireNonNull(vertexCredentials, "vertexCredentials cannot be null");
+  //     Client.Builder apiClientBuilder =
+  //         Client.builder().httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build());
+  //     vertexCredentials.project().ifPresent(apiClientBuilder::project);
+  //     vertexCredentials.location().ifPresent(apiClientBuilder::location);
+  //     vertexCredentials.credentials().ifPresent(apiClientBuilder::credentials);
+  //     this.apiClient = apiClientBuilder.build();
+  //   }
 
   /**
    * Returns a new Builder instance for constructing GptOssLlm objects. Note that when building a
@@ -165,8 +165,7 @@ public class GptOssLlm extends BaseLlm {
 
       if (apiClient != null) {
         return new GptOssLlm(modelName, apiClient);
-      }
-       else {
+      } else {
         return new GptOssLlm(
             modelName,
             Client.builder()

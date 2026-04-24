@@ -470,43 +470,108 @@ public class Runner {
           span,
           () ->
               Flowable.defer(
-                      () ->
-                          this.pluginManager
-                              .onUserMessageCallback(initialContext, newMessage)
-                              .defaultIfEmpty(newMessage)
-                              .flatMap(
-                                  content ->
-                                      (content != null)
-                                          ? appendNewMessageToSession(
-                                              session,
-                                              content,
-                                              initialContext,
-                                              runConfig.saveInputBlobsAsArtifacts(),
-                                              stateDelta)
-                                          : Single.just(null))
-                              .flatMapPublisher(
-                                  event -> {
-                                    if (event == null) {
-                                      return Flowable.empty();
-                                    }
-                                    // Get the updated session after the message and state delta are
-                                    // applied
-                                    return this.sessionService
-                                        .getSession(
-                                            session.appName(),
-                                            session.userId(),
-                                            session.id(),
-                                            Optional.empty())
-                                        .flatMapPublisher(
-                                            updatedSession ->
-                                                runAgentWithFreshSession(
-                                                    session,
-                                                    updatedSession,
-                                                    event,
-                                                    invocationId,
-                                                    runConfig,
-                                                    rootAgent));
-                                  }))
+                      () -> {
+                        final long tSubStart = System.currentTimeMillis();
+                        final java.util.concurrent.atomic.AtomicLong tAfterUserCb =
+                            new java.util.concurrent.atomic.AtomicLong(-1L);
+                        final java.util.concurrent.atomic.AtomicLong tAfterAppend =
+                            new java.util.concurrent.atomic.AtomicLong(-1L);
+                        final java.util.concurrent.atomic.AtomicLong tAfterRefetch =
+                            new java.util.concurrent.atomic.AtomicLong(-1L);
+
+                        return this.pluginManager
+                            .onUserMessageCallback(initialContext, newMessage)
+                            .defaultIfEmpty(newMessage)
+                            .doOnSuccess(ignored -> tAfterUserCb.set(System.currentTimeMillis()))
+                            .flatMap(
+                                content ->
+                                    (content != null)
+                                        ? appendNewMessageToSession(
+                                                session,
+                                                content,
+                                                initialContext,
+                                                runConfig.saveInputBlobsAsArtifacts(),
+                                                stateDelta)
+                                            .doOnSuccess(
+                                                ignored ->
+                                                    tAfterAppend.set(System.currentTimeMillis()))
+                                        : Single.<Event>just(null)
+                                            .doOnSuccess(
+                                                ignored ->
+                                                    tAfterAppend.set(System.currentTimeMillis())))
+                            .flatMapPublisher(
+                                event -> {
+                                  if (event == null) {
+                                    return Flowable.empty();
+                                  }
+                                  // Get the updated session after the message and state delta are
+                                  // applied
+                                  return this.sessionService
+                                      .getSession(
+                                          session.appName(),
+                                          session.userId(),
+                                          session.id(),
+                                          Optional.empty())
+                                      .doOnSuccess(
+                                          ignored -> tAfterRefetch.set(System.currentTimeMillis()))
+                                      .flatMapPublisher(
+                                          updatedSession -> {
+                                            // #region agent log
+                                            try (java.io.FileWriter fw =
+                                                new java.io.FileWriter(
+                                                    "/Users/rohan.v/work/gitrae/.cursor/debug.log",
+                                                    true)) {
+                                              long ts = System.currentTimeMillis();
+                                              long userCbMs =
+                                                  (tAfterUserCb.get() > 0)
+                                                      ? (tAfterUserCb.get() - tSubStart)
+                                                      : -1L;
+                                              long appendMs =
+                                                  (tAfterAppend.get() > 0 && tAfterUserCb.get() > 0)
+                                                      ? (tAfterAppend.get() - tAfterUserCb.get())
+                                                      : -1L;
+                                              long refetchMs =
+                                                  (tAfterRefetch.get() > 0
+                                                          && tAfterAppend.get() > 0)
+                                                      ? (tAfterRefetch.get() - tAfterAppend.get())
+                                                      : -1L;
+                                              long preAgentTotalMs =
+                                                  (tAfterRefetch.get() > 0)
+                                                      ? (tAfterRefetch.get() - tSubStart)
+                                                      : -1L;
+                                              fw.write(
+                                                  "{\"id\":\"adk_"
+                                                      + ts
+                                                      + "_"
+                                                      + Math.abs(
+                                                          java.util.concurrent.ThreadLocalRandom
+                                                              .current()
+                                                              .nextInt())
+                                                      + "\",\"timestamp\":"
+                                                      + ts
+                                                      + ",\"location\":\"Runner.runAsync\",\"message\":\"RUNNER_PRE_AGENT_TIMINGS\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H8_RUNNER_DB_BEFORE_FIRST_EVENT\",\"data\":{"
+                                                      + "\"userCbMs\":"
+                                                      + userCbMs
+                                                      + ",\"appendMs\":"
+                                                      + appendMs
+                                                      + ",\"refetchMs\":"
+                                                      + refetchMs
+                                                      + ",\"preAgentTotalMs\":"
+                                                      + preAgentTotalMs
+                                                      + "}}\n");
+                                            } catch (Exception ignored) {
+                                            }
+                                            // #endregion
+                                            return runAgentWithFreshSession(
+                                                session,
+                                                updatedSession,
+                                                event,
+                                                invocationId,
+                                                runConfig,
+                                                rootAgent);
+                                          });
+                                });
+                      })
                   .doOnError(
                       throwable -> {
                         span.setStatus(StatusCode.ERROR, "Error in runAsync Flowable execution");
