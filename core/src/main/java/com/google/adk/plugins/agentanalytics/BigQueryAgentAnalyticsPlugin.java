@@ -210,6 +210,18 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     if (state.isProcessed(invocationContext.invocationId())) {
       return;
     }
+    if (config.contentFormatter() != null && content != null) {
+      try {
+        content = config.contentFormatter().apply(content, eventType);
+      } catch (RuntimeException e) {
+
+        logger.log(
+            Level.WARNING,
+            "Failed to format content for invocation ID: " + invocationContext.invocationId(),
+            e);
+        content = null; // Fail-closed to avoid leaking unmasked sensitive data
+      }
+    }
     String invocationId = invocationContext.invocationId();
     BatchProcessor processor = state.getBatchProcessor(invocationId);
     // Ensure table exists before logging.
@@ -223,10 +235,12 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     row.put("invocation_id", invocationContext.invocationId());
     row.put("user_id", invocationContext.userId());
     // Parse and log content
-    ParsedContent parsedContent = JsonFormatter.parse(content, config.maxContentLength());
-    row.put("content_parts", parsedContent.parts());
-    row.put("content", parsedContent.content());
-    row.put("is_truncated", isContentTruncated || parsedContent.isTruncated());
+    if (content != null) {
+      ParsedContent parsedContent = JsonFormatter.parse(content, config.maxContentLength());
+      row.put("content_parts", parsedContent.parts());
+      row.put("content", parsedContent.content());
+      row.put("is_truncated", isContentTruncated || parsedContent.isTruncated());
+    }
 
     EventData data = eventData.orElse(EventData.builder().build());
     row.put("status", data.status());
@@ -301,7 +315,10 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
         }
         attributes.put("session_metadata", sessionMeta);
       } catch (RuntimeException e) {
-        // Ignore session enrichment errors as in Python.
+        logger.log(
+            Level.WARNING,
+            "Failed to log session metadata for invocation ID: " + invocationContext.invocationId(),
+            e);
       }
     }
 

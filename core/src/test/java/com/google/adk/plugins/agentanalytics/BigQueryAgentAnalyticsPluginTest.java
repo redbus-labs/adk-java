@@ -79,6 +79,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.BiFunction;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -493,7 +494,12 @@ public class BigQueryAgentAnalyticsPluginTest {
     assertEquals("ERROR", row.get("status"));
     assertEquals("model error message", row.get("error_message"));
     assertNotNull(row.get("latency_ms"));
-    assertEquals(false, row.get("is_truncated"));
+    assertFalse("Row should not contain content when it is null", row.containsKey("content"));
+    assertFalse(
+        "Row should not contain content_parts when it is null", row.containsKey("content_parts"));
+    assertFalse(
+        "Row should not contain is_truncated when content is null",
+        row.containsKey("is_truncated"));
   }
 
   @Test
@@ -647,6 +653,108 @@ public class BigQueryAgentAnalyticsPluginTest {
     ObjectNode attributes = (ObjectNode) row.get("attributes");
     assertFalse(
         "attributes should not contain session_metadata", attributes.has("session_metadata"));
+  }
+
+  @Test
+  public void logEvent_usesContentFormatter_whenConfigured() throws Exception {
+    BiFunction<Object, String, Object> formatter =
+        (content, eventType) -> {
+          if (Objects.equals(eventType, "USER_MESSAGE_RECEIVED") && content instanceof Content) {
+            return "Formatted: " + content;
+          }
+          return content;
+        };
+
+    BigQueryLoggerConfig formattedConfig = config.toBuilder().contentFormatter(formatter).build();
+    PluginState formattedState =
+        new PluginState(formattedConfig) {
+          @Override
+          protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) {
+            return mockWriteClient;
+          }
+
+          @Override
+          protected StreamWriter createWriter() {
+            return mockWriter;
+          }
+        };
+    BigQueryAgentAnalyticsPlugin formattedPlugin =
+        new BigQueryAgentAnalyticsPlugin(formattedConfig, mockBigQuery, formattedState);
+
+    Content content = Content.fromParts(Part.fromText("test message"));
+    formattedPlugin.onUserMessageCallback(mockInvocationContext, content).blockingSubscribe();
+
+    Map<String, Object> row = formattedState.getBatchProcessor("invocation_id").queue.poll();
+    assertNotNull(row);
+    assertTrue(row.get("content").toString().contains("Formatted: "));
+  }
+
+  @Test
+  public void logEvent_handlesNullContentFromFormatter() throws Exception {
+    BiFunction<Object, String, Object> formatter = (content, eventType) -> null;
+
+    BigQueryLoggerConfig formattedConfig = config.toBuilder().contentFormatter(formatter).build();
+    PluginState formattedState =
+        new PluginState(formattedConfig) {
+          @Override
+          protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) {
+            return mockWriteClient;
+          }
+
+          @Override
+          protected StreamWriter createWriter() {
+            return mockWriter;
+          }
+        };
+    BigQueryAgentAnalyticsPlugin formattedPlugin =
+        new BigQueryAgentAnalyticsPlugin(formattedConfig, mockBigQuery, formattedState);
+
+    Content content = Content.fromParts(Part.fromText("test message"));
+    formattedPlugin.onUserMessageCallback(mockInvocationContext, content).blockingSubscribe();
+
+    Map<String, Object> row = formattedState.getBatchProcessor("invocation_id").queue.poll();
+    assertNotNull(row);
+    assertFalse(
+        "Row should not contain content when formatter returns null", row.containsKey("content"));
+    assertFalse(
+        "Row should not contain content_parts when formatter returns null",
+        row.containsKey("content_parts"));
+  }
+
+  @Test
+  public void logEvent_handlesExceptionFromFormatter() throws Exception {
+    BiFunction<Object, String, Object> formatter =
+        (content, eventType) -> {
+          throw new RuntimeException("Formatter error");
+        };
+
+    BigQueryLoggerConfig formattedConfig = config.toBuilder().contentFormatter(formatter).build();
+    PluginState formattedState =
+        new PluginState(formattedConfig) {
+          @Override
+          protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) {
+            return mockWriteClient;
+          }
+
+          @Override
+          protected StreamWriter createWriter() {
+            return mockWriter;
+          }
+        };
+    BigQueryAgentAnalyticsPlugin formattedPlugin =
+        new BigQueryAgentAnalyticsPlugin(formattedConfig, mockBigQuery, formattedState);
+
+    Content content = Content.fromParts(Part.fromText("test message"));
+    formattedPlugin.onUserMessageCallback(mockInvocationContext, content).blockingSubscribe();
+
+    Map<String, Object> row = formattedState.getBatchProcessor("invocation_id").queue.poll();
+    assertNotNull(row);
+    assertFalse(
+        "Row should not contain content when formatter throws exception",
+        row.containsKey("content"));
+    assertFalse(
+        "Row should not contain content_parts when formatter throws exception",
+        row.containsKey("content_parts"));
   }
 
   @Test

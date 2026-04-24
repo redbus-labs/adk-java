@@ -77,20 +77,32 @@ public abstract class BigQueryLoggerConfig {
   // Max size of the batch processor queue.
   public abstract int queueMaxSize();
 
-  // Optional custom formatter for content.
-  // TODO(b/491852782): Implement content formatter.
-  @Nullable
-  public abstract BiFunction<Object, String, Object> contentFormatter();
+  /**
+   * Optional custom formatter for content.
+   *
+   * <p>Allow plugins to modify the content before logging. This is useful for masking sensitive
+   * data, formatting content, etc.
+   *
+   * <p>The contentFormatter must be <b>thread-safe</b> as it may be called concurrently across
+   * different agent invocations and <b>fast/non-blocking</b> to avoid adding latency to the agent's
+   * event processing pipeline.
+   *
+   * <p><b>Important:</b> To avoid corruption of the logs, the incoming content object should
+   * <b>not</b> be mutated. Modifying code should return a <b>new copy</b> of the object with
+   * desired changes.
+   */
+  public abstract @Nullable BiFunction<Object, String, Object> contentFormatter();
+
+  // GCS bucket name to store multi-modal content.
+  public abstract String gcsBucketName();
 
   // TODO(b/491852782): Implement connection id.
   public abstract Optional<String> connectionId();
 
   // Toggle for session metadata (e.g. gchat thread-id).
-  // TODO(b/491852782): Implement logging of session metadata.
   public abstract boolean logSessionMetadata();
 
   // Static custom tags (e.g. {"agent_role": "sales"}).
-  // TODO(b/491852782): Implement custom tags.
   public abstract ImmutableMap<String, Object> customTags();
 
   // Automatically add new columns to existing tables when the plugin
@@ -120,6 +132,7 @@ public abstract class BigQueryLoggerConfig {
         .tableName("events")
         .clusteringFields(ImmutableList.of("event_type", "agent", "user_id"))
         .logMultiModalContent(true)
+        .gcsBucketName("")
         .retryConfig(RetryConfig.builder().build())
         .batchSize(1)
         .batchFlushInterval(Duration.ofSeconds(1))
@@ -204,6 +217,9 @@ public abstract class BigQueryLoggerConfig {
 
     @CanIgnoreReturnValue
     public abstract Builder viewPrefix(String viewPrefix);
+
+    @CanIgnoreReturnValue
+    public abstract Builder gcsBucketName(String gcsBucketName);
 
     @CanIgnoreReturnValue
     public abstract Builder credentials(Credentials credentials);

@@ -19,6 +19,7 @@ package com.google.adk.plugins.agentanalytics;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -200,7 +201,8 @@ public final class BigQueryAgentAnalyticsPluginE2ETest {
     assertEquals("user", agentStartingRow.get("user_id"));
     assertNotNull("invocation_id should be populated", agentStartingRow.get("invocation_id"));
     assertTrue("timestamp should be positive", (Long) agentStartingRow.get("timestamp") > 0);
-    assertEquals(false, agentStartingRow.get("is_truncated"));
+    // AGENT_STARTING is not a content-bearing event, so is_truncated is not set and should be null.
+    assertNull(agentStartingRow.get("is_truncated"));
 
     // Verify content for USER_MESSAGE_RECEIVED
     Map<String, Object> userMessageRow =
