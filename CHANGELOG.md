@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.0](https://github.com/google/adk-java/compare/v1.1.0...v1.2.0) (2026-04-24)
+
+
+### Features
+
+* Add telemetry headers ([4009905](https://github.com/google/adk-java/commit/40099057e2b59f34e868da4c34dcd9c1194b2fde))
+* Adding functionality to support customer content formating ([52323b4](https://github.com/google/adk-java/commit/52323b44c89f233e2dd794aee33df8ba5318790e))
+* Allowing McpAsycToolset Builder to take in a McpSessionManager ([78766c1](https://github.com/google/adk-java/commit/78766c179192ff8e560502e0365b45f87ecac433))
+* Forward state delta from all events to parent session instead of just the last event ([f4cd1b7](https://github.com/google/adk-java/commit/f4cd1b754b62fcbf82da22aabc695911d416e51a))
+* Implement BigQuery auto-schema upgrade and view creation ([14027d1](https://github.com/google/adk-java/commit/14027d1545237675a507706d792825356575f73c))
+* Make BigQueryAgentAnalyticsPlugin state per-invocation ([629c390](https://github.com/google/adk-java/commit/629c390de9ca0ec49cba18a0689d299f9261c1fa))
+* Support ChatCompletionChunk to LlmResponse conversion ([589328e](https://github.com/google/adk-java/commit/589328ea747ad4a994223af5789320e171ea2aa7))
+* Support plugins in Java AgentTool similar to Python's implementation ([02a08a1](https://github.com/google/adk-java/commit/02a08a10f087975491d55a29329d6011362925ce))
+
+
+### Bug Fixes
+
+* Allow BuiltInCodeExecutor for Gemini 3 models ([1a3dd61](https://github.com/google/adk-java/commit/1a3dd612217a05e2f8fff69720087ed1136a09ab))
+* Fix ADK Runner race condition for sequential tool execution ([69680bb](https://github.com/google/adk-java/commit/69680bbeae11578199eca4efcaf5ecddea2dd552))
+* Fix ADK Runner race condition for sequential tool execution ([9031cad](https://github.com/google/adk-java/commit/9031cadc0e53cad8e4fe141e1d9d2bb19a431a12))
+* Removing deprecated Optional methods ([8ef99f9](https://github.com/google/adk-java/commit/8ef99f999c11c1dbf3331563a0566e14188a68f2))
+
 ## [1.1.0](https://github.com/google/adk-java/compare/v1.0.0...v1.1.0) (2026-04-10)
 
 
