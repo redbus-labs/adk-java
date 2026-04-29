@@ -134,7 +134,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       builder
           .partial(serverContent.turnComplete().map(completed -> !completed).orElse(false))
           .turnComplete(serverContent.turnComplete().orElse(false))
-          .interrupted(serverContent.interrupted());
+          .interrupted(serverContent.interrupted().orElse(null));
       // Gemini 3.1 can send audio + transcription in the SAME server event.
       // Transcriptions travel in dedicated LlmResponse fields so they never
       // overwrite the audio modelTurn content.
