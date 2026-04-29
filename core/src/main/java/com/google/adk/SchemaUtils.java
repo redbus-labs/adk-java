@@ -17,6 +17,7 @@
 package com.google.adk;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.google.common.base.Preconditions;
 import com.google.genai.types.Schema;
 import com.google.genai.types.Type;
 import java.util.HashMap;
@@ -87,6 +88,7 @@ public final class SchemaUtils {
    * @throws IllegalArgumentException If the map does not match the schema.
    */
   public static void validateMapOnSchema(Map<String, Object> args, Schema schema, Boolean isInput) {
+    Preconditions.checkNotNull(isInput, "IsInput cannot be null");
     Map<String, Schema> properties = schema.properties().get();
     for (Entry<String, Object> arg : args.entrySet()) {
       // Check if the argument is in the schema.

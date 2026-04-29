@@ -33,7 +33,10 @@ public enum ServiceType {
   AZURE("azure"),
 
   /** AWS Transcribe (future). */
-  AWS_TRANSCRIBE("aws_transcribe");
+  AWS_TRANSCRIBE("aws_transcribe"),
+
+  /** Sarvam AI transcription. */
+  SARVAM("sarvam");
 
   private final String value;
 

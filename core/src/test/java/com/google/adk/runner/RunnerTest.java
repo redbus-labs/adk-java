@@ -24,24 +24,33 @@ import static com.google.adk.testing.TestUtils.createTestLlm;
 import static com.google.adk.testing.TestUtils.createTextLlmResponse;
 import static com.google.adk.testing.TestUtils.simplifyEvents;
 import static com.google.common.truth.Truth.assertThat;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Arrays.stream;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.apps.App;
-import com.google.adk.apps.ResumabilityConfig;
+import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.Functions;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
+import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
+import com.google.adk.sessions.SessionKey;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.adk.telemetry.Tracing;
 import com.google.adk.testing.TestLlm;
@@ -57,17 +66,26 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.ContextKey;
+import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.testing.junit4.OpenTelemetryRule;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.subjects.PublishSubject;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -75,6 +93,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 @RunWith(JUnit4.class)
 public final class RunnerTest {
@@ -177,6 +196,70 @@ public final class RunnerTest {
             "user: user 2",
             "test agent: llm 2",
             "user: summary 2");
+  }
+
+  @Test
+  public void eventsCompaction_withNullOverlap_doesNotCompact() {
+    TestLlm testLlm =
+        createTestLlm(
+            createLlmResponse(createContent("llm 1")), createLlmResponse(createContent("llm 2")));
+    LlmAgent agent = createTestAgent(testLlm);
+
+    Runner runner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name(this.runner.appName())
+                    .rootAgent(agent)
+                    .eventsCompactionConfig(new EventsCompactionConfig(1, null, null, null, null))
+                    .build())
+            .sessionService(this.runner.sessionService())
+            .build();
+
+    var unused1 =
+        runner.runAsync("user", session.id(), createContent("user 1")).toList().blockingGet();
+    var unused2 =
+        runner.runAsync("user", session.id(), createContent("user 2")).toList().blockingGet();
+
+    Session updatedSession =
+        runner
+            .sessionService()
+            .getSession(session.appName(), session.userId(), session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(simplifyEvents(updatedSession.events()))
+        .containsExactly("user: user 1", "test agent: llm 1", "user: user 2", "test agent: llm 2");
+  }
+
+  @Test
+  public void eventsCompaction_withNullInterval_doesNotCompact() {
+    TestLlm testLlm =
+        createTestLlm(
+            createLlmResponse(createContent("llm 1")), createLlmResponse(createContent("llm 2")));
+    LlmAgent agent = createTestAgent(testLlm);
+
+    Runner runner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name(this.runner.appName())
+                    .rootAgent(agent)
+                    .eventsCompactionConfig(new EventsCompactionConfig(null, 0, null, null, null))
+                    .build())
+            .sessionService(this.runner.sessionService())
+            .build();
+
+    var unused1 =
+        runner.runAsync("user", session.id(), createContent("user 1")).toList().blockingGet();
+    var unused2 =
+        runner.runAsync("user", session.id(), createContent("user 2")).toList().blockingGet();
+
+    Session updatedSession =
+        runner
+            .sessionService()
+            .getSession(session.appName(), session.userId(), session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(simplifyEvents(updatedSession.events()))
+        .containsExactly("user: user 1", "test agent: llm 1", "user: user 2", "test agent: llm 2");
   }
 
   @Test
@@ -516,6 +599,275 @@ public final class RunnerTest {
   }
 
   @Test
+  public void callbackContextData_preservedAcrossInvocation() {
+    String testKey = "testKey";
+    String testValue = "testValue";
+
+    when(plugin.onUserMessageCallback(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              InvocationContext context = invocation.getArgument(0);
+              context.callbackContextData().put(testKey, testValue);
+              return Maybe.empty();
+            });
+
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    when(plugin.afterRunCallback(contextCaptor.capture())).thenReturn(Completable.complete());
+
+    var unused =
+        runner.runAsync("user", session.id(), createContent("test")).toList().blockingGet();
+
+    assertThat(contextCaptor.getValue().callbackContextData()).containsEntry(testKey, testValue);
+  }
+
+  @Test
+  public void runAsync_passesSessionSnapshotToPersistenceService() {
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+    Event agentEvent = Event.builder().id("agent-event").author("agent").build();
+
+    // Mock agent to return one event
+    BaseAgent mockAgent = mock(BaseAgent.class);
+    when(mockAgent.runAsync(any())).thenReturn(Flowable.just(agentEvent));
+
+    // Mock session service
+    Session testSession = Session.builder("session-id").appName("test").userId("user").build();
+    when(mockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenReturn(Maybe.just(testSession));
+    when(mockSessionService.appendEvent(any(), any())).thenReturn(Single.just(agentEvent));
+
+    Runner runnerWithMockService =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(mockAgent).build())
+            .sessionService(mockSessionService)
+            .build();
+
+    var unused =
+        runnerWithMockService
+            .runAsync("user", "session-id", createContent("start"))
+            .toList()
+            .blockingGet();
+
+    ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
+    ArgumentCaptor<Event> eventCaptor = ArgumentCaptor.forClass(Event.class);
+
+    // We expect 2 calls to appendEvent: one for user message, one for agent response.
+    verify(mockSessionService, times(2))
+        .appendEvent(sessionCaptor.capture(), eventCaptor.capture());
+
+    List<Session> capturedSessions = sessionCaptor.getAllValues();
+
+    // The second call should be for the agent response
+    Session sessionForAgentEvent = capturedSessions.get(1);
+
+    assertThat(sessionForAgentEvent.id()).isEqualTo("session-id");
+
+    // Verify it is a snapshot (does not contain the agent event itself)
+    assertThat(sessionForAgentEvent.events()).doesNotContain(agentEvent);
+  }
+
+  @Test
+  public void runAsync_multiEventExecution_lastUpdateTimeProgresses() throws Exception {
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+
+    Event event1 = Event.builder().id("event-1").author("agent").timestamp(200).build();
+    Event event2 = Event.builder().id("event-2").author("agent").timestamp(300).build();
+
+    BaseAgent mockAgent = mock(BaseAgent.class);
+    when(mockAgent.runAsync(any())).thenReturn(Flowable.just(event1, event2));
+
+    // Initial session with timestamp 100
+    Session testSession =
+        Session.builder("session-id")
+            .appName("test")
+            .userId("user")
+            .lastUpdateTime(Instant.ofEpochMilli(100))
+            .build();
+
+    when(mockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenReturn(Maybe.just(testSession));
+
+    // Mock appendEvent to return the event passed to it and capture timestamps
+    List<Instant> capturedTimestamps = new ArrayList<>();
+    when(mockSessionService.appendEvent(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              Session s = invocation.getArgument(0);
+              Event e = invocation.getArgument(1);
+              capturedTimestamps.add(s.lastUpdateTime());
+              if (!Objects.equals(e.author(), "user")) {
+                s.lastUpdateTime(Instant.ofEpochMilli(e.timestamp()));
+              }
+              return Single.just(e);
+            });
+
+    Runner runnerWithMockService =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(mockAgent).build())
+            .sessionService(mockSessionService)
+            .build();
+
+    var unused =
+        runnerWithMockService
+            .runAsync("user", "session-id", createContent("start"))
+            .toList()
+            .blockingGet();
+
+    ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
+    ArgumentCaptor<Event> eventCaptor = ArgumentCaptor.forClass(Event.class);
+
+    // We expect 3 calls to appendEvent:
+    // 1 for user message
+    // 2 for agent events (event1, event2)
+    verify(mockSessionService, times(3))
+        .appendEvent(sessionCaptor.capture(), eventCaptor.capture());
+
+    // Verify timestamp for event1 call is the initial timestamp (100)
+    assertThat(capturedTimestamps.get(1)).isEqualTo(Instant.ofEpochMilli(100));
+
+    // Verify timestamp for event2 call is the timestamp of event1 (200)
+    assertThat(capturedTimestamps.get(2)).isEqualTo(Instant.ofEpochMilli(200));
+  }
+
+  @Test
+  public void runAsync_concurrentCalls_staleRead() throws Exception {
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+    Event agentEvent = Event.builder().id("agent-event").author("agent").build();
+
+    BaseAgent mockAgent = mock(BaseAgent.class);
+    when(mockAgent.runAsync(any())).thenReturn(Flowable.just(agentEvent));
+
+    Session initialSession = Session.builder("session-id").appName("test").userId("user").build();
+    AtomicReference<Session> dbSession = new AtomicReference<>(initialSession);
+
+    when(mockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenAnswer(invocation -> Maybe.just(dbSession.get()));
+
+    PublishSubject<Event> appendSubject = PublishSubject.create();
+
+    when(mockSessionService.appendEvent(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              Session s = invocation.getArgument(0);
+              Event e = invocation.getArgument(1);
+              return appendSubject
+                  .firstOrError()
+                  .doOnSuccess(
+                      event -> {
+                        List<Event> newEvents = new ArrayList<>(s.events());
+                        newEvents.add(e);
+                        Session updated =
+                            Session.builder(s.id())
+                                .appName(s.appName())
+                                .userId(s.userId())
+                                .state(s.state())
+                                .events(newEvents)
+                                .build();
+                        dbSession.set(updated);
+                      });
+            });
+
+    Runner runnerWithMockService =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(mockAgent).build())
+            .sessionService(mockSessionService)
+            .build();
+
+    TestSubscriber<Event> subscriber1 = new TestSubscriber<>();
+    runnerWithMockService
+        .runAsync("user", "session-id", createContent("message 1"))
+        .subscribe(subscriber1);
+
+    TestSubscriber<Event> subscriber2 = new TestSubscriber<>();
+    runnerWithMockService
+        .runAsync("user", "session-id", createContent("message 2"))
+        .subscribe(subscriber2);
+
+    appendSubject.onNext(agentEvent); // Completes first appendEvent (user msg 1)
+    appendSubject.onNext(agentEvent); // Completes second appendEvent (agent event 1)
+    appendSubject.onNext(agentEvent); // Completes third appendEvent (user msg 2)
+    appendSubject.onNext(agentEvent); // Completes fourth appendEvent (agent event 2)
+
+    subscriber1.awaitDone(5, SECONDS);
+    subscriber2.awaitDone(5, SECONDS);
+
+    ArgumentCaptor<InvocationContext> contextCaptor =
+        ArgumentCaptor.forClass(InvocationContext.class);
+    verify(mockAgent, times(2)).runAsync(contextCaptor.capture());
+
+    List<InvocationContext> capturedContexts = contextCaptor.getAllValues();
+    InvocationContext context2 = capturedContexts.get(1);
+
+    assertThat(simplifyEvents(context2.session().events())).contains("user: message 1");
+  }
+
+  @Test
+  public void runAsync_concurrentCalls_firstFails_secondSucceeds() throws Exception {
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+    Event agentEvent = Event.builder().id("agent-event").author("agent").build();
+
+    BaseAgent mockAgent = mock(BaseAgent.class);
+    when(mockAgent.runAsync(any()))
+        .thenReturn(Flowable.error(new RuntimeException("Agent failed")))
+        .thenReturn(Flowable.just(agentEvent));
+
+    Session initialSession = Session.builder("session-id").appName("test").userId("user").build();
+    AtomicReference<Session> dbSession = new AtomicReference<>(initialSession);
+
+    when(mockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenAnswer(invocation -> Maybe.just(dbSession.get()));
+
+    when(mockSessionService.appendEvent(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              Session s = invocation.getArgument(0);
+              Event e = invocation.getArgument(1);
+              List<Event> newEvents = new ArrayList<>(s.events());
+              newEvents.add(e);
+              Session updated =
+                  Session.builder(s.id())
+                      .appName(s.appName())
+                      .userId(s.userId())
+                      .state(s.state())
+                      .events(newEvents)
+                      .build();
+              dbSession.set(updated);
+              return Single.just(e);
+            });
+
+    Runner runnerWithMockService =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(mockAgent).build())
+            .sessionService(mockSessionService)
+            .build();
+
+    TestSubscriber<Event> subscriber1 = new TestSubscriber<>();
+    runnerWithMockService
+        .runAsync("user", "session-id", createContent("message 1"))
+        .subscribe(subscriber1);
+
+    TestSubscriber<Event> subscriber2 = new TestSubscriber<>();
+    runnerWithMockService
+        .runAsync("user", "session-id", createContent("message 2"))
+        .subscribe(subscriber2);
+
+    subscriber1.awaitDone(5, SECONDS);
+    subscriber2.awaitDone(5, SECONDS);
+
+    subscriber1.assertError(RuntimeException.class);
+    subscriber2.assertComplete();
+    subscriber2.assertValue(agentEvent);
+  }
+
+  @Test
+  public void runAsync_withSessionKey_success() {
+    var events =
+        runner.runAsync(session.sessionKey(), createContent("from user")).toList().blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+  }
+
+  @Test
   public void runAsync_withStateDelta_mergesStateIntoSession() {
     ImmutableMap<String, Object> stateDelta = ImmutableMap.of("key1", "value1", "key2", 42);
 
@@ -524,6 +876,32 @@ public final class RunnerTest {
             .runAsync(
                 "user",
                 session.id(),
+                createContent("test message"),
+                RunConfig.builder().build(),
+                stateDelta)
+            .toList()
+            .blockingGet();
+
+    // Verify agent runs successfully
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+
+    // Verify state was merged into session
+    Session finalSession =
+        runner
+            .sessionService()
+            .getSession("test", "user", session.id(), Optional.empty())
+            .blockingGet();
+    assertThat(finalSession.state()).containsAtLeastEntriesIn(stateDelta);
+  }
+
+  @Test
+  public void runAsync_withSessionKeyAndStateDelta_mergesStateIntoSession() {
+    ImmutableMap<String, Object> stateDelta = ImmutableMap.of("key1", "value1", "key2", 42);
+
+    var events =
+        runner
+            .runAsync(
+                session.sessionKey(),
                 createContent("test message"),
                 RunConfig.builder().build(),
                 stateDelta)
@@ -744,8 +1122,60 @@ public final class RunnerTest {
     assertThat(sessionInCallback.state()).containsEntry("number", 123);
   }
 
+  @Test
+  public void runAsync_ensureEventsAreAppendedInOrder() throws Exception {
+    Event event1 = TestUtils.createEvent("1");
+    Event event2 = TestUtils.createEvent("2");
+    BaseAgent mockAgent = TestUtils.createSubAgent("test agent", event1, event2);
+
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+
+    when(mockSessionService.getSession(any(), any(), any(), any())).thenReturn(Maybe.just(session));
+    when(mockSessionService.appendEvent(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              Event eventArg = invocation.getArgument(1);
+              Single<Event> result = Single.just(eventArg);
+              if (eventArg.id().equals("1")) {
+                // Artificially delay the first event to ensure it is appended first.
+                return result.delay(100, MILLISECONDS);
+              }
+              return result;
+            });
+
+    Runner mockRunner =
+        Runner.builder()
+            .agent(mockAgent)
+            .appName("test")
+            .sessionService(mockSessionService)
+            .build();
+
+    List<Event> results =
+        mockRunner
+            .runAsync("user", session.id(), createContent("user message"))
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(results))
+        .containsExactly("author: content for event 1", "author: content for event 2")
+        .inOrder();
+  }
+
   private Content createContent(String text) {
     return Content.builder().parts(Part.builder().text(text).build()).build();
+  }
+
+  private static Content createInlineDataContent(byte[]... data) {
+    return Content.builder()
+        .parts(
+            stream(data)
+                .map(dataBytes -> Part.fromBytes(dataBytes, "example/octet-stream"))
+                .toArray(Part[]::new))
+        .build();
+  }
+
+  private static Content createInlineDataContent(String... data) {
+    return createInlineDataContent(stream(data).map(d -> d.getBytes(UTF_8)).toArray(byte[][]::new));
   }
 
   @Test
@@ -768,6 +1198,20 @@ public final class RunnerTest {
     LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
     TestSubscriber<Event> testSubscriber =
         runner.runLive(session, liveRequestQueue, RunConfig.builder().build()).test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+  }
+
+  @Test
+  public void runLive_withSessionKey_success() throws Exception {
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+    TestSubscriber<Event> testSubscriber =
+        runner.runLive(session.sessionKey(), liveRequestQueue, RunConfig.builder().build()).test();
 
     liveRequestQueue.content(createContent("from user"));
     liveRequestQueue.close();
@@ -866,45 +1310,71 @@ public final class RunnerTest {
   }
 
   @Test
-  public void resumabilityConfig_isResumable_isTrueInInvocationContext() {
-    ArgumentCaptor<InvocationContext> contextCaptor =
-        ArgumentCaptor.forClass(InvocationContext.class);
-    when(plugin.beforeRunCallback(contextCaptor.capture())).thenReturn(Maybe.empty());
-    Runner runner =
-        Runner.builder()
-            .app(
-                App.builder()
-                    .name("test")
-                    .rootAgent(agent)
-                    .plugins(ImmutableList.of(plugin))
-                    .resumabilityConfig(new ResumabilityConfig(true))
-                    .build())
-            .build();
-    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+  public void runAsync_createsToolSpansWithCorrectParent() {
+    LlmAgent agentWithTool =
+        createTestAgentBuilder(testLlmWithFunctionCall).tools(ImmutableList.of(echoTool)).build();
+    Runner runnerWithTool =
+        Runner.builder().app(App.builder().name("test").rootAgent(agentWithTool).build()).build();
+    Session sessionWithTool =
+        runnerWithTool.sessionService().createSession("test", "user").blockingGet();
+
     var unused =
-        runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
-    assertThat(contextCaptor.getValue().isResumable()).isTrue();
+        runnerWithTool
+            .runAsync(
+                sessionWithTool.sessionKey(),
+                createContent("from user"),
+                RunConfig.builder().build())
+            .toList()
+            .blockingGet();
+
+    List<SpanData> spans = openTelemetryRule.getSpans();
+    List<SpanData> llmSpans = spans.stream().filter(s -> s.getName().equals("call_llm")).toList();
+    List<SpanData> toolSpans =
+        spans.stream().filter(s -> s.getName().equals("execute_tool [echo_tool]")).toList();
+
+    assertThat(llmSpans).hasSize(2);
+    assertThat(toolSpans).hasSize(1);
+
+    List<String> llmSpanIds = llmSpans.stream().map(s -> s.getSpanContext().getSpanId()).toList();
+    String toolParentId = toolSpans.get(0).getParentSpanContext().getSpanId();
+
+    assertThat(llmSpanIds).contains(toolParentId);
   }
 
   @Test
-  public void resumabilityConfig_isNotResumable_isFalseInInvocationContext() {
-    ArgumentCaptor<InvocationContext> contextCaptor =
-        ArgumentCaptor.forClass(InvocationContext.class);
-    when(plugin.beforeRunCallback(contextCaptor.capture())).thenReturn(Maybe.empty());
-    Runner runner =
-        Runner.builder()
-            .app(
-                App.builder()
-                    .name("test")
-                    .rootAgent(agent)
-                    .plugins(ImmutableList.of(plugin))
-                    .resumabilityConfig(new ResumabilityConfig(false))
-                    .build())
-            .build();
-    Session session = runner.sessionService().createSession("test", "user").blockingGet();
-    var unused =
-        runner.runAsync("user", session.id(), createContent("from user")).toList().blockingGet();
-    assertThat(contextCaptor.getValue().isResumable()).isFalse();
+  public void runLive_createsToolSpansWithCorrectParent() throws Exception {
+    LlmAgent agentWithTool =
+        createTestAgentBuilder(testLlmWithFunctionCall).tools(ImmutableList.of(echoTool)).build();
+    Runner runnerWithTool =
+        Runner.builder().app(App.builder().name("test").rootAgent(agentWithTool).build()).build();
+    Session sessionWithTool =
+        runnerWithTool.sessionService().createSession("test", "user").blockingGet();
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+
+    TestSubscriber<Event> testSubscriber =
+        runnerWithTool
+            .runLive(sessionWithTool.sessionKey(), liveRequestQueue, RunConfig.builder().build())
+            .test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+
+    List<SpanData> spans = openTelemetryRule.getSpans();
+    List<SpanData> llmSpans = spans.stream().filter(s -> s.getName().equals("call_llm")).toList();
+    List<SpanData> toolSpans =
+        spans.stream().filter(s -> s.getName().equals("execute_tool [echo_tool]")).toList();
+
+    // In runLive, there is one call_llm span for the execution
+    assertThat(llmSpans).hasSize(1);
+    assertThat(toolSpans).hasSize(1);
+
+    List<String> llmSpanIds = llmSpans.stream().map(s -> s.getSpanContext().getSpanId()).toList();
+    String toolParentId = toolSpans.get(0).getParentSpanContext().getSpanId();
+
+    assertThat(llmSpanIds).contains(toolParentId);
   }
 
   @Test
@@ -928,12 +1398,35 @@ public final class RunnerTest {
   }
 
   @Test
+  public void runAsync_withoutSessionAndAutoCreateSessionTrue_withSessionKey_createsSession() {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(true).build();
+    SessionKey sessionKey = new SessionKey("test", "user", UUID.randomUUID().toString());
+
+    var events =
+        runner.runAsync(sessionKey, createContent("from user"), runConfig).toList().blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+    assertThat(runner.sessionService().getSession(sessionKey, null).blockingGet()).isNotNull();
+  }
+
+  @Test
   public void runAsync_withoutSessionAndAutoCreateSessionFalse_throwsException() {
     RunConfig runConfig = RunConfig.builder().setAutoCreateSession(false).build();
     String newSessionId = UUID.randomUUID().toString();
 
     runner
         .runAsync("user", newSessionId, createContent("from user"), runConfig)
+        .test()
+        .assertError(IllegalArgumentException.class);
+  }
+
+  @Test
+  public void runAsync_withoutSessionAndAutoCreateSessionFalse_withSessionKey_throwsException() {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(false).build();
+    SessionKey sessionKey = new SessionKey("test", "user", UUID.randomUUID().toString());
+
+    runner
+        .runAsync(sessionKey, createContent("from user"), runConfig)
         .test()
         .assertError(IllegalArgumentException.class);
   }
@@ -962,6 +1455,25 @@ public final class RunnerTest {
   }
 
   @Test
+  public void runLive_withoutSessionAndAutoCreateSessionTrue_withSessionKey_createsSession()
+      throws Exception {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(true).build();
+    SessionKey sessionKey = new SessionKey("test", "user", UUID.randomUUID().toString());
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+
+    TestSubscriber<Event> testSubscriber =
+        runner.runLive(sessionKey, liveRequestQueue, runConfig).test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+    assertThat(runner.sessionService().getSession(sessionKey, null).blockingGet()).isNotNull();
+  }
+
+  @Test
   public void runLive_withoutSessionAndAutoCreateSessionFalse_throwsException() {
     RunConfig runConfig = RunConfig.builder().setAutoCreateSession(false).build();
     String newSessionId = UUID.randomUUID().toString();
@@ -969,6 +1481,18 @@ public final class RunnerTest {
 
     runner
         .runLive("user", newSessionId, liveRequestQueue, runConfig)
+        .test()
+        .assertError(IllegalArgumentException.class);
+  }
+
+  @Test
+  public void runLive_withoutSessionAndAutoCreateSessionFalse_withSessionKey_throwsException() {
+    RunConfig runConfig = RunConfig.builder().setAutoCreateSession(false).build();
+    SessionKey sessionKey = new SessionKey("test", "user", UUID.randomUUID().toString());
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+
+    runner
+        .runLive(sessionKey, liveRequestQueue, runConfig)
         .test()
         .assertError(IllegalArgumentException.class);
   }
@@ -1044,11 +1568,122 @@ public final class RunnerTest {
         .inOrder();
   }
 
+  @Test
+  public void close_closesPluginsAndCodeExecutors() {
+    BasePlugin plugin = mockPlugin("close_test_plugin");
+    when(plugin.close()).thenReturn(Completable.complete());
+    LlmAgent agentWithCodeExecutor = createTestAgentBuilder(testLlm).build();
+    Runner runner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name("test")
+                    .rootAgent(agentWithCodeExecutor)
+                    .plugins(ImmutableList.of(plugin))
+                    .build())
+            .build();
+
+    runner.close().blockingAwait();
+
+    verify(plugin).close();
+  }
+
+  @Test
+  public void runAsync_contextPropagation() {
+    ContextKey<String> testKey = ContextKey.named("test-key");
+    Context testContext = Context.current().with(testKey, "test-value");
+
+    List<Event> events;
+    try (Scope scope = testContext.makeCurrent()) {
+      events =
+          runner
+              .runAsync("user", session.id(), createContent("test message"))
+              .doOnNext(
+                  event -> {
+                    assertThat(Context.current().get(testKey)).isEqualTo("test-value");
+                  })
+              .toList()
+              .blockingGet();
+    }
+
+    assertThat(simplifyEvents(events)).containsExactly("test agent: from llm");
+  }
+
+  @Test
+  public void runLive_contextPropagation() throws Exception {
+    ContextKey<String> testKey = ContextKey.named("test-key");
+    Context testContext = Context.current().with(testKey, "test-value");
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+
+    TestSubscriber<Event> testSubscriber;
+    try (Scope scope = testContext.makeCurrent()) {
+      testSubscriber =
+          runner
+              .runLive(session, liveRequestQueue, RunConfig.builder().build())
+              .doOnNext(
+                  event -> {
+                    assertThat(Context.current().get(testKey)).isEqualTo("test-value");
+                  })
+              .test();
+    }
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+  }
+
+  @Test
+  public void buildRunnerWithPlugins_success() {
+    BasePlugin plugin1 = mockPlugin("test1");
+    BasePlugin plugin2 = mockPlugin("test2");
+    Runner runner = Runner.builder().agent(agent).appName("test").plugins(plugin1, plugin2).build();
+    assertThat(runner.pluginManager().getPlugins()).containsExactly(plugin1, plugin2);
+  }
+
   public static class Tools {
     private Tools() {}
 
     public static ImmutableMap<String, Object> echoTool(String message) {
       return ImmutableMap.of("message", message);
     }
+  }
+
+  @Test
+  public void runner_executesSaveArtifactFlow() {
+    // arrange
+    final AtomicInteger artifactsSavedCounter = new AtomicInteger();
+    BaseArtifactService mockArtifactService = Mockito.mock(BaseArtifactService.class);
+    when(mockArtifactService.saveArtifact(any(), any(), any(), any(), any()))
+        .thenReturn(
+            Single.defer(
+                () -> {
+                  // we want to assert not only that the saveArtifact method was
+                  // called, but also that the flow that it returned was run, so
+                  // we need to record the call in a counter
+                  artifactsSavedCounter.incrementAndGet();
+                  return Single.just(42);
+                }));
+    Runner runner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .artifactService(mockArtifactService)
+            .build();
+    session = runner.sessionService().createSession("test", "user").blockingGet();
+    // each inline data will be saved using our mock artifact service
+    Content content = createInlineDataContent("test data", "test data 2");
+    RunConfig runConfig = RunConfig.builder().setSaveInputBlobsAsArtifacts(true).build();
+
+    // act
+    var events = runner.runAsync("user", session.id(), content, runConfig).test();
+
+    // assert
+    events.assertComplete();
+    // artifacts were saved
+    assertThat(artifactsSavedCounter.get()).isEqualTo(2);
+    // agent was run
+    assertThat(simplifyEvents(events.values())).containsExactly("test agent: from llm");
   }
 }

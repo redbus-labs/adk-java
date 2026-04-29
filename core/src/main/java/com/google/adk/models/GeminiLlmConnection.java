@@ -138,14 +138,8 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       // Gemini 3.1 can send audio + transcription in the SAME server event.
       // Transcriptions travel in dedicated LlmResponse fields so they never
       // overwrite the audio modelTurn content.
-      serverContent
-          .outputTranscription()
-          .flatMap(t -> t.text())
-          .ifPresent(builder::outputTranscription);
-      serverContent
-          .inputTranscription()
-          .flatMap(t -> t.text())
-          .ifPresent(builder::inputTranscription);
+      serverContent.outputTranscription().ifPresent(builder::outputTranscription);
+      serverContent.inputTranscription().ifPresent(builder::inputTranscription);
     } else if (message.toolCall().isPresent()) {
       LiveServerToolCall toolCall = message.toolCall().get();
       toolCall
@@ -165,8 +159,8 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       return Optional.empty();
     } else if (message.toolCallCancellation().isPresent()) {
       logger.debug("Received tool call cancellation: {}", message.toolCallCancellation().get());
-      // TODO: implement proper CFC and thus tool call cancellation handling.
-      return Optional.empty();
+      builder.interrupted(true).turnComplete(true);
+      return Optional.of(builder.build());
     } else if (message.setupComplete().isPresent()) {
       logger.debug("Received setup complete.");
       return Optional.empty();
