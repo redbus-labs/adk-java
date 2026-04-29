@@ -75,7 +75,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
    * Establishes a new connection.
    *
    * @param apiClient The API client for communication.
-   * @param modelName The specific Gemini model endpoint (e.g., "gemini-2.0-flash).
+   * @param modelName The specific Gemini model endpoint (e.g., "gemini-2.5-flash).
    * @param connectConfig Configuration parameters for the live session.
    */
   GeminiLlmConnection(Client apiClient, String modelName, LiveConnectConfig connectConfig) {

@@ -614,7 +614,7 @@ public class LlmAgent extends BaseAgent {
      * <pre>{@code
      * LlmAgent.builder()
      *     .name("MyAgent")
-     *     .model("gemini-2.0-flash-exp")
+     *     .model("gemini-2.5-flash-exp")
      *     .instruction("You are helpful")
      *     .toA2aServerAndStart();
      * }</pre>
@@ -639,7 +639,7 @@ public class LlmAgent extends BaseAgent {
      * <pre>{@code
      * LlmAgent.builder()
      *     .name("MyAgent")
-     *     .model("gemini-2.0-flash-exp")
+     *     .model("gemini-2.5-flash-exp")
      *     .instruction("You are helpful")
      *     .toA2aServerAndStart(5066);
      * }</pre>
@@ -666,7 +666,7 @@ public class LlmAgent extends BaseAgent {
      * <pre>{@code
      * LlmAgent.builder()
      *     .name("MyAgent")
-     *     .model("gemini-2.0-flash-exp")
+     *     .model("gemini-2.5-flash-exp")
      *     .instruction("You are helpful")
      *     .toA2a()
      *     .port(5066)
