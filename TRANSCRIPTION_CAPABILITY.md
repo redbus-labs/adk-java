@@ -94,7 +94,7 @@ FunctionTool transcriptionTool = TranscriptionTool.create();
 if (transcriptionTool != null) {
   LlmAgent agent = LlmAgent.builder()
       .name("audio_agent")
-      .model("gemini-2.0-flash")
+      .model("gemini-2.5-flash")
       .instruction("Analyze audio files. Use transcribe_audio tool when needed.")
       .addTool(transcriptionTool)
       .build();

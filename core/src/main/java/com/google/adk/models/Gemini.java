@@ -67,7 +67,7 @@ public class Gemini extends BaseLlm {
   /**
    * Constructs a new Gemini instance.
    *
-   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
+   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param apiClient The genai {@link com.google.genai.Client} instance for making API calls.
    */
   public Gemini(String modelName, Client apiClient) {
@@ -78,7 +78,7 @@ public class Gemini extends BaseLlm {
   /**
    * Constructs a new Gemini instance with a Google Gemini API key.
    *
-   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
+   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param apiKey The Google Gemini API key.
    */
   public Gemini(String modelName, String apiKey) {
@@ -94,7 +94,7 @@ public class Gemini extends BaseLlm {
   /**
    * Constructs a new Gemini instance with a Google Gemini API key.
    *
-   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
+   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param vertexCredentials The Vertex AI credentials to access the Gemini model.
    */
   public Gemini(String modelName, VertexCredentials vertexCredentials) {
@@ -131,7 +131,7 @@ public class Gemini extends BaseLlm {
     /**
      * Sets the name of the Gemini model to use.
      *
-     * @param modelName The model name (e.g., "gemini-2.0-flash").
+     * @param modelName The model name (e.g., "gemini-2.5-flash").
      * @return This builder.
      */
     @CanIgnoreReturnValue
