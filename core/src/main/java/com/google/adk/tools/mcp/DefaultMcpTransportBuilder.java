@@ -5,6 +5,7 @@ import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.spec.McpClientTransport;
 import java.util.Collection;
@@ -18,7 +19,7 @@ import reactor.core.publisher.Mono;
  */
 public class DefaultMcpTransportBuilder implements McpTransportBuilder {
 
-  private static final McpJsonMapper jsonMapper = McpJsonMapper.getDefault();
+  private static final McpJsonMapper jsonMapper = McpJsonDefaults.getMapper();
 
   @Override
   public McpClientTransport build(Object connectionParams) {
