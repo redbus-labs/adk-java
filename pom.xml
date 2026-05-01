@@ -51,7 +51,7 @@
          cloud libraries. Once they update their otel dependencies we
          can consider updating ours here as well -->
     <otel.version>1.51.0</otel.version>
-    <mcp.version>0.17.2</mcp.version>
+    <mcp.version>1.1.1</mcp.version>
     <errorprone.version>2.47.0</errorprone.version>
     <google.genai.version>1.44.0</google.genai.version>
     <protobuf.version>4.33.5</protobuf.version>
