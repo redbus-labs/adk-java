@@ -246,6 +246,157 @@ public final class ChatCompletionsRequestTest {
   }
 
   @Test
+  public void testFromLlmRequest_withRefusal() throws Exception {
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(
+                            ImmutableList.of(
+                                Part.fromText("Regular text response"),
+                                Part.fromText(
+                                    ChatCompletionsCommon.REFUSAL_PREFIX + "I cannot do that.")))
+                        .build()))
+            .build();
+
+    ChatCompletionsRequest request = ChatCompletionsRequest.fromLlmRequest(llmRequest, false);
+
+    assertThat(request.messages).hasSize(1);
+    ChatCompletionsRequest.Message message = request.messages.get(0);
+    assertThat(message.role).isEqualTo("assistant");
+    assertThat(message.refusal).isEqualTo("I cannot do that.");
+    assertThat(message.content.getValue()).isEqualTo("Regular text response");
+  }
+
+  @Test
+  public void testFromLlmRequest_withRefusalEmbeddedAfterNewline() throws Exception {
+    // A single Part containing both content and refusal, separated by "\n[[REFUSAL]]: ".
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(
+                            ImmutableList.of(
+                                Part.fromText(
+                                    "Partial text answer\n"
+                                        + ChatCompletionsCommon.REFUSAL_PREFIX
+                                        + "System error or refusal")))
+                        .build()))
+            .build();
+
+    ChatCompletionsRequest request = ChatCompletionsRequest.fromLlmRequest(llmRequest, false);
+
+    assertThat(request.messages).hasSize(1);
+    ChatCompletionsRequest.Message message = request.messages.get(0);
+    assertThat(message.role).isEqualTo("assistant");
+    assertThat(message.content.getValue()).isEqualTo("Partial text answer");
+    assertThat(message.refusal).isEqualTo("System error or refusal");
+  }
+
+  @Test
+  public void testFromLlmRequest_withMultipleRefusalsJoinedWithNewline() throws Exception {
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(
+                            ImmutableList.of(
+                                Part.fromText(ChatCompletionsCommon.REFUSAL_PREFIX + "First"),
+                                Part.fromText(ChatCompletionsCommon.REFUSAL_PREFIX + "Second")))
+                        .build()))
+            .build();
+
+    ChatCompletionsRequest request = ChatCompletionsRequest.fromLlmRequest(llmRequest, false);
+
+    assertThat(request.messages).hasSize(1);
+    ChatCompletionsRequest.Message message = request.messages.get(0);
+    assertThat(message.role).isEqualTo("assistant");
+    assertThat(message.refusal).isEqualTo("First\nSecond");
+    assertThat(message.content).isNull();
+  }
+
+  @Test
+  public void testFromLlmRequest_withRefusalOnlyHasNullContent() throws Exception {
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(
+                            ImmutableList.of(
+                                Part.fromText(
+                                    ChatCompletionsCommon.REFUSAL_PREFIX + "Only a refusal")))
+                        .build()))
+            .build();
+
+    ChatCompletionsRequest request = ChatCompletionsRequest.fromLlmRequest(llmRequest, false);
+
+    assertThat(request.messages).hasSize(1);
+    ChatCompletionsRequest.Message message = request.messages.get(0);
+    assertThat(message.role).isEqualTo("assistant");
+    assertThat(message.refusal).isEqualTo("Only a refusal");
+    assertThat(message.content).isNull();
+  }
+
+  @Test
+  public void testFromLlmRequest_withRefusalPrefixAfterEmptyContentLine() throws Exception {
+    // Edge case: text begins with "\n[[REFUSAL]]: ..." -- empty content before the prefix.
+    // Expectation: no content part, refusal populated.
+    String text = "\n" + ChatCompletionsCommon.REFUSAL_PREFIX + "Refusal only";
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(ImmutableList.of(Part.fromText(text)))
+                        .build()))
+            .build();
+
+    ChatCompletionsRequest request = ChatCompletionsRequest.fromLlmRequest(llmRequest, false);
+
+    assertThat(request.messages).hasSize(1);
+    ChatCompletionsRequest.Message message = request.messages.get(0);
+    assertThat(message.refusal).isEqualTo("Refusal only");
+    assertThat(message.content).isNull();
+  }
+
+  @Test
+  public void testFromLlmRequest_withRefusalPrefixMidLineIsNotSplit() throws Exception {
+    // The prefix is intentionally NOT recognized mid-line without a preceding newline.
+    String inlineText = "foo " + ChatCompletionsCommon.REFUSAL_PREFIX + "bar";
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(ImmutableList.of(Part.fromText(inlineText)))
+                        .build()))
+            .build();
+
+    ChatCompletionsRequest request = ChatCompletionsRequest.fromLlmRequest(llmRequest, false);
+
+    assertThat(request.messages).hasSize(1);
+    ChatCompletionsRequest.Message message = request.messages.get(0);
+    assertThat(message.refusal).isNull();
+    assertThat(message.content.getValue()).isEqualTo(inlineText);
+  }
+
+  @Test
   public void testFromLlmRequest_withSystemInstruction() throws Exception {
     LlmRequest llmRequest =
         LlmRequest.builder()

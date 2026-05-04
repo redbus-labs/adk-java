@@ -350,6 +350,7 @@ public final class ChatCompletionsRequest {
     List<ContentPart> contentParts = new ArrayList<>();
     List<ChatCompletionsCommon.ToolCall> toolCalls = new ArrayList<>();
     List<Message> toolResponses = new ArrayList<>();
+    List<String> refusals = new ArrayList<>();
 
     content
         .parts()
@@ -357,7 +358,18 @@ public final class ChatCompletionsRequest {
             parts -> {
               for (Part part : parts) {
                 if (part.text().isPresent()) {
-                  contentParts.add(processTextPart(part));
+                  // Text Parts may carry refusal content prefixed with REFUSAL_PREFIX.
+                  ChatCompletionsCommon.RefusalSplit split =
+                      ChatCompletionsCommon.parseRefusalPrefix(part.text().get());
+                  if (split.content() != null) {
+                    ContentPart textPart = new ContentPart();
+                    textPart.type = "text";
+                    textPart.text = split.content();
+                    contentParts.add(textPart);
+                  }
+                  if (split.refusal() != null) {
+                    refusals.add(split.refusal());
+                  }
                 } else if (part.inlineData().isPresent()) {
                   contentParts.add(processInlineDataPart(part));
                 } else if (part.fileData().isPresent()) {
@@ -381,6 +393,9 @@ public final class ChatCompletionsRequest {
       if (!toolCalls.isEmpty()) {
         msg.toolCalls = ImmutableList.copyOf(toolCalls);
       }
+      if (!refusals.isEmpty()) {
+        msg.refusal = String.join("\n", refusals);
+      }
       if (!contentParts.isEmpty()) {
         if (contentParts.size() == 1 && Objects.equals(contentParts.get(0).type, "text")) {
           msg.content = new MessageContent(contentParts.get(0).text);
@@ -392,19 +407,6 @@ public final class ChatCompletionsRequest {
       messages.add(msg);
       return messages;
     }
-  }
-
-  /**
-   * Processes a text part and returns a mapped ContentPart.
-   *
-   * @param part The input part containing simple text.
-   * @return The mapped text part.
-   */
-  private static ContentPart processTextPart(Part part) {
-    ContentPart textPart = new ContentPart();
-    textPart.type = "text";
-    textPart.text = part.text().get();
-    return textPart;
   }
 
   /**

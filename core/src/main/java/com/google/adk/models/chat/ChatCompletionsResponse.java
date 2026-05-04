@@ -180,7 +180,7 @@ public final class ChatCompletionsResponse {
         parts.add(Part.fromText(message.content));
       }
       if (message.refusal != null) {
-        parts.add(Part.fromText(message.refusal));
+        parts.add(Part.fromText(ChatCompletionsCommon.REFUSAL_PREFIX + message.refusal));
       }
       if (message.toolCalls != null) {
         parts.addAll(mapToolCallsToParts(message.toolCalls));

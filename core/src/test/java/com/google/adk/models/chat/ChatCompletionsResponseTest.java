@@ -504,6 +504,7 @@ public final class ChatCompletionsResponseTest {
             "index": 0,
             "message": {
               "role": "assistant",
+              "content": "Partial text answer",
               "refusal": "System error or refusal"
             },
             "finish_reason": "stop"
@@ -521,8 +522,11 @@ public final class ChatCompletionsResponseTest {
 
     // Content
     assertThat(response.content().get().role()).hasValue("model");
+    assertThat(response.content().get().parts().get()).hasSize(2);
     assertThat(response.content().get().parts().get().get(0).text())
-        .hasValue("System error or refusal");
+        .hasValue("Partial text answer");
+    assertThat(response.content().get().parts().get().get(1).text())
+        .hasValue("[[REFUSAL]]: System error or refusal");
 
     // Custom Metadata
     List<CustomMetadata> metadata = response.customMetadata().get();
