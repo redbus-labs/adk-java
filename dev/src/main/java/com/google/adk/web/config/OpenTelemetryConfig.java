@@ -60,18 +60,14 @@ public class OpenTelemetryConfig {
 
     // Check if OpenTelemetry has already been set globally (common in tests)
     try {
-      io.opentelemetry.api.GlobalOpenTelemetry.get();
-      // If we get here, it's already set, so just return a new instance without global
-      // registration
-      otelLog.debug("OpenTelemetry already registered globally, creating non-global instance.");
-      return OpenTelemetrySdk.builder().setTracerProvider(sdkTracerProvider).build();
-    } catch (IllegalStateException e) {
-      // GlobalOpenTelemetry hasn't been set yet, safe to register globally
       otelLog.debug("Registering OpenTelemetry globally.");
-      OpenTelemetrySdk otelSdk =
+      OpenTelemetrySdk sdk =
           OpenTelemetrySdk.builder().setTracerProvider(sdkTracerProvider).buildAndRegisterGlobal();
-      Runtime.getRuntime().addShutdownHook(new Thread(otelSdk::close));
-      return otelSdk;
+      Runtime.getRuntime().addShutdownHook(new Thread(sdk::close));
+      return sdk;
+    } catch (IllegalStateException e) {
+      otelLog.debug("OpenTelemetry already registered globally, returning non-global instance.");
+      return OpenTelemetrySdk.builder().setTracerProvider(sdkTracerProvider).build();
     }
   }
 }
