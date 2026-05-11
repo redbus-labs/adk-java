@@ -30,7 +30,6 @@ import com.google.adk.events.Event;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
-import com.google.adk.plugins.agentanalytics.JsonFormatter.ParsedContent;
 import com.google.adk.plugins.agentanalytics.JsonFormatter.TruncationResult;
 import com.google.adk.plugins.agentanalytics.TraceManager.RecordData;
 import com.google.adk.plugins.agentanalytics.TraceManager.SpanIds;
@@ -65,6 +64,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
@@ -184,37 +184,36 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     }
   }
 
-  private void logEvent(
+  private Completable logEvent(
       String eventType,
       InvocationContext invocationContext,
-      Object content,
+      @Nullable Object content,
       Optional<EventData> eventData) {
-    logEvent(eventType, invocationContext, content, false, eventData);
+    return logEvent(eventType, invocationContext, content, false, eventData);
   }
 
-  private void logEvent(
+  private Completable logEvent(
       String eventType,
       InvocationContext invocationContext,
-      Object content,
+      @Nullable Object content,
       boolean isContentTruncated,
       Optional<EventData> eventData) {
     if (!config.enabled()) {
-      return;
+      return Completable.complete();
     }
     if (!config.eventAllowlist().isEmpty() && !config.eventAllowlist().contains(eventType)) {
-      return;
+      return Completable.complete();
     }
     if (config.eventDenylist().contains(eventType)) {
-      return;
+      return Completable.complete();
     }
     if (state.isProcessed(invocationContext.invocationId())) {
-      return;
+      return Completable.complete();
     }
     if (config.contentFormatter() != null && content != null) {
       try {
         content = config.contentFormatter().apply(content, eventType);
       } catch (RuntimeException e) {
-
         logger.log(
             Level.WARNING,
             "Failed to format content for invocation ID: " + invocationContext.invocationId(),
@@ -222,8 +221,9 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
         content = null; // Fail-closed to avoid leaking unmasked sensitive data
       }
     }
-    String invocationId = invocationContext.invocationId();
-    BatchProcessor processor = state.getBatchProcessor(invocationId);
+
+    // Resolve IDs before going async
+    ResolvedTraceIds traceIds = getResolvedTraceIds(invocationContext, eventData);
     // Ensure table exists before logging.
     ensureTableExistsOnce();
     // Log common fields
@@ -234,13 +234,9 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     row.put("session_id", invocationContext.session().id());
     row.put("invocation_id", invocationContext.invocationId());
     row.put("user_id", invocationContext.userId());
-    // Parse and log content
-    if (content != null) {
-      ParsedContent parsedContent = JsonFormatter.parse(content, config.maxContentLength());
-      row.put("content_parts", parsedContent.parts());
-      row.put("content", parsedContent.content());
-      row.put("is_truncated", isContentTruncated || parsedContent.isTruncated());
-    }
+    row.put("trace_id", traceIds.traceId());
+    row.put("span_id", traceIds.spanId());
+    row.put("parent_span_id", traceIds.parentSpanId());
 
     EventData data = eventData.orElse(EventData.builder().build());
     row.put("status", data.status());
@@ -252,12 +248,48 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     }
     row.put("attributes", convertToJsonNode(getAttributes(data, invocationContext)));
 
-    addTraceDetails(row, invocationContext, eventData);
-    processor.append(row);
+    CompletableFuture<Void> parseFuture;
+    if (content != null) {
+      parseFuture =
+          state
+              .getParser()
+              .parse(content)
+              .thenAccept(
+                  parsedContent -> {
+                    row.put(
+                        "content_parts",
+                        config.logMultiModalContent() ? parsedContent.parts() : ImmutableList.of());
+                    row.put("content", parsedContent.content());
+                    row.put("is_truncated", isContentTruncated || parsedContent.isTruncated());
+                  })
+              .exceptionally(
+                  ex -> {
+                    logger.log(
+                        Level.WARNING,
+                        "Failed to parse content for invocation ID: "
+                            + invocationContext.invocationId(),
+                        ex);
+                    row.put("content", "Failed to parse content.");
+                    row.put("content_parts", ImmutableList.of());
+                    row.put("is_truncated", true);
+                    return null;
+                  });
+    } else {
+      parseFuture = CompletableFuture.completedFuture(null);
+    }
+
+    CompletableFuture<Void> appendFuture =
+        parseFuture.thenRun(
+            () -> {
+              BatchProcessor processor = state.getBatchProcessor(invocationContext.invocationId());
+              processor.append(row);
+            });
+    state.addPendingTask(invocationContext.invocationId(), appendFuture);
+    return Completable.complete();
   }
 
-  private void addTraceDetails(
-      Map<String, Object> row, InvocationContext invocationContext, Optional<EventData> eventData) {
+  private ResolvedTraceIds getResolvedTraceIds(
+      InvocationContext invocationContext, Optional<EventData> eventData) {
     TraceManager traceManager = state.getTraceManager(invocationContext.invocationId());
     String traceId =
         eventData
@@ -266,16 +298,16 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
     Optional<SpanIds> ambientSpanIds = traceManager.getAmbientSpanAndParent();
     SpanIds spanIds = ambientSpanIds.orElse(traceManager.getCurrentSpanAndParent());
 
-    row.put("trace_id", traceId);
-    row.put(
-        "span_id",
-        eventData.flatMap(EventData::spanIdOverride).orElse(spanIds.spanId().orElse(null)));
-    row.put(
-        "parent_span_id",
+    return new ResolvedTraceIds(
+        traceId,
+        eventData.flatMap(EventData::spanIdOverride).orElse(spanIds.spanId().orElse(null)),
         eventData
             .flatMap(EventData::parentSpanIdOverride)
             .orElse(spanIds.parentSpanId().orElse(null)));
   }
+
+  private record ResolvedTraceIds(
+      String traceId, @Nullable String spanId, @Nullable String parentSpanId) {}
 
   private @Nullable Map<String, Object> extractLatency(EventData eventData) {
     Map<String, Object> latencyMap = new HashMap<>();
@@ -331,8 +363,7 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
 
   @Override
   public Completable close() {
-    state.close();
-    return Completable.complete();
+    return state.close();
   }
 
   @VisibleForTesting
@@ -372,159 +403,139 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
   @Override
   public Maybe<Content> onUserMessageCallback(
       InvocationContext invocationContext, Content userMessage) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(invocationContext.invocationId())) {
-            return;
-          }
-          state
-              .getTraceManager(invocationContext.invocationId())
-              .ensureInvocationSpan(invocationContext);
-          logEvent("USER_MESSAGE_RECEIVED", invocationContext, userMessage, Optional.empty());
-          if (userMessage.parts().isPresent()) {
-            for (Part part : userMessage.parts().get()) {
-              if (part.functionCall().isPresent()
-                  && HITL_EVENT_TYPES.containsKey(part.functionCall().get().name().orElse(""))) {
-                String hitlEvent = HITL_EVENT_TYPES.get(part.functionCall().get().name().get());
-                TruncationResult truncatedResult = smartTruncate(part, config.maxContentLength());
-                logEvent(
-                    hitlEvent + "_COMPLETED",
-                    invocationContext,
-                    ImmutableMap.of(
-                        "tool",
-                        part.functionCall().get().name().get(),
-                        "result",
-                        truncatedResult.node()),
-                    truncatedResult.isTruncated(),
-                    Optional.empty());
-              }
-            }
-          }
-        });
+    if (state.isProcessed(invocationContext.invocationId())) {
+      return Maybe.empty();
+    }
+    state.getTraceManager(invocationContext.invocationId()).ensureInvocationSpan(invocationContext);
+    Completable logCompletable =
+        logEvent("USER_MESSAGE_RECEIVED", invocationContext, userMessage, Optional.empty());
+
+    if (userMessage.parts().isPresent()) {
+      for (Part part : userMessage.parts().get()) {
+        if (part.functionCall().isPresent()
+            && HITL_EVENT_TYPES.containsKey(part.functionCall().get().name().orElse(""))) {
+          String hitlEvent = HITL_EVENT_TYPES.get(part.functionCall().get().name().get());
+          TruncationResult truncatedResult = smartTruncate(part, config.maxContentLength());
+          logCompletable =
+              logCompletable.andThen(
+                  logEvent(
+                      hitlEvent + "_COMPLETED",
+                      invocationContext,
+                      ImmutableMap.of(
+                          "tool",
+                          part.functionCall().get().name().get(),
+                          "result",
+                          truncatedResult.node()),
+                      truncatedResult.isTruncated(),
+                      Optional.empty()));
+        }
+      }
+    }
+    return logCompletable.andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<Event> onEventCallback(InvocationContext invocationContext, Event event) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(invocationContext.invocationId())) {
-            return;
-          }
-          EventData.Builder eventDataBuilder =
-              EventData.builder()
-                  .setExtraAttributes(
-                      ImmutableMap.<String, Object>builder()
-                          .put("state_delta", event.actions().stateDelta())
-                          .put("author", event.author())
-                          .buildOrThrow());
-          logEvent(
-              "STATE_DELTA",
-              invocationContext,
-              event.content().orElse(null),
-              Optional.of(eventDataBuilder.build()));
+    if (state.isProcessed(invocationContext.invocationId())) {
+      return Maybe.empty();
+    }
+    EventData.Builder eventDataBuilder =
+        EventData.builder()
+            .setExtraAttributes(
+                ImmutableMap.<String, Object>builder()
+                    .put("state_delta", event.actions().stateDelta())
+                    .put("author", event.author())
+                    .buildOrThrow());
+    Completable logCompletable =
+        logEvent(
+            "STATE_DELTA",
+            invocationContext,
+            event.content().orElse(null),
+            Optional.of(eventDataBuilder.build()));
 
-          if (event.content().isPresent() && event.content().get().parts().isPresent()) {
-            for (Part part : event.content().get().parts().get()) {
-              if (part.functionCall().isPresent()
-                  && HITL_EVENT_TYPES.containsKey(part.functionCall().get().name().orElse(""))) {
-                String hitlEvent = HITL_EVENT_TYPES.get(part.functionCall().get().name().get());
-                TruncationResult truncatedResult =
-                    smartTruncate(part.functionCall().get().args(), config.maxContentLength());
-                logEvent(
-                    hitlEvent + "_COMPLETED",
-                    invocationContext,
-                    ImmutableMap.of(
-                        "tool",
-                        part.functionCall().get().name().get(),
-                        "args",
-                        truncatedResult.node()),
-                    truncatedResult.isTruncated(),
-                    Optional.empty());
-              }
-              if (part.functionResponse().isPresent()
-                  && HITL_EVENT_TYPES.containsKey(
-                      part.functionResponse().get().name().orElse(""))) {
-                String hitlEvent = HITL_EVENT_TYPES.get(part.functionResponse().get().name().get());
-                TruncationResult truncatedResult =
-                    smartTruncate(
-                        part.functionResponse().get().response(), config.maxContentLength());
-                logEvent(
-                    hitlEvent + "_COMPLETED",
-                    invocationContext,
-                    ImmutableMap.of(
-                        "tool",
-                        part.functionResponse().get().name().get(),
-                        "response",
-                        truncatedResult.node()),
-                    truncatedResult.isTruncated(),
-                    Optional.empty());
-              }
-            }
-          }
-        });
+    if (event.content().isPresent() && event.content().get().parts().isPresent()) {
+      for (Part part : event.content().get().parts().get()) {
+        if (part.functionCall().isPresent()
+            && HITL_EVENT_TYPES.containsKey(part.functionCall().get().name().orElse(""))) {
+          String hitlEvent = HITL_EVENT_TYPES.get(part.functionCall().get().name().get());
+          TruncationResult truncatedResult =
+              smartTruncate(part.functionCall().get().args(), config.maxContentLength());
+          logCompletable =
+              logCompletable.andThen(
+                  logEvent(
+                      hitlEvent + "_COMPLETED",
+                      invocationContext,
+                      ImmutableMap.of(
+                          "tool",
+                          part.functionCall().get().name().get(),
+                          "args",
+                          truncatedResult.node()),
+                      truncatedResult.isTruncated(),
+                      Optional.empty()));
+        }
+        if (part.functionResponse().isPresent()
+            && HITL_EVENT_TYPES.containsKey(part.functionResponse().get().name().orElse(""))) {
+          String hitlEvent = HITL_EVENT_TYPES.get(part.functionResponse().get().name().get());
+          TruncationResult truncatedResult =
+              smartTruncate(part.functionResponse().get().response(), config.maxContentLength());
+          logCompletable =
+              logCompletable.andThen(
+                  logEvent(
+                      hitlEvent + "_COMPLETED",
+                      invocationContext,
+                      ImmutableMap.of(
+                          "tool",
+                          part.functionResponse().get().name().get(),
+                          "response",
+                          truncatedResult.node()),
+                      truncatedResult.isTruncated(),
+                      Optional.empty()));
+        }
+      }
+    }
+    return logCompletable.andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<Content> beforeRunCallback(InvocationContext invocationContext) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(invocationContext.invocationId())) {
-            return;
-          }
-          state
-              .getTraceManager(invocationContext.invocationId())
-              .ensureInvocationSpan(invocationContext);
-          logEvent("INVOCATION_STARTING", invocationContext, null, Optional.empty());
-        });
+    if (state.isProcessed(invocationContext.invocationId())) {
+      return Maybe.empty();
+    }
+    state.getTraceManager(invocationContext.invocationId()).ensureInvocationSpan(invocationContext);
+    return logEvent("INVOCATION_STARTING", invocationContext, null, Optional.empty())
+        .andThen(Maybe.empty());
   }
 
   @Override
   public Completable afterRunCallback(InvocationContext invocationContext) {
-    return Completable.fromAction(
-        () -> {
-          logEvent(
-              "INVOCATION_COMPLETED",
-              invocationContext,
-              null,
-              getCompletedEventData(invocationContext));
-          // Mark invocation ID as processed to avoid memory leaks.
-          state.markProcessed(invocationContext.invocationId());
-          BatchProcessor processor = state.removeProcessor(invocationContext.invocationId());
-          if (processor != null) {
-            processor.flush();
-            processor.close();
-          }
-          TraceManager traceManager = state.removeTraceManager(invocationContext.invocationId());
-          if (traceManager != null) {
-            traceManager.clearStack();
-          }
-        });
+    return logEvent(
+            "INVOCATION_COMPLETED",
+            invocationContext,
+            null,
+            getCompletedEventData(invocationContext))
+        .andThen(state.ensureInvocationCompleted(invocationContext.invocationId()));
   }
 
   @Override
   public Maybe<Content> beforeAgentCallback(BaseAgent agent, CallbackContext callbackContext) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
-            return;
-          }
-          state
-              .getTraceManager(callbackContext.invocationContext().invocationId())
-              .pushSpan("agent:" + agent.name());
-          logEvent("AGENT_STARTING", callbackContext.invocationContext(), null, Optional.empty());
-        });
+    if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    state
+        .getTraceManager(callbackContext.invocationContext().invocationId())
+        .pushSpan("agent:" + agent.name());
+    return logEvent("AGENT_STARTING", callbackContext.invocationContext(), null, Optional.empty())
+        .andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<Content> afterAgentCallback(BaseAgent agent, CallbackContext callbackContext) {
-    return Maybe.fromAction(
-        () -> {
-          logEvent(
-              "AGENT_COMPLETED",
-              callbackContext.invocationContext(),
-              null,
-              getCompletedEventData(callbackContext.invocationContext()));
-        });
+    return logEvent(
+            "AGENT_COMPLETED",
+            callbackContext.invocationContext(),
+            null,
+            getCompletedEventData(callbackContext.invocationContext()))
+        .andThen(Maybe.empty());
   }
 
   /**
@@ -538,228 +549,204 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
   @Override
   public Maybe<LlmResponse> beforeModelCallback(
       CallbackContext callbackContext, LlmRequest.Builder llmRequest) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
-            return;
-          }
-          Map<String, Object> attributes = new HashMap<>();
-          Map<String, Object> llmConfig = new HashMap<>();
-          LlmRequest req = llmRequest.build();
-          if (req.config().isPresent()) {
-            if (req.config().get().temperature().isPresent()) {
-              llmConfig.put("temperature", req.config().get().temperature().get());
-            }
-            if (req.config().get().topP().isPresent()) {
-              llmConfig.put("top_p", req.config().get().topP().get());
-            }
-            if (req.config().get().topK().isPresent()) {
-              llmConfig.put("top_k", req.config().get().topK().get());
-            }
-            if (req.config().get().candidateCount().isPresent()) {
-              llmConfig.put("candidate_count", req.config().get().candidateCount().get());
-            }
-            if (req.config().get().maxOutputTokens().isPresent()) {
-              llmConfig.put("max_output_tokens", req.config().get().maxOutputTokens().get());
-            }
-            if (req.config().get().stopSequences().isPresent()) {
-              llmConfig.put("stop_sequences", req.config().get().stopSequences().get());
-            }
-            if (req.config().get().presencePenalty().isPresent()) {
-              llmConfig.put("presence_penalty", req.config().get().presencePenalty().get());
-            }
-            if (req.config().get().frequencyPenalty().isPresent()) {
-              llmConfig.put("frequency_penalty", req.config().get().frequencyPenalty().get());
-            }
-            if (req.config().get().responseMimeType().isPresent()) {
-              llmConfig.put("response_mime_type", req.config().get().responseMimeType().get());
-            }
-            if (req.config().get().responseSchema().isPresent()) {
-              llmConfig.put("response_schema", req.config().get().responseSchema().get());
-            }
-            if (req.config().get().seed().isPresent()) {
-              llmConfig.put("seed", req.config().get().seed().get());
-            }
-            if (req.config().get().responseLogprobs().isPresent()) {
-              llmConfig.put("response_logprobs", req.config().get().responseLogprobs().get());
-            }
-            if (req.config().get().logprobs().isPresent()) {
-              llmConfig.put("logprobs", req.config().get().logprobs().get());
-            }
-            // Put labels in attributes instead of LLM config.
-            if (req.config().get().labels().isPresent()) {
-              attributes.put("labels", req.config().get().labels().get());
-            }
-          }
-          if (!llmConfig.isEmpty()) {
-            attributes.put("llm_config", llmConfig);
-          }
-          if (!req.tools().isEmpty()) {
-            attributes.put("tools", req.tools().keySet());
-          }
-          EventData eventData =
-              EventData.builder()
-                  .setModel(req.model().orElse(""))
-                  .setExtraAttributes(attributes)
-                  .build();
-          state
-              .getTraceManager(callbackContext.invocationContext().invocationId())
-              .pushSpan("llm_request");
-          logEvent("LLM_REQUEST", callbackContext.invocationContext(), req, Optional.of(eventData));
-        });
+    if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    Map<String, Object> attributes = new HashMap<>();
+    Map<String, Object> llmConfig = new HashMap<>();
+    LlmRequest req = llmRequest.build();
+    if (req.config().isPresent()) {
+      if (req.config().get().temperature().isPresent()) {
+        llmConfig.put("temperature", req.config().get().temperature().get());
+      }
+      if (req.config().get().topP().isPresent()) {
+        llmConfig.put("top_p", req.config().get().topP().get());
+      }
+      if (req.config().get().topK().isPresent()) {
+        llmConfig.put("top_k", req.config().get().topK().get());
+      }
+      if (req.config().get().candidateCount().isPresent()) {
+        llmConfig.put("candidate_count", req.config().get().candidateCount().get());
+      }
+      if (req.config().get().maxOutputTokens().isPresent()) {
+        llmConfig.put("max_output_tokens", req.config().get().maxOutputTokens().get());
+      }
+      if (req.config().get().stopSequences().isPresent()) {
+        llmConfig.put("stop_sequences", req.config().get().stopSequences().get());
+      }
+      if (req.config().get().presencePenalty().isPresent()) {
+        llmConfig.put("presence_penalty", req.config().get().presencePenalty().get());
+      }
+      if (req.config().get().frequencyPenalty().isPresent()) {
+        llmConfig.put("frequency_penalty", req.config().get().frequencyPenalty().get());
+      }
+      if (req.config().get().responseMimeType().isPresent()) {
+        llmConfig.put("response_mime_type", req.config().get().responseMimeType().get());
+      }
+      if (req.config().get().responseSchema().isPresent()) {
+        llmConfig.put("response_schema", req.config().get().responseSchema().get());
+      }
+      if (req.config().get().seed().isPresent()) {
+        llmConfig.put("seed", req.config().get().seed().get());
+      }
+      if (req.config().get().responseLogprobs().isPresent()) {
+        llmConfig.put("response_logprobs", req.config().get().responseLogprobs().get());
+      }
+      if (req.config().get().logprobs().isPresent()) {
+        llmConfig.put("logprobs", req.config().get().logprobs().get());
+      }
+      // Put labels in attributes instead of LLM config.
+      if (req.config().get().labels().isPresent()) {
+        attributes.put("labels", req.config().get().labels().get());
+      }
+    }
+    if (!llmConfig.isEmpty()) {
+      attributes.put("llm_config", llmConfig);
+    }
+    if (!req.tools().isEmpty()) {
+      attributes.put("tools", req.tools().keySet());
+    }
+    EventData eventData =
+        EventData.builder().setModel(req.model().orElse("")).setExtraAttributes(attributes).build();
+    state
+        .getTraceManager(callbackContext.invocationContext().invocationId())
+        .pushSpan("llm_request");
+    return logEvent("LLM_REQUEST", callbackContext.invocationContext(), req, Optional.of(eventData))
+        .andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<LlmResponse> afterModelCallback(
       CallbackContext callbackContext, LlmResponse llmResponse) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
-            return;
-          }
-          TraceManager traceManager =
-              state.getTraceManager(callbackContext.invocationContext().invocationId());
-          // TODO(b/495809488): Add formatting of the content
-          ParsedContent parsedContent =
-              JsonFormatter.parse(llmResponse.content().orElse(null), config.maxContentLength());
+    if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    TraceManager traceManager =
+        state.getTraceManager(callbackContext.invocationContext().invocationId());
 
-          Map<String, Object> usageDict = new HashMap<>();
-          llmResponse
-              .usageMetadata()
-              .ifPresent(
-                  usage -> {
-                    usage.promptTokenCount().ifPresent(c -> usageDict.put("prompt", c));
-                    usage.candidatesTokenCount().ifPresent(c -> usageDict.put("completion", c));
-                    usage.totalTokenCount().ifPresent(c -> usageDict.put("total", c));
-                  });
+    Map<String, Object> usageDict = new HashMap<>();
+    llmResponse
+        .usageMetadata()
+        .ifPresent(
+            usage -> {
+              usage.promptTokenCount().ifPresent(c -> usageDict.put("prompt", c));
+              usage.candidatesTokenCount().ifPresent(c -> usageDict.put("completion", c));
+              usage.totalTokenCount().ifPresent(c -> usageDict.put("total", c));
+            });
 
-          Map<String, Object> contentMap = new HashMap<>();
-          if (parsedContent.content() != null && !parsedContent.content().isNull()) {
-            contentMap.put("response", parsedContent.content());
-          }
-          if (!usageDict.isEmpty()) {
-            contentMap.put("usage", usageDict);
-          }
+    InvocationContext invocationContext = callbackContext.invocationContext();
+    Optional<String> spanId = traceManager.getCurrentSpanId();
+    SpanIds spanIds = traceManager.getCurrentSpanAndParent();
+    String parentSpanId = spanIds.parentSpanId().orElse(null);
 
-          InvocationContext invocationContext = callbackContext.invocationContext();
-          Optional<String> spanId = traceManager.getCurrentSpanId();
-          SpanIds spanIds = traceManager.getCurrentSpanAndParent();
-          String parentSpanId = spanIds.parentSpanId().orElse(null);
+    boolean isPopped = false;
+    Duration duration = Duration.ZERO;
+    Duration ttft = null;
+    Optional<Instant> startTime = Optional.empty();
+    Optional<Instant> firstTokenTime = Optional.empty();
 
-          boolean isPopped = false;
-          Duration duration = Duration.ZERO;
-          Duration ttft = null;
-          Optional<Instant> startTime = Optional.empty();
-          Optional<Instant> firstTokenTime = Optional.empty();
+    if (spanId.isPresent()) {
+      traceManager.recordFirstToken(spanId.get());
+      startTime = traceManager.getStartTime(spanId.get());
+      firstTokenTime = traceManager.getFirstTokenTime(spanId.get());
+      if (startTime.isPresent() && firstTokenTime.isPresent()) {
+        ttft = Duration.between(startTime.get(), firstTokenTime.get());
+      }
+    }
 
-          if (spanId.isPresent()) {
-            traceManager.recordFirstToken(spanId.get());
-            startTime = traceManager.getStartTime(spanId.get());
-            firstTokenTime = traceManager.getFirstTokenTime(spanId.get());
-            if (startTime.isPresent() && firstTokenTime.isPresent()) {
-              ttft = Duration.between(startTime.get(), firstTokenTime.get());
-            }
-          }
+    if (llmResponse.partial().orElse(false)) {
+      // Streaming chunk - do NOT pop span yet
+      if (startTime.isPresent()) {
+        duration = Duration.between(startTime.get(), Instant.now());
+      }
+    } else {
+      // Final response - pop span
+      Optional<RecordData> popped = traceManager.popSpan();
+      if (popped.isPresent()) {
+        spanId = Optional.of(popped.get().spanId());
+        duration = popped.get().duration();
+        isPopped = true;
+      }
+    }
 
-          if (llmResponse.partial().orElse(false)) {
-            // Streaming chunk - do NOT pop span yet
-            if (startTime.isPresent()) {
-              duration = Duration.between(startTime.get(), Instant.now());
-            }
-          } else {
-            // Final response - pop span
-            Optional<RecordData> popped = traceManager.popSpan();
-            if (popped.isPresent()) {
-              spanId = Optional.of(popped.get().spanId());
-              duration = popped.get().duration();
-              isPopped = true;
-            }
-          }
+    boolean hasAmbient = traceManager.hasAmbientSpan();
+    boolean useOverride = isPopped && !hasAmbient;
 
-          boolean hasAmbient = traceManager.hasAmbientSpan();
-          boolean useOverride = isPopped && !hasAmbient;
+    EventData.Builder eventDataBuilder = EventData.builder();
+    if (!duration.isZero()) {
+      eventDataBuilder.setLatency(duration);
+    }
+    if (ttft != null) {
+      eventDataBuilder.setTimeToFirstToken(ttft);
+    }
+    llmResponse.modelVersion().ifPresent(eventDataBuilder::setModelVersion);
 
-          EventData.Builder eventDataBuilder = EventData.builder();
-          if (!duration.isZero()) {
-            eventDataBuilder.setLatency(duration);
-          }
-          if (ttft != null) {
-            eventDataBuilder.setTimeToFirstToken(ttft);
-          }
-          llmResponse.modelVersion().ifPresent(eventDataBuilder::setModelVersion);
+    if (!usageDict.isEmpty()) {
+      eventDataBuilder.setUsageMetadata(usageDict);
+    }
 
-          if (!usageDict.isEmpty()) {
-            eventDataBuilder.setUsageMetadata(usageDict);
-          }
+    if (useOverride) {
+      if (spanId.isPresent()) {
+        eventDataBuilder.setSpanIdOverride(spanId.get());
+      }
+      if (parentSpanId != null) {
+        eventDataBuilder.setParentSpanIdOverride(parentSpanId);
+      }
+    }
 
-          if (useOverride) {
-            if (spanId.isPresent()) {
-              eventDataBuilder.setSpanIdOverride(spanId.get());
-            }
-            if (parentSpanId != null) {
-              eventDataBuilder.setParentSpanIdOverride(parentSpanId);
-            }
-          }
-
-          logEvent(
-              "LLM_RESPONSE",
-              invocationContext,
-              contentMap.isEmpty() ? null : contentMap,
-              parsedContent.isTruncated(),
-              Optional.of(eventDataBuilder.build()));
-        });
+    return logEvent(
+            "LLM_RESPONSE",
+            invocationContext,
+            llmResponse,
+            false,
+            Optional.of(eventDataBuilder.build()))
+        .andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<LlmResponse> onModelErrorCallback(
       CallbackContext callbackContext, LlmRequest.Builder llmRequest, Throwable error) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
-            return;
-          }
-          TraceManager traceManager =
-              state.getTraceManager(callbackContext.invocationContext().invocationId());
-          InvocationContext invocationContext = callbackContext.invocationContext();
-          Optional<RecordData> popped = traceManager.popSpan();
-          String spanId = popped.map(RecordData::spanId).orElse(null);
+    if (state.isProcessed(callbackContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    TraceManager traceManager =
+        state.getTraceManager(callbackContext.invocationContext().invocationId());
+    InvocationContext invocationContext = callbackContext.invocationContext();
+    Optional<RecordData> popped = traceManager.popSpan();
+    String spanId = popped.map(RecordData::spanId).orElse(null);
 
-          SpanIds spanIds = traceManager.getCurrentSpanAndParent();
-          String parentSpanId = spanIds.spanId().orElse(null);
+    SpanIds spanIds = traceManager.getCurrentSpanAndParent();
+    String parentSpanId = spanIds.spanId().orElse(null);
 
-          boolean hasAmbient = traceManager.hasAmbientSpan();
-          EventData.Builder eventDataBuilder =
-              EventData.builder().setStatus("ERROR").setErrorMessage(error.getMessage());
-          if (popped.isPresent()) {
-            eventDataBuilder.setLatency(popped.get().duration());
-          }
-          if (!hasAmbient) {
-            if (spanId != null) {
-              eventDataBuilder.setSpanIdOverride(spanId);
-            }
-            if (parentSpanId != null) {
-              eventDataBuilder.setParentSpanIdOverride(parentSpanId);
-            }
-          }
-          logEvent("LLM_ERROR", invocationContext, null, Optional.of(eventDataBuilder.build()));
-        });
+    boolean hasAmbient = traceManager.hasAmbientSpan();
+    EventData.Builder eventDataBuilder =
+        EventData.builder().setStatus("ERROR").setErrorMessage(error.getMessage());
+    if (popped.isPresent()) {
+      eventDataBuilder.setLatency(popped.get().duration());
+    }
+    if (!hasAmbient) {
+      if (spanId != null) {
+        eventDataBuilder.setSpanIdOverride(spanId);
+      }
+      if (parentSpanId != null) {
+        eventDataBuilder.setParentSpanIdOverride(parentSpanId);
+      }
+    }
+    return logEvent("LLM_ERROR", invocationContext, null, Optional.of(eventDataBuilder.build()))
+        .andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<Map<String, Object>> beforeToolCallback(
       BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(toolContext.invocationContext().invocationId())) {
-            return;
-          }
-          TruncationResult res = smartTruncate(toolArgs, config.maxContentLength());
-          ImmutableMap<String, Object> contentMap =
-              ImmutableMap.of(
-                  "tool_origin", getToolOrigin(tool), "tool", tool.name(), "args", res.node());
-          state.getTraceManager(toolContext.invocationContext().invocationId()).pushSpan("tool");
-          logEvent("TOOL_STARTING", toolContext.invocationContext(), contentMap, Optional.empty());
-        });
+    if (state.isProcessed(toolContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    ImmutableMap<String, Object> contentMap =
+        ImmutableMap.of("tool_origin", getToolOrigin(tool), "tool", tool.name(), "args", toolArgs);
+    state.getTraceManager(toolContext.invocationContext().invocationId()).pushSpan("tool");
+    return logEvent("TOOL_STARTING", toolContext.invocationContext(), contentMap, Optional.empty())
+        .andThen(Maybe.empty());
   }
 
   @Override
@@ -768,86 +755,87 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       Map<String, Object> toolArgs,
       ToolContext toolContext,
       Map<String, Object> result) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(toolContext.invocationContext().invocationId())) {
-            return;
-          }
-          state
-              .getTraceManager(toolContext.invocationContext().invocationId())
-              .ensureInvocationSpan(toolContext.invocationContext());
-          TraceManager traceManager =
-              state.getTraceManager(toolContext.invocationContext().invocationId());
-          Optional<RecordData> popped = traceManager.popSpan();
-          TruncationResult truncationResult = smartTruncate(result, config.maxContentLength());
-          ImmutableMap<String, Object> contentMap =
-              ImmutableMap.of(
-                  "tool",
-                  tool.name(),
-                  "result",
-                  truncationResult.node(),
-                  "tool_origin",
-                  getToolOrigin(tool));
+    if (state.isProcessed(toolContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    state
+        .getTraceManager(toolContext.invocationContext().invocationId())
+        .ensureInvocationSpan(toolContext.invocationContext());
+    TraceManager traceManager =
+        state.getTraceManager(toolContext.invocationContext().invocationId());
+    Optional<RecordData> popped = traceManager.popSpan();
+    TruncationResult truncationResult = smartTruncate(result, config.maxContentLength());
+    ImmutableMap<String, Object> contentMap =
+        ImmutableMap.of(
+            "tool",
+            tool.name(),
+            "result",
+            truncationResult.node(),
+            "tool_origin",
+            getToolOrigin(tool));
 
-          SpanIds spanIds = traceManager.getCurrentSpanAndParent();
-          boolean hasAmbient = traceManager.hasAmbientSpan();
+    SpanIds spanIds = traceManager.getCurrentSpanAndParent();
+    boolean hasAmbient = traceManager.hasAmbientSpan();
 
-          EventData.Builder eventDataBuilder = EventData.builder();
-          if (popped.isPresent()) {
-            eventDataBuilder.setLatency(popped.get().duration());
-          }
-          if (!hasAmbient) {
-            popped.ifPresent(p -> eventDataBuilder.setSpanIdOverride(p.spanId()));
-            spanIds.spanId().ifPresent(eventDataBuilder::setParentSpanIdOverride);
-          }
+    EventData.Builder eventDataBuilder = EventData.builder();
+    if (popped.isPresent()) {
+      eventDataBuilder.setLatency(popped.get().duration());
+    }
+    if (!hasAmbient) {
+      popped.ifPresent(p -> eventDataBuilder.setSpanIdOverride(p.spanId()));
+      spanIds.spanId().ifPresent(eventDataBuilder::setParentSpanIdOverride);
+    }
 
-          logEvent(
-              "TOOL_COMPLETED",
-              toolContext.invocationContext(),
-              contentMap,
-              truncationResult.isTruncated(),
-              Optional.of(eventDataBuilder.build()));
-        });
+    return logEvent(
+            "TOOL_COMPLETED",
+            toolContext.invocationContext(),
+            contentMap,
+            truncationResult.isTruncated(),
+            Optional.of(eventDataBuilder.build()))
+        .andThen(Maybe.empty());
   }
 
   @Override
   public Maybe<Map<String, Object>> onToolErrorCallback(
       BaseTool tool, Map<String, Object> toolArgs, ToolContext toolContext, Throwable error) {
-    return Maybe.fromAction(
-        () -> {
-          if (state.isProcessed(toolContext.invocationContext().invocationId())) {
-            return;
-          }
-          TraceManager traceManager =
-              state.getTraceManager(toolContext.invocationContext().invocationId());
-          Optional<RecordData> popped = traceManager.popSpan();
-          TruncationResult truncationResult = smartTruncate(toolArgs, config.maxContentLength());
-          String toolOrigin = getToolOrigin(tool);
-          ImmutableMap<String, Object> contentMap =
-              ImmutableMap.of(
-                  "tool", tool.name(), "args", truncationResult.node(), "tool_origin", toolOrigin);
+    if (state.isProcessed(toolContext.invocationContext().invocationId())) {
+      return Maybe.empty();
+    }
+    state
+        .getTraceManager(toolContext.invocationContext().invocationId())
+        .ensureInvocationSpan(toolContext.invocationContext());
+    TraceManager traceManager =
+        state.getTraceManager(toolContext.invocationContext().invocationId());
+    Optional<RecordData> popped = traceManager.popSpan();
 
-          SpanIds spanIds = traceManager.getCurrentSpanAndParent();
-          boolean hasAmbient = traceManager.hasAmbientSpan();
+    TruncationResult truncationResult = smartTruncate(toolArgs, config.maxContentLength());
+    ImmutableMap<String, Object> contentMap =
+        ImmutableMap.<String, Object>builder()
+            .put("tool", tool.name())
+            .put("args", truncationResult.node())
+            .put("tool_origin", getToolOrigin(tool))
+            .buildOrThrow();
 
-          EventData.Builder eventDataBuilder =
-              EventData.builder().setStatus("ERROR").setErrorMessage(error.getMessage());
+    SpanIds spanIds = traceManager.getCurrentSpanAndParent();
+    boolean hasAmbient = traceManager.hasAmbientSpan();
 
-          if (popped.isPresent()) {
-            eventDataBuilder.setLatency(popped.get().duration());
-          }
-          if (!hasAmbient) {
-            popped.ifPresent(p -> eventDataBuilder.setSpanIdOverride(p.spanId()));
-            spanIds.spanId().ifPresent(eventDataBuilder::setParentSpanIdOverride);
-          }
+    EventData.Builder eventDataBuilder =
+        EventData.builder().setStatus("ERROR").setErrorMessage(error.getMessage());
+    if (popped.isPresent()) {
+      eventDataBuilder.setLatency(popped.get().duration());
+    }
+    if (!hasAmbient) {
+      popped.ifPresent(p -> eventDataBuilder.setSpanIdOverride(p.spanId()));
+      spanIds.spanId().ifPresent(eventDataBuilder::setParentSpanIdOverride);
+    }
 
-          logEvent(
-              "TOOL_ERROR",
-              toolContext.invocationContext(),
-              contentMap,
-              truncationResult.isTruncated(),
-              Optional.of(eventDataBuilder.build()));
-        });
+    return logEvent(
+            "TOOL_ERROR",
+            toolContext.invocationContext(),
+            contentMap,
+            truncationResult.isTruncated(),
+            Optional.of(eventDataBuilder.build()))
+        .andThen(Maybe.empty());
   }
 
   private String getToolOrigin(BaseTool tool) {

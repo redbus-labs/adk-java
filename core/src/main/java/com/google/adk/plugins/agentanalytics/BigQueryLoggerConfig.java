@@ -59,7 +59,6 @@ public abstract class BigQueryLoggerConfig {
   public abstract ImmutableList<String> clusteringFields();
 
   // Whether to log multi-modal content.
-  // TODO(b/491852782): Implement logging of multi-modal content.
   public abstract boolean logMultiModalContent();
 
   // Retry configuration for BigQuery writes.
@@ -96,7 +95,7 @@ public abstract class BigQueryLoggerConfig {
   // GCS bucket name to store multi-modal content.
   public abstract String gcsBucketName();
 
-  // TODO(b/491852782): Implement connection id.
+  // Optional BigQuery connection ID for ObjectRef columns
   public abstract Optional<String> connectionId();
 
   // Toggle for session metadata (e.g. gchat thread-id).
@@ -118,8 +117,7 @@ public abstract class BigQueryLoggerConfig {
   // Default "v" produces views like ``v_llm_request``.
   public abstract String viewPrefix();
 
-  @Nullable
-  public abstract Credentials credentials();
+  public abstract @Nullable Credentials credentials();
 
   public abstract Builder toBuilder();
 
