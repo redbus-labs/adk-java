@@ -1,6 +1,7 @@
 package com.google.adk.plugins.agentanalytics;
 
 import static com.google.adk.plugins.agentanalytics.BigQueryUtils.getVersionHeaderValue;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import com.google.api.gax.core.FixedCredentialsProvider;
@@ -13,15 +14,20 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.VerifyException;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.reactivex.rxjava3.core.Completable;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.threeten.bp.Duration;
 
@@ -39,12 +45,15 @@ class PluginState {
   private final ConcurrentHashMap<String, TraceManager> traceManagers = new ConcurrentHashMap<>();
   // Cache of invocation ID to Boolean indicating invocation ID has been processed.
   private final Cache<String, Boolean> processedInvocations;
+  private final Parser parser;
+  private final ConcurrentHashMap<String, Set<CompletableFuture<Void>>> pendingTasks =
+      new ConcurrentHashMap<>();
 
   PluginState(BigQueryLoggerConfig config) throws IOException {
     this.config = config;
-    ThreadFactory threadFactory =
-        r -> new Thread(r, "bq-analytics-plugin-" + threadCounter.getAndIncrement());
-    this.executor = Executors.newScheduledThreadPool(1, threadFactory);
+    this.executor =
+        Executors.newScheduledThreadPool(
+            2, r -> new Thread(r, "bq-analytics-plugin-" + threadCounter.getAndIncrement()));
     // One write client per plugin instance, shared by all invocations.
     this.writeClient = createWriteClient(config);
     this.processedInvocations =
@@ -52,6 +61,7 @@ class PluginState {
             .maximumSize(10000)
             .expireAfterWrite(java.time.Duration.ofMinutes(10))
             .build();
+    this.parser = new Parser(config.maxContentLength());
   }
 
   ScheduledExecutorService getExecutor() {
@@ -132,6 +142,10 @@ class PluginState {
         });
   }
 
+  Parser getParser() {
+    return parser;
+  }
+
   @VisibleForTesting
   Collection<TraceManager> getTraceManagers() {
     return traceManagers.values();
@@ -160,27 +174,102 @@ class PluginState {
     batchProcessors.clear();
   }
 
-  void close() {
-    for (BatchProcessor processor : getBatchProcessors()) {
-      processor.close();
-    }
-    for (TraceManager traceManager : getTraceManagers()) {
-      traceManager.clearStack();
-    }
-    clearBatchProcessors();
-    clearTraceManagers();
+  private Set<CompletableFuture<Void>> getPendingTasksForInvocation(String invocationId) {
+    return pendingTasks.computeIfAbsent(invocationId, k -> ConcurrentHashMap.newKeySet());
+  }
 
-    if (writeClient != null) {
-      writeClient.close();
+  void addPendingTask(String invocationId, CompletableFuture<Void> task) {
+    Set<CompletableFuture<Void>> tasks = getPendingTasksForInvocation(invocationId);
+    tasks.add(task);
+    var unused = task.whenComplete((res, err) -> tasks.remove(task));
+  }
+
+  Completable ensureInvocationCompleted(String invocationId) {
+    Set<CompletableFuture<Void>> tasks = pendingTasks.get(invocationId);
+    Completable tasksState = Completable.complete();
+    if (tasks != null && !tasks.isEmpty()) {
+      tasksState =
+          Completable.fromCompletionStage(
+              CompletableFuture.allOf(tasks.toArray(new CompletableFuture<?>[0])));
     }
-    try {
-      executor.shutdown();
-      if (!executor.awaitTermination(config.shutdownTimeout().toMillis(), MILLISECONDS)) {
-        executor.shutdownNow();
-      }
-    } catch (InterruptedException e) {
-      executor.shutdownNow();
-      Thread.currentThread().interrupt();
+    logger.info("Waiting for pending tasks to complete for invocation ID: " + invocationId);
+    return tasksState
+        .timeout(config.shutdownTimeout().toMillis(), MILLISECONDS)
+        .doOnError(
+            e -> {
+              if (e instanceof TimeoutException) {
+                logger.log(
+                    Level.WARNING,
+                    "Timeout while waiting for pending tasks to complete for invocation ID: "
+                        + invocationId,
+                    e);
+              }
+            })
+        .onErrorComplete()
+        .doFinally(
+            () -> {
+              // Mark invocation ID as processed to avoid memory leaks.
+              markProcessed(invocationId);
+              BatchProcessor processor = removeProcessor(invocationId);
+              if (processor != null) {
+                processor.flush();
+                processor.close();
+              }
+              TraceManager traceManager = removeTraceManager(invocationId);
+              if (traceManager != null) {
+                traceManager.clearStack();
+              }
+              logger.info("Removing pending tasks for invocation ID: " + invocationId);
+              pendingTasks.remove(invocationId);
+            });
+  }
+
+  Completable close() {
+    ImmutableList<CompletableFuture<Void>> tasks =
+        pendingTasks.values().stream().flatMap(Set::stream).collect(toImmutableList());
+    Completable tasksState = Completable.complete();
+    if (tasks != null && !tasks.isEmpty()) {
+      tasksState =
+          Completable.fromCompletionStage(
+              CompletableFuture.allOf(tasks.toArray(new CompletableFuture<?>[0])));
     }
+    return tasksState
+        .timeout(config.shutdownTimeout().toMillis(), MILLISECONDS)
+        .doOnError(
+            e -> {
+              if (e instanceof TimeoutException) {
+                logger.log(
+                    Level.WARNING, "Timeout while waiting for pending tasks to complete.", e);
+              }
+            })
+        .onErrorComplete()
+        .doFinally(
+            () -> {
+              for (BatchProcessor processor : getBatchProcessors()) {
+                processor.close();
+              }
+              for (TraceManager traceManager : getTraceManagers()) {
+                traceManager.clearStack();
+              }
+              clearBatchProcessors();
+              clearTraceManagers();
+
+              if (writeClient != null) {
+                try {
+                  writeClient.close();
+                } catch (RuntimeException e) {
+                  logger.log(Level.WARNING, "Failed to close BigQueryWriteClient", e);
+                }
+              }
+              try {
+                executor.shutdown();
+                if (!executor.awaitTermination(config.shutdownTimeout().toMillis(), MILLISECONDS)) {
+                  executor.shutdownNow();
+                }
+              } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+              }
+            });
   }
 }
