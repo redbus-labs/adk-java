@@ -41,6 +41,21 @@ public final class LlmRegistry {
     registerLlm("gemma-.*", modelName -> Gemma.builder().modelName(modelName).build());
     registerLlm("apigee/.*", modelName -> ApigeeLlm.builder().modelName(modelName).build());
     registerLlm("gpt-oss-.*", modelName -> GptOssLlm.builder().modelName(modelName).build());
+    registerLlm(
+        ".*realtime.*",
+        modelName -> {
+          String actualModel = modelName.contains("|") ? modelName.split("\\|", 2)[1] : modelName;
+          return new AzureRealtimeLM(actualModel);
+        });
+    registerLlm(
+        "Azure\\|.*",
+        modelName -> {
+          String actualModel = modelName.split("\\|", 2)[1];
+          if (AzureRealtimeLM.isRealtimeModel(actualModel)) {
+            return new AzureRealtimeLM(actualModel);
+          }
+          return new AzureBaseLM(actualModel);
+        });
   }
 
   /**
