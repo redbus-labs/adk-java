@@ -50,13 +50,13 @@ If you're using Maven, add the following to your dependencies:
 <dependency>
   <groupId>com.google.adk</groupId>
   <artifactId>google-adk</artifactId>
-  <version>1.1.0</version>
+  <version>1.2.0</version>
 </dependency>
 <!-- Dev UI -->
 <dependency>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk-dev</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
 </dependency>
 ```
 
@@ -84,7 +84,7 @@ import com.google.adk.tools.GoogleSearchTool;
 LlmAgent rootAgent = LlmAgent.builder()
     .name("search_assistant")
     .description("An assistant that can search the web.")
-    .model("gemini-2.0-flash") // Or your preferred models
+    .model("gemini-2.5-flash") // Or your preferred models
     .instruction("You are a helpful assistant. Answer user questions using Google Search when needed.")
     .tools(new GoogleSearchTool())
     .build();

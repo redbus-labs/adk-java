@@ -40,7 +40,7 @@ Start the server:
 mvn exec:java
 ```
 
-This starts the ADK web server with a single weather agent (`weather_agent`) that supports live audio using the `gemini-2.0-flash-live-001` model.
+This starts the ADK web server with a single weather agent (`weather_agent`) that supports live audio using the `gemini-2.5-flash-live-001` model.
 
 ## Usage
 

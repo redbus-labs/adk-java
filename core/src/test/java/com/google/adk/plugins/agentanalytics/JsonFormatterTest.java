@@ -18,6 +18,7 @@ package com.google.adk.plugins.agentanalytics;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -40,7 +41,7 @@ import org.junit.runners.JUnit4;
 public class JsonFormatterTest {
 
   @Test
-  public void parse_llmRequest_populatesPrompt() {
+  public void parse_llmRequest_populatesPrompt() throws Exception {
     LlmRequest request =
         LlmRequest.builder()
             .contents(
@@ -48,7 +49,7 @@ public class JsonFormatterTest {
                     Content.fromParts(Part.fromText("hello")).toBuilder().role("user").build()))
             .build();
 
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(request, 100);
+    Parser.ParsedContent result = new Parser(100).parse(request).get();
 
     assertTrue(result.content().has("prompt"));
     ArrayNode prompt = (ArrayNode) result.content().get("prompt");
@@ -59,7 +60,7 @@ public class JsonFormatterTest {
   }
 
   @Test
-  public void parse_llmRequest_populatesSystemPrompt() {
+  public void parse_llmRequest_populatesSystemPrompt() throws Exception {
     LlmRequest request =
         LlmRequest.builder()
             .config(
@@ -68,7 +69,7 @@ public class JsonFormatterTest {
                     .build())
             .build();
 
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(request, 100);
+    Parser.ParsedContent result = new Parser(100).parse(request).get();
 
     assertTrue(result.content().has("system_prompt"));
     assertEquals("be helpful", result.content().get("system_prompt").asText());
@@ -76,38 +77,39 @@ public class JsonFormatterTest {
   }
 
   @Test
-  public void parse_string_truncates() {
+  public void parse_string_truncates() throws Exception {
     String longString = "this is a very long string that should be truncated";
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(longString, 10);
+    Parser.ParsedContent result = new Parser(24).parse(longString).get();
 
     assertTrue(result.isTruncated());
     assertEquals("this is a ...[truncated]", result.content().asText());
   }
 
   @Test
-  public void parse_map_truncatesNested() {
-    ImmutableMap<String, Object> map = ImmutableMap.of("key", "this is a long value");
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(map, 10);
+  public void parse_map_truncatesNested() throws Exception {
+    ImmutableMap<String, Object> map =
+        ImmutableMap.of("key", "this is a very long value that should definitely be truncated");
+    Parser.ParsedContent result = new Parser(24).parse(map).get();
 
     assertTrue(result.isTruncated());
     assertEquals("this is a ...[truncated]", result.content().get("key").asText());
   }
 
   @Test
-  public void parse_content_returnsSummary() {
+  public void parse_content_returnsSummary() throws Exception {
     Content content = Content.fromParts(Part.fromText("part 1"), Part.fromText("part 2"));
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(content, 100);
+    Parser.ParsedContent result = new Parser(100).parse(content).get();
 
     assertEquals("part 1 | part 2", result.content().get("text_summary").asText());
     assertEquals(2, result.parts().size());
   }
 
   @Test
-  public void parse_content_withFileData() {
+  public void parse_content_withFileData() throws Exception {
     FileData fileData =
         FileData.builder().fileUri("gs://bucket/file.txt").mimeType("text/plain").build();
     Content content = Content.fromParts(Part.builder().fileData(fileData).build());
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(content, 100);
+    Parser.ParsedContent result = new Parser(100).parse(content).get();
 
     assertEquals(1, result.parts().size());
     JsonNode partData = result.parts().get(0);
@@ -117,10 +119,10 @@ public class JsonFormatterTest {
   }
 
   @Test
-  public void parse_content_withFunctionCall() {
+  public void parse_content_withFunctionCall() throws Exception {
     FunctionCall fc = FunctionCall.builder().name("myFunction").build();
     Content content = Content.fromParts(Part.builder().functionCall(fc).build());
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(content, 100);
+    Parser.ParsedContent result = new Parser(100).parse(content).get();
 
     assertEquals(1, result.parts().size());
     JsonNode partData = result.parts().get(0);
@@ -130,10 +132,10 @@ public class JsonFormatterTest {
   }
 
   @Test
-  public void parse_list_truncatesElements() {
+  public void parse_list_truncatesElements() throws Exception {
     List<String> list =
         Arrays.asList("short", "this is a very long string that should be truncated");
-    JsonFormatter.ParsedContent result = JsonFormatter.parse(list, 10);
+    Parser.ParsedContent result = new Parser(24).parse(list).get();
 
     assertTrue(result.isTruncated());
     JsonNode arrayNode = result.content();
@@ -141,5 +143,63 @@ public class JsonFormatterTest {
     assertEquals(2, arrayNode.size());
     assertEquals("short", arrayNode.get(0).asText());
     assertEquals("this is a ...[truncated]", arrayNode.get(1).asText());
+  }
+
+  @Test
+  public void truncate_variousInputs() {
+    assertNull(JsonFormatter.truncate(null, 10));
+    assertEquals("", JsonFormatter.truncate("", 10));
+    assertEquals("short", JsonFormatter.truncate("short", 10));
+    assertEquals("exactlyten", JsonFormatter.truncate("exactlyten", 10));
+
+    // Simple truncation
+    String truncated = JsonFormatter.truncate("this is a long string for budget 24", 24);
+    assertEquals("this is a ...[truncated]", truncated);
+
+    // Multi-byte truncation (UTF-8)
+    // "こんにちはこんにちは" is 30 bytes
+    String nihongo = "こんにちはこんにちは";
+    String truncatedNihongo = JsonFormatter.truncate(nihongo, 20); // Should keep 2 chars (6 bytes)
+    assertEquals("こん...[truncated]", truncatedNihongo);
+  }
+
+  @Test
+  public void truncate_budgetSmallerThanSuffix_returnsPartialSuffix() {
+    String longString = "this is a long string that should be truncated";
+    assertEquals("...[t", JsonFormatter.truncate(longString, 5));
+    assertEquals("", JsonFormatter.truncate(longString, 0));
+    assertEquals("...[truncated]", JsonFormatter.truncate(longString, 14));
+  }
+
+  @Test
+  public void truncateAndAddSuffix_coversCodePointSizes() {
+    String s = "aαこ😀extra";
+    String suffix = "...";
+
+    assertEquals("a...", JsonFormatter.truncateAndAddSuffix(s, 4, suffix));
+    assertEquals("aα...", JsonFormatter.truncateAndAddSuffix(s, 6, suffix));
+    assertEquals("aαこ...", JsonFormatter.truncateAndAddSuffix(s, 9, suffix));
+    assertEquals("aαこ😀...", JsonFormatter.truncateAndAddSuffix(s, 13, suffix));
+    assertEquals("aαこ...", JsonFormatter.truncateAndAddSuffix(s, 12, suffix));
+  }
+
+  @Test
+  public void parse_multibyteString_truncatesBasedOnBytes() throws Exception {
+    // "こんにちはこんにちは" is 30 bytes, but 10 characters.
+    String nihongo = "こんにちはこんにちは";
+    // With budget 20, effective budget is 6, so only 2 characters (6 bytes) should be kept.
+    Parser.ParsedContent result = new Parser(20).parse(nihongo).get();
+
+    assertTrue(result.isTruncated());
+    assertEquals("こん...[truncated]", result.content().asText());
+  }
+
+  @Test
+  public void parse_multibyteContent_truncatesBasedOnBytes() throws Exception {
+    Content content = Content.fromParts(Part.fromText("こんにちはこんにちは"));
+    Parser.ParsedContent result = new Parser(20).parse(content).get();
+
+    assertTrue(result.isTruncated());
+    assertEquals("こん...[truncated]", result.content().get("text_summary").asText());
   }
 }
