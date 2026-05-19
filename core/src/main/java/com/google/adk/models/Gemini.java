@@ -226,21 +226,7 @@ public class Gemini extends BaseLlm {
               () ->
                   processRawResponses(
                       Flowable.fromFuture(streamFuture).flatMapIterable(iterable -> iterable)))
-          .filter(
-              llmResponse ->
-                  llmResponse
-                      .content()
-                      .flatMap(Content::parts)
-                      .map(
-                          parts ->
-                              !parts.isEmpty()
-                                  && parts.stream()
-                                      .anyMatch(
-                                          p ->
-                                              p.functionCall().isPresent()
-                                                  || p.functionResponse().isPresent()
-                                                  || p.text().isPresent()))
-                      .orElse(false));
+          .filter(Gemini::shouldEmit);
     } else {
       logger.debug("Sending generateContent request to model {}", effectiveModelName);
       return Flowable.fromFuture(
@@ -298,7 +284,28 @@ public class Gemini extends BaseLlm {
                   responsesToEmit.add(aggregatedTextResponse);
                   accumulatedText.setLength(0);
                 }
-                responsesToEmit.add(currentProcessedLlmResponse);
+                if (isEmptyTextOnlyResponse(currentProcessedLlmResponse)) {
+                  // Strip the empty-text content while preserving any carried metadata
+                  // (`usageMetadata`, `finishReason`, `modelVersion`, etc.) by emitting a
+                  // content-less response marked as `partial`. This handles the trailing
+                  // `{parts:[{text:""}], finishReason:STOP}` chunk emitted by some Gemini
+                  // preview models (e.g. 3.1-flash-lite) after a function call: keeping
+                  // the chunk as-is would propagate it as a non-partial event whose
+                  // Event#finalResponse() returns true and prematurely terminate
+                  // BaseLlmFlow#run before the function response is sent back to the
+                  // model; dropping it entirely would lose the carried metadata. If the
+                  // chunk carries no useful metadata at all, suppress it outright.
+                  LlmResponse metadataOnly =
+                      currentProcessedLlmResponse.toBuilder()
+                          .content((Content) null)
+                          .partial(true)
+                          .build();
+                  if (hasUsefulMetadata(metadataOnly)) {
+                    responsesToEmit.add(metadataOnly);
+                  }
+                } else {
+                  responsesToEmit.add(currentProcessedLlmResponse);
+                }
               }
               logger.debug("Responses to emit: {}", responsesToEmit);
               return Flowable.fromIterable(responsesToEmit);
@@ -356,6 +363,67 @@ public class Gemini extends BaseLlm {
                 .parts(Part.fromText(accumulatedThoughtText).toBuilder().thought(true).build())
                 .build())
         .build();
+  }
+
+  /**
+   * Returns true if {@code response} should be emitted downstream by the streaming pipeline.
+   *
+   * <p>Drops chunks that carry neither semantic content (i.e. they are an empty-text-only response
+   * per {@link #isEmptyTextOnlyResponse}) nor any useful metadata (per {@link #hasUsefulMetadata}).
+   *
+   * <p>Package-private for testing.
+   */
+  static boolean shouldEmit(LlmResponse response) {
+    return !isEmptyTextOnlyResponse(response) || hasUsefulMetadata(response);
+  }
+
+  /**
+   * Returns true if {@code response} carries any non-content metadata that should be propagated
+   * downstream (e.g. {@code usageMetadata}, {@code finishReason}, transcriptions, grounding or
+   * error info). Inspects only top-level {@link LlmResponse} fields; the response's content/parts
+   * are intentionally not considered here.
+   */
+  private static boolean hasUsefulMetadata(LlmResponse response) {
+    return response.usageMetadata().isPresent()
+        || response.finishReason().isPresent()
+        || response.errorCode().isPresent()
+        || response.groundingMetadata().isPresent()
+        || response.inputTranscription().isPresent()
+        || response.outputTranscription().isPresent();
+  }
+
+  /**
+   * Returns true if {@code response} consists of exactly one {@link Part} whose only meaningful
+   * payload is an empty text string (i.e. {@code parts:[{text:""}]}). Such a chunk can be safely
+   * dropped from the streaming aggregator because it carries no semantic content for the agent
+   * pipeline. A part is considered to carry semantic content if any of its non-text payloads
+   * ({@code functionCall}, {@code functionResponse}, {@code inlineData}, {@code executableCode},
+   * {@code codeExecutionResult}, {@code fileData}, {@code thoughtSignature}, {@code videoMetadata},
+   * {@code toolCall}, {@code toolResponse}) is present.
+   */
+  private static boolean isEmptyTextOnlyResponse(LlmResponse response) {
+    return response
+        .content()
+        .flatMap(Content::parts)
+        .map(
+            parts -> {
+              if (parts.size() != 1) {
+                return false;
+              }
+              Part part = parts.get(0);
+              return part.text().map(String::isEmpty).orElse(false)
+                  && part.functionCall().isEmpty()
+                  && part.functionResponse().isEmpty()
+                  && part.inlineData().isEmpty()
+                  && part.executableCode().isEmpty()
+                  && part.codeExecutionResult().isEmpty()
+                  && part.fileData().isEmpty()
+                  && part.thoughtSignature().isEmpty()
+                  && part.videoMetadata().isEmpty()
+                  && part.toolCall().isEmpty()
+                  && part.toolResponse().isEmpty();
+            })
+        .orElse(false);
   }
 
   @Override
