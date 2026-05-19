@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0](https://github.com/google/adk-java/compare/v1.2.0...v1.3.0) (2026-05-13)
+
+
+### Features
+
+* Add ChatCompletionsHTTPClient and support for non-streaming requests ([9529c1a](https://github.com/google/adk-java/commit/9529c1aeecb324e1c00c6bd105df2a0e9f67ed26))
+* Add conversion from LlmRequest to ChatCompletionsRequest ([d37f6ee](https://github.com/google/adk-java/commit/d37f6ee6d8ec036154593b734f1a3b080847cfea))
+* Add SkillSource interface and implementations for loading skills ([509c4aa](https://github.com/google/adk-java/commit/509c4aa75fdc752c2758a1761cbd8946075b310c))
+* Add support for refusal content using "[[REFUSAL]]:" prefix ([e9184c9](https://github.com/google/adk-java/commit/e9184c9846d97f65907667aa2a6bbac1f65fed64))
+* Refactor BigQueryAgentAnalyticsPlugin for async in preparation for GCS offloading ([d837ef0](https://github.com/google/adk-java/commit/d837ef0164cedd284af6caee84911569109ab7e3))
+
+
+### Bug Fixes
+
+* Account for nulls in EventActions and State ([582cf7c](https://github.com/google/adk-java/commit/582cf7c2b6534afaf5edfa501391191478d8d8ea))
+* upgrade Mockito and JaCoCo for Java 25 compatibility ([8574fc5](https://github.com/google/adk-java/commit/8574fc5bb6ac7edae99306b06c0a610f7da60048))
+
 ## [1.2.0](https://github.com/google/adk-java/compare/v1.1.0...v1.2.0) (2026-04-24)
 
 
