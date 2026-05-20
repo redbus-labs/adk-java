@@ -499,16 +499,19 @@ public class Runner {
                   .defaultIfEmpty(newMessage)
                   .flatMap(
                       content ->
-                          appendNewMessageToSession(
-                              session,
-                              content,
-                              initialContext,
-                              runConfig.saveInputBlobsAsArtifacts(),
-                              stateDelta))
+                          (content != null)
+                              ? appendNewMessageToSession(
+                                  session,
+                                  content,
+                                  initialContext,
+                                  runConfig.saveInputBlobsAsArtifacts(),
+                                  stateDelta)
+                              : Single.<Event>just(null))
                   .flatMapPublisher(
                       event -> {
-                        // Get the updated session after the message and state delta are
-                        // applied
+                        if (event == null) {
+                          return Flowable.empty();
+                        }
                         return this.sessionService
                             .getSession(
                                 session.appName(), session.userId(), session.id(), Optional.empty())

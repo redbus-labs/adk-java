@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.AudioTranscriptionConfig;
 import com.google.genai.types.Modality;
+import com.google.genai.types.RealtimeInputConfig;
 import com.google.genai.types.SpeechConfig;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -68,6 +69,8 @@ public abstract class RunConfig {
 
   public abstract @Nullable AudioTranscriptionConfig inputAudioTranscription();
 
+  public abstract @Nullable RealtimeInputConfig realtimeInputConfig();
+
   public abstract int maxLlmCalls();
 
   public abstract boolean autoCreateSession();
@@ -94,6 +97,7 @@ public abstract class RunConfig {
         .speechConfig(runConfig.speechConfig())
         .outputAudioTranscription(runConfig.outputAudioTranscription())
         .inputAudioTranscription(runConfig.inputAudioTranscription())
+        .realtimeInputConfig(runConfig.realtimeInputConfig())
         .autoCreateSession(runConfig.autoCreateSession());
   }
 
@@ -167,6 +171,15 @@ public abstract class RunConfig {
     @CanIgnoreReturnValue
     public abstract Builder inputAudioTranscription(
         @Nullable AudioTranscriptionConfig inputAudioTranscription);
+
+    @Deprecated
+    @CanIgnoreReturnValue
+    public final Builder setRealtimeInputConfig(@Nullable RealtimeInputConfig realtimeInputConfig) {
+      return realtimeInputConfig(realtimeInputConfig);
+    }
+
+    @CanIgnoreReturnValue
+    public abstract Builder realtimeInputConfig(@Nullable RealtimeInputConfig realtimeInputConfig);
 
     @Deprecated
     @CanIgnoreReturnValue
