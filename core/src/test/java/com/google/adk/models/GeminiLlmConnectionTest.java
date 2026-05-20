@@ -21,7 +21,6 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
-import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.LiveServerContent;
 import com.google.genai.types.LiveServerMessage;
 import com.google.genai.types.LiveServerSetupComplete;
@@ -29,8 +28,6 @@ import com.google.genai.types.LiveServerToolCall;
 import com.google.genai.types.LiveServerToolCallCancellation;
 import com.google.genai.types.Part;
 import com.google.genai.types.UsageMetadata;
-import io.reactivex.rxjava3.observers.TestObserver;
-import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -48,13 +45,8 @@ public final class GeminiLlmConnectionTest {
             .build();
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
     assertThat(response.content()).isPresent();
     assertThat(response.content().get().text()).isEqualTo("Model response");
@@ -74,13 +66,8 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
     assertThat(response.interrupted()).hasValue(false);
     assertThat(response.turnComplete()).hasValue(false);
   }
@@ -95,13 +82,8 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
     assertThat(response.interrupted()).isEmpty();
     assertThat(response.turnComplete()).hasValue(true);
   }
@@ -116,13 +98,8 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
     assertThat(response.partial()).hasValue(false);
     assertThat(response.turnComplete()).hasValue(true);
   }
@@ -137,13 +114,8 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
     assertThat(response.partial()).hasValue(true);
     assertThat(response.turnComplete()).hasValue(false);
   }
@@ -156,13 +128,8 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().toolCall(toolCall).build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
     assertThat(response.content()).isPresent();
     assertThat(response.content().get().parts()).isPresent();
     assertThat(response.content().get().parts().get()).hasSize(1);
@@ -172,123 +139,40 @@ public final class GeminiLlmConnectionTest {
   }
 
   @Test
-  public void convertToServerResponse_withUsageMetadata_mapsGenerateResponseUsageMetadata() {
+  public void convertToServerResponse_withUsageMetadata_returnsEmptyOptional() {
     LiveServerMessage message =
-        LiveServerMessage.builder()
-            .usageMetadata(
-                UsageMetadata.builder()
-                    .promptTokenCount(10)
-                    .responseTokenCount(20)
-                    .totalTokenCount(30)
-                    .build())
-            .build();
+        LiveServerMessage.builder().usageMetadata(UsageMetadata.builder().build()).build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
-
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
-    assertThat(response.usageMetadata()).isPresent();
-    GenerateContentResponseUsageMetadata expectedUsageMetadata =
-        GenerateContentResponseUsageMetadata.builder()
-            .promptTokenCount(10)
-            .candidatesTokenCount(20)
-            .totalTokenCount(30)
-            .build();
-    assertThat(response.usageMetadata()).hasValue(expectedUsageMetadata);
+    assertThat(GeminiLlmConnection.convertToServerResponse(message)).isEmpty();
   }
 
   @Test
-  public void convertToServerResponse_withToolCallCancellation_returnsNoValues() {
+  public void convertToServerResponse_withToolCallCancellation_returnsEmptyOptional() {
     LiveServerMessage message =
         LiveServerMessage.builder()
             .toolCallCancellation(LiveServerToolCallCancellation.builder().build())
             .build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
-
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-    testObserver.assertNoValues();
-    testObserver.assertComplete();
+    assertThat(GeminiLlmConnection.convertToServerResponse(message)).isEmpty();
   }
 
   @Test
-  public void convertToServerResponse_withSetupComplete_returnsNoValues() {
+  public void convertToServerResponse_withSetupComplete_returnsEmptyOptional() {
     LiveServerMessage message =
         LiveServerMessage.builder()
             .setupComplete(LiveServerSetupComplete.builder().build())
             .build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
-
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertNoValues();
-    testObserver.assertComplete();
+    assertThat(GeminiLlmConnection.convertToServerResponse(message)).isEmpty();
   }
 
   @Test
   public void convertToServerResponse_withUnknownMessage_returnsErrorResponse() {
     LiveServerMessage message = LiveServerMessage.builder().build();
 
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
+    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
 
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(1);
-    testObserver.assertComplete();
-    LlmResponse response = testObserver.values().get(0);
     assertThat(response.errorCode()).isPresent();
     assertThat(response.errorMessage()).hasValue("Received unknown server message.");
-  }
-
-  @Test
-  public void convertToServerResponse_withContentAndUsageMetadata_emitsMultiple() {
-    LiveServerContent serverContent =
-        LiveServerContent.builder()
-            .modelTurn(Content.fromParts(Part.fromText("Model response")))
-            .turnComplete(true)
-            .build();
-
-    UsageMetadata usageMetadata =
-        UsageMetadata.builder()
-            .promptTokenCount(10)
-            .responseTokenCount(20)
-            .totalTokenCount(30)
-            .build();
-
-    LiveServerMessage message =
-        LiveServerMessage.builder()
-            .serverContent(serverContent)
-            .usageMetadata(usageMetadata)
-            .build();
-
-    TestObserver<LlmResponse> testObserver = new TestObserver<>();
-
-    GeminiLlmConnection.convertToServerResponse(message).subscribe(testObserver);
-
-    testObserver.assertValueCount(2);
-    testObserver.assertComplete();
-
-    List<LlmResponse> responses = testObserver.values();
-
-    // Check for ServerContent response
-    LlmResponse contentResponse = responses.get(0);
-    assertThat(contentResponse.content()).isPresent();
-    assertThat(contentResponse.content().get().text()).isEqualTo("Model response");
-    assertThat(contentResponse.usageMetadata()).isEmpty();
-
-    // Check for UsageMetadata response
-    LlmResponse usageResponse = responses.get(1);
-    assertThat(usageResponse.content()).isEmpty();
-    assertThat(usageResponse.usageMetadata()).isPresent();
-    GenerateContentResponseUsageMetadata expectedUsageMetadata =
-        GenerateContentResponseUsageMetadata.builder()
-            .promptTokenCount(10)
-            .candidatesTokenCount(20)
-            .totalTokenCount(30)
-            .build();
-    assertThat(usageResponse.usageMetadata()).hasValue(expectedUsageMetadata);
   }
 }

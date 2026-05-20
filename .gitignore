@@ -24,7 +24,7 @@ target/
 out/
 
 # VS Code files
-.vscode/settings.json
+.vscode/
 
 # OS-specific junk
 .DS_Store
@@ -33,3 +33,9 @@ Thumbs.db
 # Local documentation and plans
 docs/
 plans/
+
+# Sample build artifacts / local scratch
+contrib/samples/**/bin/
+mkpro_logs.db
+
+
