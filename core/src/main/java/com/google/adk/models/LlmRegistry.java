@@ -45,15 +45,12 @@ public final class LlmRegistry {
         ".*realtime.*",
         modelName -> {
           String actualModel = modelName.contains("|") ? modelName.split("\\|", 2)[1] : modelName;
-          return new AzureRealtimeLM(actualModel);
+          return new AzureBaseLM(actualModel);
         });
     registerLlm(
         "Azure\\|.*",
         modelName -> {
           String actualModel = modelName.split("\\|", 2)[1];
-          if (AzureRealtimeLM.isRealtimeModel(actualModel)) {
-            return new AzureRealtimeLM(actualModel);
-          }
           return new AzureBaseLM(actualModel);
         });
   }
