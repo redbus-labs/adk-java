@@ -16,8 +16,6 @@
 
 package com.google.adk.skills;
 
-import static com.google.adk.skills.SkillSourceException.RESOURCE_NOT_FOUND;
-import static com.google.adk.skills.SkillSourceException.SKILL_NOT_FOUND;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -58,8 +56,7 @@ public final class InMemorySkillSource implements SkillSource {
   public Single<ImmutableList<String>> listResources(String skillName, String resourceDirectory) {
     SkillData data = skills.get(skillName);
     if (data == null) {
-      return Single.error(
-          new SkillSourceException("Skill not found: " + skillName, SKILL_NOT_FOUND));
+      return Single.error(new SkillSourceException("Skill not found: " + skillName));
     }
     String prefix =
         resourceDirectory.isEmpty()
@@ -70,8 +67,7 @@ public final class InMemorySkillSource implements SkillSource {
         && data.resources().keySet().stream().noneMatch(path -> path.startsWith(prefix))) {
       return Single.error(
           new SkillSourceException(
-              "Resource directory not found: " + resourceDirectory + " for skill: " + skillName,
-              RESOURCE_NOT_FOUND));
+              "Resource directory not found: " + resourceDirectory + " for skill: " + skillName));
     }
 
     return Single.just(
@@ -96,16 +92,13 @@ public final class InMemorySkillSource implements SkillSource {
         .map(SkillData::resources)
         .mapOptional(m -> Optional.ofNullable(m.get(resourcePath)))
         .switchIfEmpty(
-            Single.error(
-                new SkillSourceException(
-                    "Resource not found: " + resourcePath, RESOURCE_NOT_FOUND)));
+            Single.error(new SkillSourceException("Resource not found: " + resourcePath)));
   }
 
   private Single<SkillData> getSkillData(String skillName) {
     SkillData data = skills.get(skillName);
     if (data == null) {
-      return Single.error(
-          new SkillSourceException("Skill not found: " + skillName, SKILL_NOT_FOUND));
+      return Single.error(new SkillSourceException("Skill not found: " + skillName));
     }
     return Single.just(data);
   }
