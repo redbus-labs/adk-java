@@ -17,7 +17,6 @@
 package com.google.adk.plugins.agentanalytics;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -25,13 +24,11 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.adk.agents.BaseAgent;
@@ -59,8 +56,6 @@ import com.google.cloud.bigquery.TableId;
 import com.google.cloud.bigquery.storage.v1.AppendRowsResponse;
 import com.google.cloud.bigquery.storage.v1.BigQueryWriteClient;
 import com.google.cloud.bigquery.storage.v1.StreamWriter;
-import com.google.cloud.storage.BlobInfo;
-import com.google.cloud.storage.Storage;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Candidate;
@@ -807,7 +802,6 @@ public class BigQueryAgentAnalyticsPluginTest {
         (content, eventType) -> {
           throw new RuntimeException("Formatter error");
         };
-
     BigQueryLoggerConfig formattedConfig = config.toBuilder().contentFormatter(formatter).build();
     PluginState formattedState =
         new PluginState(formattedConfig) {
@@ -1046,133 +1040,6 @@ public class BigQueryAgentAnalyticsPluginTest {
     latch.await();
     assertEquals(numInvocations, processors.size());
     testExecutor.shutdown();
-  }
-
-  @Test
-  public void logEvent_offloadsToGcs_whenLargeContent() throws Exception {
-    GcsOffloader mockOffloader = mock(GcsOffloader.class);
-    when(mockOffloader.uploadContent(anyString(), anyString(), anyString()))
-        .thenReturn(CompletableFuture.completedFuture("gs://test-bucket/large.txt"));
-
-    BigQueryLoggerConfig gcsConfig = config.toBuilder().gcsBucketName("test-bucket").build();
-    PluginState gcsState =
-        new PluginState(gcsConfig) {
-          @Override
-          protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) {
-            return mockWriteClient;
-          }
-
-          @Override
-          protected StreamWriter createWriter() {
-            return mockWriter;
-          }
-
-          @Override
-          protected GcsOffloader getGcsOffloader(BigQueryLoggerConfig config) {
-            return mockOffloader;
-          }
-        };
-    BigQueryAgentAnalyticsPlugin gcsPlugin =
-        new BigQueryAgentAnalyticsPlugin(gcsConfig, mockBigQuery, gcsState);
-
-    // Large text (> 32KB default threshold)
-    String largeText = "a".repeat(40000);
-    Content content = Content.fromParts(Part.fromText(largeText));
-    gcsPlugin.onUserMessageCallback(mockInvocationContext, content).blockingSubscribe();
-
-    verify(mockOffloader, atLeastOnce()).uploadContent(anyString(), anyString(), anyString());
-
-    Map<String, Object> row = gcsState.getBatchProcessor("invocation_id").queue.poll();
-    assertNotNull(row);
-    @SuppressWarnings("unchecked") // Test only
-    List<JsonNode> contentParts = (List<JsonNode>) row.get("content_parts");
-    assertEquals("GCS_REFERENCE", contentParts.get(0).get("storage_mode").asText());
-    assertEquals("gs://test-bucket/large.txt", contentParts.get(0).get("uri").asText());
-  }
-
-  @Test
-  public void logEvent_offloadsToGcs_whenMultimodalContent() throws Exception {
-    GcsOffloader mockOffloader = mock(GcsOffloader.class);
-    when(mockOffloader.uploadContent(any(byte[].class), anyString(), anyString()))
-        .thenReturn(CompletableFuture.completedFuture("gs://test-bucket/image.png"));
-
-    BigQueryLoggerConfig gcsConfig = config.toBuilder().gcsBucketName("test-bucket").build();
-    PluginState gcsState =
-        new PluginState(gcsConfig) {
-          @Override
-          protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) {
-            return mockWriteClient;
-          }
-
-          @Override
-          protected StreamWriter createWriter() {
-            return mockWriter;
-          }
-
-          @Override
-          protected GcsOffloader getGcsOffloader(BigQueryLoggerConfig config) {
-            return mockOffloader;
-          }
-        };
-    BigQueryAgentAnalyticsPlugin gcsPlugin =
-        new BigQueryAgentAnalyticsPlugin(gcsConfig, mockBigQuery, gcsState);
-
-    Content content = Content.fromParts(Part.fromBytes("test-data".getBytes(UTF_8), "image/png"));
-    gcsPlugin.onUserMessageCallback(mockInvocationContext, content).blockingSubscribe();
-
-    verify(mockOffloader, atLeastOnce()).uploadContent(any(byte[].class), anyString(), anyString());
-
-    Map<String, Object> row = gcsState.getBatchProcessor("invocation_id").queue.poll();
-    assertNotNull(row);
-    @SuppressWarnings("unchecked") // Test only
-    List<JsonNode> contentParts = (List<JsonNode>) row.get("content_parts");
-    assertEquals("GCS_REFERENCE", contentParts.get(0).get("storage_mode").asText());
-    assertEquals("gs://test-bucket/image.png", contentParts.get(0).get("uri").asText());
-  }
-
-  @Test
-  public void logEvent_integrationWithRealGcsOffloader_whenLargeContent() throws Exception {
-    Storage mockStorage = mock(Storage.class);
-
-    BigQueryLoggerConfig gcsConfig = config.toBuilder().gcsBucketName("test-bucket").build();
-    PluginState gcsState =
-        new PluginState(gcsConfig) {
-          @Override
-          protected BigQueryWriteClient createWriteClient(BigQueryLoggerConfig config) {
-            return mockWriteClient;
-          }
-
-          @Override
-          protected StreamWriter createWriter() {
-            return mockWriter;
-          }
-
-          @Override
-          protected GcsOffloader getGcsOffloader(BigQueryLoggerConfig config) {
-            return new GcsOffloader(
-                config.projectId(),
-                config.gcsBucketName(),
-                Runnable::run, // Use direct executor for synchronous execution
-                config.credentials(),
-                mockStorage);
-          }
-        };
-    BigQueryAgentAnalyticsPlugin gcsPlugin =
-        new BigQueryAgentAnalyticsPlugin(gcsConfig, mockBigQuery, gcsState);
-
-    // Large text (> 32KB default threshold)
-    String largeText = "a".repeat(40000);
-    Content content = Content.fromParts(Part.fromText(largeText));
-    gcsPlugin.onUserMessageCallback(mockInvocationContext, content).blockingSubscribe();
-
-    verify(mockStorage, atLeastOnce()).create(any(BlobInfo.class), any(byte[].class));
-
-    Map<String, Object> row = gcsState.getBatchProcessor("invocation_id").queue.poll();
-    assertNotNull(row);
-    @SuppressWarnings("unchecked") // Test only
-    List<JsonNode> contentParts = (List<JsonNode>) row.get("content_parts");
-    assertEquals("GCS_REFERENCE", contentParts.get(0).get("storage_mode").asText());
-    assertTrue(contentParts.get(0).get("uri").asText().startsWith("gs://test-bucket/"));
   }
 
   private static class FakeAgent extends BaseAgent {
