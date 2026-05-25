@@ -209,7 +209,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
       JSONObject event = new JSONObject(json);
       String eventType = event.optString("type", "");
 
-      logger.info("Realtime WS event: {}", eventType);
+      logger.debug("Realtime WS event: {}", eventType);
 
       switch (eventType) {
         case "session.created":
@@ -388,7 +388,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
     if (!base64Audio.isEmpty()) {
       try {
         byte[] audioBytes = Base64.getDecoder().decode(base64Audio);
-        logger.info("<< SPEAKER RECV: {} bytes of audio from model", audioBytes.length);
+        logger.debug("Received {} bytes of audio from model", audioBytes.length);
         Blob audioBlob = Blob.builder().mimeType("audio/pcm").data(audioBytes).build();
 
         responseProcessor.onNext(

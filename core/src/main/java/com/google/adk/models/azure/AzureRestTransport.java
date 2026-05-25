@@ -180,21 +180,21 @@ public final class AzureRestTransport implements AzureTransport {
     final AtomicInteger inputTokens = new AtomicInteger(0);
     final AtomicInteger outputTokens = new AtomicInteger(0);
 
-    logger.info("[STREAM-DEBUG] Starting streaming request for model: {}", config.modelName());
-    logger.info("[STREAM-DEBUG] Payload size: {} bytes", payload.toString().length());
+    logger.debug("Starting streaming request for model: {}", config.modelName());
+    logger.debug("Streaming payload size: {} bytes", payload.toString().length());
 
     return Flowable.create(
         emitter -> {
           BufferedReader reader = null;
           try {
-            logger.info("[STREAM-DEBUG] Opening SSE connection...");
+            logger.debug("Opening SSE connection...");
             reader = callApiStream(payload, config);
             if (reader == null) {
-              logger.warn("[STREAM-DEBUG] Reader is null — stream failed to open.");
+              logger.warn("Azure SSE reader is null — stream failed to open.");
               emitter.onComplete();
               return;
             }
-            logger.info("[STREAM-DEBUG] SSE connection opened successfully.");
+            logger.debug("SSE connection opened successfully.");
             long streamStartMs = System.currentTimeMillis();
             int chunkCount = 0;
 
@@ -202,7 +202,7 @@ public final class AzureRestTransport implements AzureTransport {
             String line;
             while ((line = reader.readLine()) != null) {
               if (emitter.isCancelled()) {
-                logger.info("[STREAM-DEBUG] Emitter cancelled, breaking out of read loop.");
+                logger.debug("Emitter cancelled, breaking out of read loop.");
                 break;
               }
 
@@ -219,10 +219,8 @@ public final class AzureRestTransport implements AzureTransport {
               String jsonStr = line.substring(5).trim();
               if (jsonStr.equals("[DONE]")) {
                 long elapsed = System.currentTimeMillis() - streamStartMs;
-                logger.info(
-                    "[STREAM-DEBUG] [DONE] marker received after {}ms, total chunks: {}",
-                    elapsed,
-                    chunkCount);
+                logger.debug(
+                    "[DONE] marker received after {}ms, total chunks: {}", elapsed, chunkCount);
                 break;
               }
 
@@ -231,8 +229,7 @@ public final class AzureRestTransport implements AzureTransport {
               try {
                 event = new JSONObject(jsonStr);
               } catch (JSONException e) {
-                logger.warn(
-                    "[STREAM-DEBUG] Failed to parse SSE chunk #{}: {}", chunkCount, jsonStr);
+                logger.warn("Failed to parse SSE chunk #{}: {}", chunkCount, jsonStr);
                 continue;
               }
 
@@ -243,10 +240,7 @@ public final class AzureRestTransport implements AzureTransport {
               lastEventName = null;
 
               logger.debug(
-                  "[STREAM-DEBUG] Chunk #{} eventType='{}' keys={}",
-                  chunkCount,
-                  eventType,
-                  event.keySet());
+                  "SSE chunk #{} eventType='{}' keys={}", chunkCount, eventType, event.keySet());
 
               switch (eventType) {
                 case "response.output_item.added":
@@ -258,10 +252,7 @@ public final class AzureRestTransport implements AzureTransport {
                       inFunctionCall.set(true);
                       String name = item.optString("name", "");
                       String callId = item.optString("call_id", "");
-                      logger.info(
-                          "[STREAM-DEBUG] Function call starting: name='{}' callId='{}'",
-                          name,
-                          callId);
+                      logger.debug("Function call starting: name='{}' callId='{}'", name, callId);
                       if (!name.isEmpty()) functionCallName.append(name);
                       if (!callId.isEmpty()) functionCallCallId.append(callId);
                     } else if ("reasoning".equals(itemType)) {
@@ -436,8 +427,8 @@ public final class AzureRestTransport implements AzureTransport {
                       if (usage != null) {
                         inputTokens.set(usage.optInt("input_tokens", 0));
                         outputTokens.set(usage.optInt("output_tokens", 0));
-                        logger.info(
-                            "[STREAM-DEBUG] Token usage — input: {}, output: {}",
+                        logger.debug(
+                            "Stream token usage — input: {}, output: {}",
                             inputTokens.get(),
                             outputTokens.get());
                       }
@@ -451,9 +442,9 @@ public final class AzureRestTransport implements AzureTransport {
             }
 
             long totalElapsed = System.currentTimeMillis() - streamStartMs;
-            logger.info(
-                "[STREAM-DEBUG] Stream read loop finished — elapsed: {}ms, chunks: {},"
-                    + " accumulatedText: {} chars, finalTextEmitted: {}, inFunctionCall: {}",
+            logger.debug(
+                "Stream read loop finished — elapsed: {}ms, chunks: {}, accumulatedText: {} chars,"
+                    + " finalTextEmitted: {}, inFunctionCall: {}",
                 totalElapsed,
                 chunkCount,
                 accumulatedText.length(),
