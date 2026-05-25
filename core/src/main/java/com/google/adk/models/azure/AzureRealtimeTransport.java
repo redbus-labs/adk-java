@@ -22,8 +22,7 @@ public final class AzureRealtimeTransport implements AzureTransport {
 
   @Override
   public boolean supports(String modelName) {
-    if (modelName == null) return false;
-    return modelName.toLowerCase().contains("realtime");
+    return com.google.adk.models.AzureBaseLM.isRealtimeModel(modelName);
   }
 
   @Override

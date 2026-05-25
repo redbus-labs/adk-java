@@ -8,6 +8,7 @@ import com.google.genai.types.Blob;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.Part;
+import com.google.genai.types.Transcription;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.processors.PublishProcessor;
@@ -55,43 +56,16 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
   private static final int CONNECT_TIMEOUT_SECONDS = 30;
 
   /**
-   * Turn detection and VAD configuration — tuned for noisy real-world environments (crowds, street,
-   * phone speakers) per the OpenAI Realtime session reference and MS Learn VAD docs.
-   *
-   * <p>We use {@code server_vad} with:
-   *
-   * <ul>
-   *   <li>{@code threshold=0.7} — higher than default 0.5, ignores low-energy background chatter.
-   *   <li>{@code silence_duration_ms=300} — slightly more than default 200; avoids cutting off
-   *       mid-sentence pauses but still responsive.
-   *   <li>{@code prefix_padding_ms=400} — captures more lead-in audio for better first-word
-   *       clarity.
-   *   <li>{@code interrupt_response=true} — allows barge-in (MS Learn "Response interruption").
-   *   <li>{@code input_audio_noise_reduction: far_field} — server-side noise filtering for
-   *       non-headset mics (laptops, phones in crowds). Improves VAD accuracy and model perception.
-   * </ul>
-   *
-   * <p>Set {@link #useSemanticVadInstead} to {@code true} for quiet 1:1 environments where natural
-   * turn-taking matters more than noise robustness.
+   * Close-mic / phone-held noise reduction (not {@code far_field}, which favors room/distant
+   * pickup).
    */
-  private static final boolean useSemanticVadInstead = false;
+  private static final String INPUT_AUDIO_NOISE_REDUCTION = "far_field";
 
-  private static final String SEMANTIC_VAD_EAGERNESS = "medium";
+  private static final String SEMANTIC_VAD_EAGERNESS = "high";
 
-  private static final double REALTIME_SERVER_VAD_THRESHOLD = 0.5;
+  private static final boolean CREATE_RESPONSE_AFTER_TURN = true;
 
-  private static final int REALTIME_SERVER_VAD_PREFIX_PADDING_MS = 300;
-
-  private static final int REALTIME_SERVER_VAD_SILENCE_DURATION_MS = 200;
-
-  private static final boolean createResponseAfterTurnDetectionStop = true;
-
-  /**
-   * Critical for barge-in: when {@code true}, a VAD "speech started" signal cancels the current
-   * assistant response ({@link #handleResponseDone} emits {@link LlmResponse#interrupted()} when
-   * status is cancelled).
-   */
-  private static final boolean interruptRealtimeResponses = true;
+  private static final boolean INTERRUPT_RESPONSE = true;
 
   private final AzureConfig config;
   private final LlmRequest llmRequest;
@@ -111,6 +85,9 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
   private final AtomicBoolean assistantOutputTextHadDelta = new AtomicBoolean(false);
 
   private final AtomicBoolean assistantAudioTranscriptHadDelta = new AtomicBoolean(false);
+
+  /** True while Azure is generating a response (between response.created and response.done). */
+  private final AtomicBoolean activeResponse = new AtomicBoolean(false);
 
   /**
    * Tracks in-flight function calls by item_id so that {@code
@@ -155,13 +132,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
 
     String apiKey = config.apiKey();
 
-    String wsUrl =
-        config.endpoint().replaceFirst("^https://", "wss://").replaceFirst("^http://", "ws://");
-
-    if (!wsUrl.contains("deployment=") && !wsUrl.contains("model=")) {
-      String separator = wsUrl.contains("?") ? "&" : "?";
-      wsUrl = wsUrl + separator + "deployment=" + config.modelName();
-    }
+    String wsUrl = config.realtimeWebSocketUrl();
 
     logger.info("Connecting to WebSocket: {}", wsUrl);
 
@@ -199,23 +170,14 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
     session.put("output_audio_format", "pcm16");
 
     JSONObject noiseReduction = new JSONObject();
-    noiseReduction.put("type", "far_field");
+    noiseReduction.put("type", INPUT_AUDIO_NOISE_REDUCTION);
     session.put("input_audio_noise_reduction", noiseReduction);
 
     JSONObject turnDetection = new JSONObject();
-    if (useSemanticVadInstead) {
-      turnDetection.put("type", "semantic_vad");
-      turnDetection.put("eagerness", SEMANTIC_VAD_EAGERNESS);
-      turnDetection.put("create_response", createResponseAfterTurnDetectionStop);
-      turnDetection.put("interrupt_response", interruptRealtimeResponses);
-    } else {
-      turnDetection.put("type", "server_vad");
-      turnDetection.put("threshold", REALTIME_SERVER_VAD_THRESHOLD);
-      turnDetection.put("prefix_padding_ms", REALTIME_SERVER_VAD_PREFIX_PADDING_MS);
-      turnDetection.put("silence_duration_ms", REALTIME_SERVER_VAD_SILENCE_DURATION_MS);
-      turnDetection.put("create_response", createResponseAfterTurnDetectionStop);
-      turnDetection.put("interrupt_response", interruptRealtimeResponses);
-    }
+    turnDetection.put("type", "semantic_vad");
+    turnDetection.put("eagerness", SEMANTIC_VAD_EAGERNESS);
+    turnDetection.put("create_response", CREATE_RESPONSE_AFTER_TURN);
+    turnDetection.put("interrupt_response", INTERRUPT_RESPONSE);
     session.put("turn_detection", turnDetection);
 
     JSONObject transcription = new JSONObject();
@@ -231,15 +193,10 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
     event.put("session", session);
     sendMessage(event.toString());
     logger.info(
-        "Sent session.update with voice={}, turn_detection={}, noise_reduction=far_field, tools={}",
+        "Sent session.update with voice={}, turn_detection={}, noise_reduction={}, tools={}",
         voice,
-        useSemanticVadInstead
-            ? "semantic_vad(eagerness=" + SEMANTIC_VAD_EAGERNESS + ")"
-            : "server_vad(threshold="
-                + REALTIME_SERVER_VAD_THRESHOLD
-                + ",silence="
-                + REALTIME_SERVER_VAD_SILENCE_DURATION_MS
-                + "ms)",
+        turnDetection,
+        INPUT_AUDIO_NOISE_REDUCTION,
         toolsArray.length());
   }
 
@@ -267,18 +224,17 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
 
         case "session.updated":
           JSONObject updatedSession = event.optJSONObject("session");
+          JSONObject appliedTurnDetection =
+              updatedSession != null ? updatedSession.optJSONObject("turn_detection") : null;
           logger.info(
-              "Realtime session updated: {}",
-              updatedSession != null
-                  ? updatedSession
-                      .toString()
-                      .substring(0, Math.min(updatedSession.toString().length(), 500))
-                  : "no session in event");
+              "Realtime session updated; turn_detection={}",
+              appliedTurnDetection != null ? appliedTurnDetection.toString() : "none");
           break;
 
         case "response.created":
           assistantOutputTextHadDelta.set(false);
           assistantAudioTranscriptHadDelta.set(false);
+          activeResponse.set(true);
           break;
 
         case "response.text.delta":
@@ -322,8 +278,17 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
           break;
 
         case "input_audio_buffer.speech_started":
-          logger.info("Realtime: speech_started — user began speaking.");
-          responseProcessor.onNext(LlmResponse.builder().interrupted(true).build());
+          // WebSocket clients should stop playback on speech_started during an active response
+          // (OpenAI Realtime guide). Gemini emits interrupted() immediately; Azure relies on
+          // server VAD + interrupt_response, then response.done status=cancelled — but that
+          // response.done can lag or be missed, so emit interrupted here as the primary signal.
+          if (activeResponse.get()) {
+            logger.info(
+                "Realtime: speech_started during active response — emitting interrupted (barge-in).");
+            responseProcessor.onNext(LlmResponse.builder().interrupted(true).build());
+          } else {
+            logger.debug("Realtime: speech_started (no active response).");
+          }
           break;
 
         case "input_audio_buffer.speech_stopped":
@@ -378,7 +343,6 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
           LlmResponse.builder()
               .content(Content.builder().role("model").parts(Part.fromText(text)).build())
               .partial(false)
-              .turnComplete(true)
               .build());
     }
   }
@@ -406,7 +370,6 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
           LlmResponse.builder()
               .content(Content.builder().role("model").parts(Part.fromText(transcript)).build())
               .partial(false)
-              .turnComplete(true)
               .build());
     }
   }
@@ -417,7 +380,6 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
         LlmResponse.builder()
             .content(Content.builder().role("model").parts(Part.fromText("")).build())
             .partial(false)
-            .turnComplete(true)
             .build());
   }
 
@@ -515,18 +477,34 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
   }
 
   private void handleResponseDone(JSONObject event) {
+    activeResponse.set(false);
     JSONObject resp = event.optJSONObject("response");
     String status =
         resp != null ? resp.optString("status", "").trim().toLowerCase(java.util.Locale.ROOT) : "";
+    JSONObject statusDetails = resp != null ? resp.optJSONObject("status_details") : null;
+    String statusReason =
+        statusDetails != null
+            ? statusDetails.optString("reason", "").trim().toLowerCase(java.util.Locale.ROOT)
+            : "";
     boolean interrupted =
-        "cancelled".equals(status) || "canceled".equals(status) || "interrupted".equals(status);
+        "cancelled".equals(status)
+            || "canceled".equals(status)
+            || "interrupted".equals(status)
+            || ("incomplete".equals(status) && "turn_detected".equals(statusReason));
     if (interrupted) {
       logger.info(
-          "Realtime response ended with status={} — emitting interrupted playback signal.", status);
+          "Realtime response ended with status={} reason={} — emitting interrupted playback signal.",
+          status,
+          statusReason.isEmpty() ? "n/a" : statusReason);
       responseProcessor.onNext(LlmResponse.builder().interrupted(true).build());
-    } else {
+    } else if ("completed".equals(status) || status.isEmpty()) {
+      // Align turnComplete with response.done (after audio finishes), not transcript.done.
       logger.info(
-          "Realtime response completed (status={}).", status.isEmpty() ? "unknown" : status);
+          "Realtime response completed (status={}) — emitting turnComplete.",
+          status.isEmpty() ? "unknown" : status);
+      responseProcessor.onNext(LlmResponse.builder().turnComplete(true).build());
+    } else {
+      logger.info("Realtime response ended with status={}.", status);
     }
 
     if (resp != null) {
@@ -550,10 +528,12 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
       return;
     }
 
+    // Mirror Gemini Live: transcription is independent of the model turn and must NOT
+    // arrive as user-role content (LiveAudioSession treats user-role during playback
+    // as a turn boundary and fires voice_complete prematurely).
     responseProcessor.onNext(
         LlmResponse.builder()
-            .content(Content.builder().role("user").parts(Part.fromText(transcript)).build())
-            .partial(false)
+            .inputTranscription(Transcription.builder().text(transcript).finished(true).build())
             .build());
   }
 

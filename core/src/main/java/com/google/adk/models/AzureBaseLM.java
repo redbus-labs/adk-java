@@ -1,6 +1,7 @@
 package com.google.adk.models;
 
 import com.google.adk.models.azure.AzureConfig;
+import com.google.adk.models.azure.AzureRealtimeTranslateTransport;
 import com.google.adk.models.azure.AzureRealtimeTransport;
 import com.google.adk.models.azure.AzureRestTransport;
 import com.google.adk.models.azure.AzureTransport;
@@ -14,12 +15,15 @@ import org.slf4j.LoggerFactory;
  * <p>Supports all Azure-hosted models (REST Responses API, WebSocket Realtime API, and future
  * transports) through a single entry point. Transport selection is automatic based on model name.
  *
- * <p>Environment variables:
+ * <p>Environment variables (see {@link AzureConfig}):
  *
  * <ul>
- *   <li>{@code AZURE_MODEL_ENDPOINT} — full Azure endpoint URL (includes api-version)
- *   <li>{@code AZURE_OPENAI_API_KEY} — API key for authentication
- *   <li>{@code AZURE_REALTIME_VOICE} — (optional) voice for realtime models, defaults to "alloy"
+ *   <li>{@code AZURE_RESPONSE_ENDPOINT} — REST Responses API
+ *   <li>{@code AZURE_REALTIME_ENDPOINT} — WebSocket voice-agent Realtime API
+ *   <li>{@code AZURE_TRANSLATE_ENDPOINT} — WebSocket GPT Realtime Translate
+ *   <li>{@code AZURE_MODEL_ENDPOINT} — (legacy) fallback for all contracts above
+ *   <li>{@code AZURE_OPENAI_API_KEY} — API key
+ *   <li>{@code AZURE_REALTIME_VOICE} — (optional) voice for realtime models
  * </ul>
  *
  * @author Alfred Jimmy
@@ -39,8 +43,7 @@ public class AzureBaseLM extends BaseLlm {
   public AzureBaseLM(String modelName) {
     super(modelName);
     this.config = AzureConfig.fromEnvironment(modelName);
-    this.transport =
-        isRealtimeModel(modelName) ? new AzureRealtimeTransport() : new AzureRestTransport();
+    this.transport = selectTransport(modelName);
     logger.info(
         "AzureBaseLM initialized: model={}, transport={}",
         modelName,
@@ -57,9 +60,29 @@ public class AzureBaseLM extends BaseLlm {
     return transport.connect(llmRequest, config);
   }
 
-  /** Returns true if the given model name indicates an Azure Realtime model. */
+  /** Returns true if the given model name is GPT Realtime Translate. */
+  public static boolean isTranslateModel(String modelName) {
+    if (modelName == null) {
+      return false;
+    }
+    return modelName.toLowerCase().contains("realtime-translate");
+  }
+
+  /** Returns true if the given model name indicates an Azure Realtime voice-agent model. */
   public static boolean isRealtimeModel(String modelName) {
-    if (modelName == null) return false;
-    return modelName.toLowerCase().contains("realtime");
+    if (modelName == null) {
+      return false;
+    }
+    return modelName.toLowerCase().contains("realtime") && !isTranslateModel(modelName);
+  }
+
+  private static AzureTransport selectTransport(String modelName) {
+    if (isTranslateModel(modelName)) {
+      return new AzureRealtimeTranslateTransport();
+    }
+    if (isRealtimeModel(modelName)) {
+      return new AzureRealtimeTransport();
+    }
+    return new AzureRestTransport();
   }
 }

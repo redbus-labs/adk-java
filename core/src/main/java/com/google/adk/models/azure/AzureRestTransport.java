@@ -618,7 +618,7 @@ public final class AzureRestTransport implements AzureTransport {
 
       HttpRequest request =
           HttpRequest.newBuilder()
-              .uri(URI.create(config.endpoint()))
+              .uri(URI.create(config.responseEndpoint()))
               .header("Content-Type", "application/json; charset=UTF-8")
               .header("api-key", config.apiKey())
               .timeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS))
@@ -653,7 +653,7 @@ public final class AzureRestTransport implements AzureTransport {
 
       HttpRequest request =
           HttpRequest.newBuilder()
-              .uri(URI.create(config.endpoint()))
+              .uri(URI.create(config.responseEndpoint()))
               .header("Content-Type", "application/json; charset=UTF-8")
               .header("api-key", config.apiKey())
               .header("Accept", "text/event-stream")
