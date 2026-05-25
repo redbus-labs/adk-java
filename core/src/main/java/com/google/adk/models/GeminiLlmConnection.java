@@ -71,7 +71,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
    * Establishes a new connection.
    *
    * @param apiClient The API client for communication.
-   * @param modelName The specific Gemini model endpoint (e.g., "gemini-2.5-flash).
+   * @param modelName The specific Gemini model endpoint (e.g., "gemini-2.0-flash).
    * @param connectConfig Configuration parameters for the live session.
    */
   GeminiLlmConnection(Client apiClient, String modelName, LiveConnectConfig connectConfig) {
@@ -135,7 +135,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
           .partial(serverContent.turnComplete().map(completed -> !completed).orElse(false))
           .turnComplete(serverContent.turnComplete().orElse(false))
           .interrupted(serverContent.interrupted().orElse(null));
-      // Gemini 3.1 can send audio + transcription in the SAME server event.
+      // Gemini can send audio + transcription in the SAME server event.
       // Transcriptions travel in dedicated LlmResponse fields so they never
       // overwrite the audio modelTurn content.
       serverContent.outputTranscription().ifPresent(builder::outputTranscription);
