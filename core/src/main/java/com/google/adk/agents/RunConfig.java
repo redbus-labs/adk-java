@@ -41,17 +41,26 @@ public abstract class RunConfig {
   /**
    * Execution mode when the model requests multiple tools.
    *
-   * <p>NONE: defaults to SEQUENTIAL.
+   * <p>NONE: defaults to PARALLEL.
    *
-   * <p>SEQUENTIAL: tools execute in request order on the caller thread.
+   * <p>SEQUENTIAL: tools execute strictly in request order on the caller thread; each tool must
+   * complete (including any asynchronous work) before the next one is subscribed to.
    *
-   * <p>PARALLEL: tools execute concurrently on worker threads. Tool implementations must be
-   * thread-safe.
+   * <p>PARALLEL: tools are subscribed to eagerly on the caller thread (i.e. all are kicked off
+   * up-front), but no worker threads are introduced. Tools that are truly asynchronous (e.g. they
+   * return a {@code Single} backed by I/O or another scheduler) will run concurrently; tools that
+   * block the subscribing thread (e.g. {@code Single.fromCallable} that performs blocking work)
+   * will still execute sequentially. This preserves the historical default behavior.
+   *
+   * <p>PARALLEL_SUBSCRIBE: like {@code PARALLEL}, but every tool is additionally subscribed on a
+   * worker thread, so blocking tools also run concurrently. Tool implementations must be
+   * thread-safe. The worker is the agent's executor when set, otherwise the RxJava IO scheduler.
    */
   public enum ToolExecutionMode {
     NONE,
     SEQUENTIAL,
-    PARALLEL
+    PARALLEL,
+    PARALLEL_SUBSCRIBE
   }
 
   public abstract @Nullable SpeechConfig speechConfig();

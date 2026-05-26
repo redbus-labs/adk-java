@@ -236,23 +236,40 @@ public final class Functions {
   }
 
   /**
-   * Sequential by default; only {@link ToolExecutionMode#PARALLEL} with multiple calls dispatches
-   * tools on workers (using {@code concatMapEager} to preserve input order).
+   * Builds the tool-execution {@link Observable} for the configured {@link ToolExecutionMode}.
+   *
+   * <ul>
+   *   <li>{@link ToolExecutionMode#SEQUENTIAL} (or a single call, where parallelism is moot) uses
+   *       {@code concatMapMaybe}: each tool is subscribed only after the previous one completes.
+   *   <li>{@link ToolExecutionMode#PARALLEL} (the default) uses {@code concatMapEager}: all tools
+   *       are subscribed eagerly on the caller thread. Async tools therefore run concurrently, but
+   *       tools that block the subscribing thread still execute sequentially. This matches the
+   *       historical behavior of the default mode.
+   *   <li>{@link ToolExecutionMode#PARALLEL_SUBSCRIBE} uses {@code concatMapEager} and additionally
+   *       subscribes each tool on a worker scheduler, so blocking tools also run concurrently.
+   *       {@code concatMapEager} preserves input order required by {@link
+   *       #mergeParallelFunctionResponseEvents}.
+   * </ul>
    */
   private static Observable<Event> buildToolExecutionObservable(
       InvocationContext invocationContext,
       List<FunctionCall> validFunctionCalls,
       Function<FunctionCall, Maybe<Event>> functionCallMapper) {
-    boolean parallel =
-        invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.PARALLEL
-            && validFunctionCalls.size() > 1;
-    if (!parallel) {
+    ToolExecutionMode mode = invocationContext.runConfig().toolExecutionMode();
+    boolean sequential = mode == ToolExecutionMode.SEQUENTIAL || validFunctionCalls.size() <= 1;
+    if (sequential) {
       return Observable.fromIterable(validFunctionCalls).concatMapMaybe(functionCallMapper);
     }
-    Scheduler scheduler = resolveToolExecutionScheduler(invocationContext);
+    if (mode == ToolExecutionMode.PARALLEL_SUBSCRIBE) {
+      Scheduler scheduler = resolveToolExecutionScheduler(invocationContext);
+      return Observable.fromIterable(validFunctionCalls)
+          .concatMapEager(
+              call -> functionCallMapper.apply(call).toObservable().subscribeOn(scheduler));
+    }
+    // PARALLEL (and NONE, which defaults to PARALLEL): eager subscribe on the caller thread,
+    // without offloading to a worker. Async tools run concurrently; blocking tools still block.
     return Observable.fromIterable(validFunctionCalls)
-        .concatMapEager(
-            call -> functionCallMapper.apply(call).toObservable().subscribeOn(scheduler));
+        .concatMapEager(call -> functionCallMapper.apply(call).toObservable());
   }
 
   /** Agent executor if set, otherwise the IO scheduler. */
