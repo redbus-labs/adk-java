@@ -39,14 +39,14 @@ public abstract class RunConfig {
   }
 
   /**
-   * Tool execution mode for the runner, when they are multiple tools requested (by the models or
-   * callbacks).
+   * Execution mode when the model requests multiple tools.
    *
-   * <p>NONE: default to PARALLEL.
+   * <p>NONE: defaults to SEQUENTIAL.
    *
-   * <p>SEQUENTIAL: Multiple tools are executed in the order they are requested.
+   * <p>SEQUENTIAL: tools execute in request order on the caller thread.
    *
-   * <p>PARALLEL: Multiple tools are executed in parallel.
+   * <p>PARALLEL: tools execute concurrently on worker threads. Tool implementations must be
+   * thread-safe.
    */
   public enum ToolExecutionMode {
     NONE,

@@ -398,6 +398,43 @@ public final class FunctionsTest {
     assertThat(result).containsExactly(confirmationCall1, confirmationCall2);
   }
 
+  // Default ToolExecutionMode.NONE must execute tools sequentially.
+  @Test
+  public void handleFunctionCalls_defaultMode_blockingTools_runSequentially() {
+    long sleepMillis = 300L;
+    int toolCount = 2;
+    InvocationContext invocationContext =
+        createInvocationContext(createRootAgent(), RunConfig.builder().build());
+
+    Map<String, BaseTool> tools = new LinkedHashMap<>();
+    List<Part> callParts = new ArrayList<>();
+    for (int i = 1; i <= toolCount; i++) {
+      String toolName = "slow_tool_" + i;
+      tools.put(toolName, new SleepingTool(toolName, sleepMillis));
+      callParts.add(
+          Part.builder()
+              .functionCall(
+                  FunctionCall.builder()
+                      .id("call_" + i)
+                      .name(toolName)
+                      .args(ImmutableMap.of())
+                      .build())
+              .build());
+    }
+    Event event =
+        createEvent("event").toBuilder()
+            .content(Content.fromParts(callParts.toArray(new Part[0])))
+            .build();
+
+    long start = System.currentTimeMillis();
+    Event functionResponseEvent =
+        Functions.handleFunctionCalls(invocationContext, event, tools).blockingGet();
+    long durationMillis = System.currentTimeMillis() - start;
+
+    assertThat(functionResponseEvent).isNotNull();
+    assertThat(durationMillis).isAtLeast((long) toolCount * sleepMillis);
+  }
+
   @Test
   public void handleFunctionCalls_parallel_blockingTools_runConcurrently_twoTools() {
     runParallelBlockingToolsTest(/* toolCount= */ 2);

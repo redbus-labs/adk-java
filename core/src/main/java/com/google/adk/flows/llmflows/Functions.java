@@ -236,19 +236,15 @@ public final class Functions {
   }
 
   /**
-   * Builds the tool-execution {@link Observable}.
-   *
-   * <p>SEQUENTIAL (or a single call, where parallelism is moot) runs on the caller thread via
-   * {@code concatMapMaybe} to keep synchronous semantics. PARALLEL with multiple calls dispatches
-   * each tool on a worker so blocking calls run concurrently; {@code concatMapEager} preserves
-   * input order required by {@link #mergeParallelFunctionResponseEvents}.
+   * Sequential by default; only {@link ToolExecutionMode#PARALLEL} with multiple calls dispatches
+   * tools on workers (using {@code concatMapEager} to preserve input order).
    */
   private static Observable<Event> buildToolExecutionObservable(
       InvocationContext invocationContext,
       List<FunctionCall> validFunctionCalls,
       Function<FunctionCall, Maybe<Event>> functionCallMapper) {
     boolean parallel =
-        invocationContext.runConfig().toolExecutionMode() != ToolExecutionMode.SEQUENTIAL
+        invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.PARALLEL
             && validFunctionCalls.size() > 1;
     if (!parallel) {
       return Observable.fromIterable(validFunctionCalls).concatMapMaybe(functionCallMapper);
