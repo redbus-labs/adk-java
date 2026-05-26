@@ -44,9 +44,11 @@ import io.opentelemetry.context.Context;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Observable;
+import io.reactivex.rxjava3.core.Scheduler;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.functions.Function;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -153,15 +155,8 @@ public final class Functions {
     Function<FunctionCall, Maybe<Event>> functionCallMapper =
         getFunctionCallMapper(invocationContext, tools, toolConfirmations, false, parentContext);
 
-    Observable<Event> functionResponseEventsObservable;
-    if (invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.SEQUENTIAL) {
-      functionResponseEventsObservable =
-          Observable.fromIterable(validFunctionCalls).concatMapMaybe(functionCallMapper);
-    } else {
-      functionResponseEventsObservable =
-          Observable.fromIterable(validFunctionCalls)
-              .concatMapEager(call -> functionCallMapper.apply(call).toObservable());
-    }
+    Observable<Event> functionResponseEventsObservable =
+        buildToolExecutionObservable(invocationContext, validFunctionCalls, functionCallMapper);
     return functionResponseEventsObservable
         .toList()
         .toMaybe()
@@ -224,15 +219,8 @@ public final class Functions {
     Function<FunctionCall, Maybe<Event>> functionCallMapper =
         getFunctionCallMapper(invocationContext, tools, toolConfirmations, true, parentContext);
 
-    Observable<Event> responseEventsObservable;
-    if (invocationContext.runConfig().toolExecutionMode() == ToolExecutionMode.SEQUENTIAL) {
-      responseEventsObservable =
-          Observable.fromIterable(validFunctionCalls).concatMapMaybe(functionCallMapper);
-    } else {
-      responseEventsObservable =
-          Observable.fromIterable(validFunctionCalls)
-              .concatMapEager(call -> functionCallMapper.apply(call).toObservable());
-    }
+    Observable<Event> responseEventsObservable =
+        buildToolExecutionObservable(invocationContext, validFunctionCalls, functionCallMapper);
 
     return responseEventsObservable
         .toList()
@@ -245,6 +233,38 @@ public final class Functions {
               }
               return Maybe.fromOptional(Functions.mergeParallelFunctionResponseEvents(events));
             });
+  }
+
+  /**
+   * Builds the tool-execution {@link Observable}.
+   *
+   * <p>SEQUENTIAL (or a single call, where parallelism is moot) runs on the caller thread via
+   * {@code concatMapMaybe} to keep synchronous semantics. PARALLEL with multiple calls dispatches
+   * each tool on a worker so blocking calls run concurrently; {@code concatMapEager} preserves
+   * input order required by {@link #mergeParallelFunctionResponseEvents}.
+   */
+  private static Observable<Event> buildToolExecutionObservable(
+      InvocationContext invocationContext,
+      List<FunctionCall> validFunctionCalls,
+      Function<FunctionCall, Maybe<Event>> functionCallMapper) {
+    boolean parallel =
+        invocationContext.runConfig().toolExecutionMode() != ToolExecutionMode.SEQUENTIAL
+            && validFunctionCalls.size() > 1;
+    if (!parallel) {
+      return Observable.fromIterable(validFunctionCalls).concatMapMaybe(functionCallMapper);
+    }
+    Scheduler scheduler = resolveToolExecutionScheduler(invocationContext);
+    return Observable.fromIterable(validFunctionCalls)
+        .concatMapEager(
+            call -> functionCallMapper.apply(call).toObservable().subscribeOn(scheduler));
+  }
+
+  /** Agent executor if set, otherwise the IO scheduler. */
+  private static Scheduler resolveToolExecutionScheduler(InvocationContext invocationContext) {
+    if (invocationContext.agent() instanceof LlmAgent llmAgent) {
+      return llmAgent.executor().map(Schedulers::from).orElse(Schedulers.io());
+    }
+    return Schedulers.io();
   }
 
   private static Function<FunctionCall, Maybe<Event>> getFunctionCallMapper(
