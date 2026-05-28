@@ -1123,6 +1123,42 @@ public final class RunnerTest {
   }
 
   @Test
+  public void onUserMessageCallback_withStateDelta_seesMergedState() {
+    // Snapshot the session state *inside* the callback, otherwise the assertion would
+    // observe the post-runAsync state which is mutated by appendEvent regardless of whether
+    // the pre-merge in Runner is applied.
+    AtomicReference<ConcurrentHashMap<String, Object>> stateInCallback = new AtomicReference<>();
+    when(plugin.onUserMessageCallback(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              InvocationContext ctx = invocation.getArgument(0);
+              stateInCallback.set(new ConcurrentHashMap<>(ctx.session().state()));
+              return Maybe.empty();
+            });
+
+    ImmutableMap<String, Object> stateDelta =
+        ImmutableMap.of("callback_key", "callback_value", "number", 123);
+
+    var unused =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                createContent("test with state"),
+                RunConfig.builder().build(),
+                stateDelta)
+            .toList()
+            .blockingGet();
+
+    // Verify onUserMessageCallback was called
+    verify(plugin).onUserMessageCallback(any(), any());
+
+    // Verify state delta was merged before onUserMessageCallback was invoked
+    assertThat(stateInCallback.get()).containsEntry("callback_key", "callback_value");
+    assertThat(stateInCallback.get()).containsEntry("number", 123);
+  }
+
+  @Test
   public void runAsync_ensureEventsAreAppendedInOrder() throws Exception {
     Event event1 = TestUtils.createEvent("1");
     Event event2 = TestUtils.createEvent("2");
