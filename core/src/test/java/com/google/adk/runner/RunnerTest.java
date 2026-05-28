@@ -42,6 +42,7 @@ import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
+import com.google.adk.agents.SequentialAgent;
 import com.google.adk.apps.App;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
@@ -1602,6 +1603,107 @@ public final class RunnerTest {
             "FunctionCall(name=echoTool, args={message=hello})",
             "FunctionResponse(name=echoTool, response={message=hello})")
         .inOrder();
+  }
+
+  // HITL tool confirmation must resume the originating sub-agent even when wrapped inside a
+  // non-LlmAgent workflow agent (e.g. SequentialAgent).
+  @Test
+  public void runAsync_withToolConfirmation_inSequentialAgentSubAgent_resumesSubAgent() {
+    TestLlm childTestLlm =
+        createTestLlm(
+            createFunctionCallLlmResponse(
+                "tool_call_id", "echoTool", ImmutableMap.of("message", "hello")),
+            createTextLlmResponse("Response after observing tool needs confirmation."),
+            createTextLlmResponse("Response after user confirmed."));
+    LlmAgent childAgent =
+        createTestAgentBuilder(childTestLlm)
+            .name("child_agent")
+            .tools(FunctionTool.create(Tools.class, "echoTool", /* requireConfirmation= */ true))
+            .build();
+    SequentialAgent workflowAgent =
+        SequentialAgent.builder()
+            .name("workflow_agent")
+            .subAgents(ImmutableList.of(childAgent))
+            .build();
+    // Root transfers to workflow_agent to mirror the bug report's control flow.
+    TestLlm rootTestLlm =
+        createTestLlm(
+            createLlmResponse(
+                Content.fromParts(
+                    Part.fromFunctionCall(
+                        "transfer_to_agent", ImmutableMap.of("agent_name", "workflow_agent")))));
+    LlmAgent rootAgent =
+        createTestAgentBuilder(rootTestLlm)
+            .name("root_agent")
+            .subAgents(ImmutableList.of(workflowAgent))
+            .build();
+    Runner runner =
+        Runner.builder().app(App.builder().name("test").rootAgent(rootAgent).build()).build();
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+
+    List<Event> eventsBeforeConfirmation =
+        runner
+            .runAsync("user", session.id(), Content.fromParts(Part.fromText("from user")))
+            .toList()
+            .blockingGet();
+    FunctionCall askUserConfirmationFunctionCall =
+        Iterables.getOnlyElement(
+            eventsBeforeConfirmation.stream()
+                .map(Functions::getAskUserConfirmationFunctionCalls)
+                .filter(functionCalls -> !functionCalls.isEmpty())
+                .findFirst()
+                .get());
+    List<Event> eventsAfterConfirmation =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                Content.fromParts(
+                    Part.builder()
+                        .functionResponse(
+                            FunctionResponse.builder()
+                                .id(askUserConfirmationFunctionCall.id().get())
+                                .name(askUserConfirmationFunctionCall.name().get())
+                                .response(ImmutableMap.of("confirmed", true)))
+                        .build()))
+            .toList()
+            .blockingGet();
+
+    // The originating child agent (not the root agent) must execute the tool.
+    assertThat(simplifyEvents(eventsAfterConfirmation))
+        .containsExactly(
+            "child_agent: FunctionResponse(name=echoTool, response={message=hello})",
+            "child_agent: Response after user confirmed.")
+        .inOrder();
+  }
+
+  // Orphan function responses (id not matching any prior call) should fall back to the root agent.
+  @Test
+  public void runAsync_withFunctionResponseNotMatchingAnyCall_fallsBackToRootAgent() {
+    TestLlm rootLlm = createTestLlm(createTextLlmResponse("after function response"));
+    LlmAgent rootAgent = createTestAgentBuilder(rootLlm).name("root_agent").build();
+    Runner runner =
+        Runner.builder().app(App.builder().name("test").rootAgent(rootAgent).build()).build();
+    Session session = runner.sessionService().createSession("test", "user").blockingGet();
+
+    // Function response with id that does not match any prior function call.
+    List<Event> events =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                Content.fromParts(
+                    Part.builder()
+                        .functionResponse(
+                            FunctionResponse.builder()
+                                .id("non_existent_id")
+                                .name("orphanFn")
+                                .response(ImmutableMap.of("x", 1)))
+                        .build()))
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("root_agent: after function response");
   }
 
   @Test
