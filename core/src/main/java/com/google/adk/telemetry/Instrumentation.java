@@ -125,8 +125,12 @@ public final class Instrumentation {
     private final InvocationContext ctx;
     private final List<Event> events = Collections.synchronizedList(new ArrayList<>());
 
-    public AgentInvocation(InvocationContext ctx, BaseAgent agent) {
-      super(Tracing.getTracer().spanBuilder("invoke_agent " + agent.name()).startSpan());
+    public AgentInvocation(InvocationContext ctx, BaseAgent agent, Context parentContext) {
+      super(
+          Tracing.getTracer()
+              .spanBuilder("invoke_agent " + agent.name())
+              .setParent(parentContext)
+              .startSpan());
       this.agent = agent;
       this.ctx = ctx;
       Tracing.traceAgentInvocation(span, agent.name(), agent.description(), ctx);
@@ -160,8 +164,13 @@ public final class Instrumentation {
     private final BaseAgent agent;
     private final Map<String, Object> functionArgs;
 
-    public ToolExecution(BaseTool tool, BaseAgent agent, Map<String, Object> functionArgs) {
-      super(Tracing.getTracer().spanBuilder("execute_tool " + tool.name()).startSpan());
+    public ToolExecution(
+        BaseTool tool, BaseAgent agent, Map<String, Object> functionArgs, Context parentContext) {
+      super(
+          Tracing.getTracer()
+              .spanBuilder("execute_tool " + tool.name())
+              .setParent(parentContext)
+              .startSpan());
       this.tool = tool;
       this.agent = agent;
       this.functionArgs = functionArgs;
@@ -196,12 +205,22 @@ public final class Instrumentation {
 
   /** Creates an AgentInvocation context to record agent invocation telemetry. */
   public static AgentInvocation recordAgentInvocation(InvocationContext ctx, BaseAgent agent) {
-    return new AgentInvocation(ctx, agent);
+    return recordAgentInvocation(ctx, agent, Context.current());
+  }
+
+  public static AgentInvocation recordAgentInvocation(
+      InvocationContext ctx, BaseAgent agent, Context parentContext) {
+    return new AgentInvocation(ctx, agent, parentContext);
   }
 
   /** Creates a ToolExecution context to record tool execution telemetry. */
   public static ToolExecution recordToolExecution(
       BaseTool tool, BaseAgent agent, Map<String, Object> functionArgs) {
-    return new ToolExecution(tool, agent, functionArgs);
+    return recordToolExecution(tool, agent, functionArgs, Context.current());
+  }
+
+  public static ToolExecution recordToolExecution(
+      BaseTool tool, BaseAgent agent, Map<String, Object> functionArgs, Context parentContext) {
+    return new ToolExecution(tool, agent, functionArgs, parentContext);
   }
 }

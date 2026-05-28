@@ -1366,7 +1366,7 @@ public final class RunnerTest {
     List<SpanData> spans = openTelemetryRule.getSpans();
     List<SpanData> llmSpans = spans.stream().filter(s -> s.getName().equals("call_llm")).toList();
     List<SpanData> toolSpans =
-        spans.stream().filter(s -> s.getName().equals("execute_tool [echo_tool]")).toList();
+        spans.stream().filter(s -> s.getName().equals("execute_tool echo_tool")).toList();
 
     assertThat(llmSpans).hasSize(2);
     assertThat(toolSpans).hasSize(1);
@@ -1401,7 +1401,7 @@ public final class RunnerTest {
     List<SpanData> spans = openTelemetryRule.getSpans();
     List<SpanData> llmSpans = spans.stream().filter(s -> s.getName().equals("call_llm")).toList();
     List<SpanData> toolSpans =
-        spans.stream().filter(s -> s.getName().equals("execute_tool [echo_tool]")).toList();
+        spans.stream().filter(s -> s.getName().equals("execute_tool echo_tool")).toList();
 
     // In runLive, there is one call_llm span for the execution
     assertThat(llmSpans).hasSize(1);

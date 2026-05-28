@@ -479,12 +479,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                                   "Agent not found: " + agentToTransfer)));
                                     }
                                     return postProcessedEvents.concatWith(
-                                        Flowable.defer(
-                                            () -> {
-                                              try (Scope s = spanContext.makeCurrent()) {
-                                                return nextAgent.get().runAsync(context);
-                                              }
-                                            }));
+                                        nextAgent
+                                            .get()
+                                            .runAsync(context)
+                                            .compose(Tracing.withContext(spanContext)));
                                   }
                                   return postProcessedEvents;
                                 });
@@ -666,12 +664,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                     "Agent not found: " + event.actions().transferToAgent().get());
                               }
                               Flowable<Event> nextAgentEvents =
-                                  Flowable.defer(
-                                      () -> {
-                                        try (Scope s = spanContext.makeCurrent()) {
-                                          return nextAgent.get().runLive(invocationContext);
-                                        }
-                                      });
+                                  nextAgent
+                                      .get()
+                                      .runLive(invocationContext)
+                                      .compose(Tracing.withContext(spanContext));
                               events = Flowable.concat(events, nextAgentEvents);
                             }
                             return events;

@@ -29,6 +29,8 @@ import com.google.adk.agents.RunConfig.ToolExecutionMode;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
 import com.google.adk.events.ToolConfirmation;
+import com.google.adk.telemetry.Instrumentation;
+import com.google.adk.telemetry.Instrumentation.ToolExecution;
 import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
@@ -430,6 +432,25 @@ public final class Functions {
       ToolContext toolContext,
       boolean isLive,
       Context parentContext) {
+    return Maybe.using(
+        () ->
+            Instrumentation.recordToolExecution(
+                tool, invocationContext.agent(), functionArgs, parentContext),
+        toolExecution ->
+            processFunctionResult(
+                    maybeFunctionResult, invocationContext, tool, functionArgs, toolContext, isLive)
+                .doOnSuccess(event -> toolExecution.context().setFunctionResponseEvent(event))
+                .doOnError(toolExecution::setError),
+        ToolExecution::close);
+  }
+
+  private static Maybe<Event> processFunctionResult(
+      Maybe<Map<String, Object>> maybeFunctionResult,
+      InvocationContext invocationContext,
+      BaseTool tool,
+      Map<String, Object> functionArgs,
+      ToolContext toolContext,
+      boolean isLive) {
     return maybeFunctionResult
         .map(Optional::of)
         .defaultIfEmpty(Optional.empty())
@@ -467,20 +488,7 @@ public final class Functions {
                                 tool, finalFunctionResult, toolContext, invocationContext);
                         return Maybe.just(event);
                       });
-            })
-        .compose(
-            Tracing.<Event>trace("execute_tool [" + tool.name() + "]")
-                .setParent(parentContext)
-                .onSuccess(
-                    (span, event) ->
-                        Tracing.traceToolExecution(
-                            span,
-                            tool.name(),
-                            tool.description(),
-                            tool.getClass().getSimpleName(),
-                            functionArgs,
-                            event,
-                            null)));
+            });
   }
 
   private static Optional<Event> mergeParallelFunctionResponseEvents(
