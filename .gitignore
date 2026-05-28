@@ -24,7 +24,7 @@ target/
 out/
 
 # VS Code files
-.vscode/
+.vscode/settings.json
 
 # OS-specific junk
 .DS_Store
