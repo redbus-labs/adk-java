@@ -247,13 +247,40 @@ public class PostgresArtifactStore {
       String mimeType,
       String metadata)
       throws SQLException {
+    return saveArtifact(appName, userId, sessionId, filename, data, mimeType, metadata, null);
+  }
+
+  /**
+   * Save artifact to database with metadata and file URI. Returns the assigned version number.
+   *
+   * @param appName the application name
+   * @param userId the user ID
+   * @param sessionId the session ID
+   * @param filename the artifact filename
+   * @param data the artifact binary data
+   * @param mimeType the MIME type
+   * @param metadata the metadata JSON string (can be null)
+   * @param fileUri the URI pointing to external storage like S3 (can be null)
+   * @return the version number assigned to this artifact
+   * @throws SQLException if save operation fails
+   */
+  public int saveArtifact(
+      String appName,
+      String userId,
+      String sessionId,
+      String filename,
+      byte[] data,
+      String mimeType,
+      String metadata,
+      String fileUri)
+      throws SQLException {
     logger.debug(
         "Saving artifact: app={}, user={}, session={}, file={}, size={}KB, mime={}",
         appName,
         userId,
         sessionId,
         filename,
-        data.length / 1024,
+        data != null ? data.length / 1024 : 0,
         mimeType);
 
     Connection conn = null;
@@ -267,8 +294,8 @@ public class PostgresArtifactStore {
 
       String sql =
           String.format(
-              "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
+              "INSERT INTO %s (app_name, user_id, session_id, filename, version, mime_type, data, metadata, file_uri) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)",
               tableName);
 
       try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -278,8 +305,21 @@ public class PostgresArtifactStore {
         pstmt.setString(4, filename);
         pstmt.setInt(5, nextVersion);
         pstmt.setString(6, mimeType);
-        pstmt.setBytes(7, data);
-        pstmt.setString(8, metadata);
+        if (data != null) {
+          pstmt.setBytes(7, data);
+        } else {
+          pstmt.setNull(7, java.sql.Types.BINARY);
+        }
+        if (metadata != null) {
+          pstmt.setString(8, metadata);
+        } else {
+          pstmt.setNull(8, java.sql.Types.OTHER);
+        }
+        if (fileUri != null) {
+          pstmt.setString(9, fileUri);
+        } else {
+          pstmt.setNull(9, java.sql.Types.VARCHAR);
+        }
 
         int rowsAffected = pstmt.executeUpdate();
 
@@ -332,6 +372,46 @@ public class PostgresArtifactStore {
           logger.error("Error closing connection: {}", closeEx.getMessage());
         }
       }
+    }
+  }
+
+  /**
+   * Update the file URI for an existing artifact version.
+   *
+   * @param appName the application name
+   * @param userId the user ID
+   * @param sessionId the session ID
+   * @param filename the artifact filename
+   * @param version the artifact version
+   * @param fileUri the URI pointing to external storage (S3)
+   * @throws SQLException if update fails
+   */
+  public void updateFileUri(
+      String appName, String userId, String sessionId, String filename, int version, String fileUri)
+      throws SQLException {
+    String sql =
+        String.format(
+            "UPDATE %s SET file_uri = ? WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? AND version = ?",
+            tableName);
+    try (Connection conn = getConnection();
+        PreparedStatement pstmt = conn.prepareStatement(sql)) {
+      pstmt.setString(1, fileUri);
+      pstmt.setString(2, appName);
+      pstmt.setString(3, userId);
+      pstmt.setString(4, sessionId);
+      pstmt.setString(5, filename);
+      pstmt.setInt(6, version);
+      pstmt.executeUpdate();
+    } catch (SQLException e) {
+      logger.error(
+          "❌ Error updating file_uri: app={}, user={}, session={}, file={}, version={}, error={}",
+          appName,
+          userId,
+          sessionId,
+          filename,
+          version,
+          e.getMessage());
+      throw e;
     }
   }
 
@@ -421,14 +501,14 @@ public class PostgresArtifactStore {
       // Load specific version
       sql =
           String.format(
-              "SELECT data, mime_type, version, created_at, metadata FROM %s "
+              "SELECT data, mime_type, version, created_at, metadata, file_uri FROM %s "
                   + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? AND version = ?",
               tableName);
     } else {
       // Load latest version
       sql =
           String.format(
-              "SELECT data, mime_type, version, created_at, metadata FROM %s "
+              "SELECT data, mime_type, version, created_at, metadata, file_uri FROM %s "
                   + "WHERE app_name = ? AND user_id = ? AND session_id = ? AND filename = ? "
                   + "ORDER BY version DESC LIMIT 1",
               tableName);
@@ -451,6 +531,7 @@ public class PostgresArtifactStore {
           int loadedVersion = rs.getInt("version");
           Timestamp createdAt = rs.getTimestamp("created_at");
           String metadata = rs.getString("metadata");
+          String fileUri = rs.getString("file_uri");
 
           logger.info(
               "✅ Artifact loaded: app={}, user={}, session={}, file={}, version={}, size={}KB",
@@ -459,9 +540,9 @@ public class PostgresArtifactStore {
               sessionId,
               filename,
               loadedVersion,
-              data.length / 1024);
+              data != null ? data.length / 1024 : 0);
 
-          return new ArtifactData(data, mimeType, loadedVersion, createdAt, metadata);
+          return new ArtifactData(data, mimeType, loadedVersion, createdAt, metadata, fileUri);
         } else {
           logger.warn(
               "⚠️  Artifact not found: app={}, user={}, session={}, file={}, version={}",
@@ -668,14 +749,26 @@ public class PostgresArtifactStore {
     public final int version;
     public final Timestamp createdAt;
     public final String metadata;
+    public final String fileUri;
 
     public ArtifactData(
         byte[] data, String mimeType, int version, Timestamp createdAt, String metadata) {
+      this(data, mimeType, version, createdAt, metadata, null);
+    }
+
+    public ArtifactData(
+        byte[] data,
+        String mimeType,
+        int version,
+        Timestamp createdAt,
+        String metadata,
+        String fileUri) {
       this.data = data;
       this.mimeType = mimeType;
       this.version = version;
       this.createdAt = createdAt;
       this.metadata = metadata;
+      this.fileUri = fileUri;
     }
   }
 }
