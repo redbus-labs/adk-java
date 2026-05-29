@@ -27,7 +27,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.adk.models.LlmRequest;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -256,5 +258,18 @@ public class JsonFormatterTest {
 
     assertTrue(result.isTruncated());
     assertEquals("こん...[truncated]", result.content().get("text_summary").asText());
+  }
+
+  @Test
+  public void smartTruncate_withCycle_detectsCycle() {
+    ObjectMapper mapper = new ObjectMapper();
+    ObjectNode node = mapper.createObjectNode();
+    node.set("child", node);
+
+    // Verify that smartTruncate handles circular JsonNode structures by detecting the cycle.
+    JsonFormatter.TruncationResult result = JsonFormatter.smartTruncate(node, 100);
+
+    assertTrue(result.isTruncated());
+    assertEquals("[cycle detected]", result.node().get("child").asText());
   }
 }
