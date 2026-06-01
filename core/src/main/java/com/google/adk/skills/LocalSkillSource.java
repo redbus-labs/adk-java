@@ -80,7 +80,7 @@ public final class LocalSkillSource extends AbstractSkillSource<Path> {
 
   @Override
   @SuppressWarnings("StreamResourceLeak")
-  protected Flowable<SkillMdPath> listSkills() {
+  protected Flowable<SkillMdPath<Path>> listSkills() {
     return Flowable.using(() -> Files.list(skillsBasePath), Flowable::fromStream, Stream::close)
         .onErrorResumeNext(
             t ->
@@ -91,7 +91,7 @@ public final class LocalSkillSource extends AbstractSkillSource<Path> {
                         t)))
         .filter(Files::isDirectory)
         .mapOptional(this::findSkillMd)
-        .map(skillMd -> new SkillMdPath(skillMd.getParent().getFileName().toString(), skillMd));
+        .map(skillMd -> new SkillMdPath<>(skillMd.getParent().getFileName().toString(), skillMd));
   }
 
   @Override
