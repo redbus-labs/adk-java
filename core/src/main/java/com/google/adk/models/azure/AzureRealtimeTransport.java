@@ -5,7 +5,9 @@ import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.disposables.Disposable;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +24,7 @@ public final class AzureRealtimeTransport implements AzureTransport {
 
   @Override
   public boolean supports(String modelName) {
-    return com.google.adk.models.AzureBaseLM.isRealtimeModel(modelName);
+    return AzureModelUtils.isRealtimeModel(modelName);
   }
 
   @Override
@@ -41,14 +43,40 @@ public final class AzureRealtimeTransport implements AzureTransport {
     return Flowable.create(
         emitter -> {
           AzureRealtimeLlmConnection conn = null;
+          final Disposable[] subscription = new Disposable[1];
           try {
             conn = new AzureRealtimeLlmConnection(config, request);
+            final AzureRealtimeLlmConnection activeConn = conn;
 
-            conn.receive()
-                .doOnNext(emitter::onNext)
-                .doOnError(emitter::onError)
-                .doOnComplete(emitter::onComplete)
-                .subscribe();
+            subscription[0] =
+                conn.receive()
+                    .takeUntil(
+                        response ->
+                            response.turnComplete().orElse(false)
+                                || response.errorMessage().isPresent())
+                    .doOnNext(emitter::onNext)
+                    .doOnError(
+                        error -> {
+                          if (!emitter.isCancelled()) {
+                            emitter.onError(error);
+                          }
+                        })
+                    .doOnComplete(
+                        () -> {
+                          if (!emitter.isCancelled()) {
+                            emitter.onComplete();
+                          }
+                        })
+                    .doFinally(activeConn::close)
+                    .subscribe();
+
+            emitter.setCancellable(
+                () -> {
+                  if (subscription[0] != null && !subscription[0].isDisposed()) {
+                    subscription[0].dispose();
+                  }
+                  activeConn.close();
+                });
 
             Optional<Content> lastUserContent =
                 request.contents().isEmpty()
@@ -70,6 +98,6 @@ public final class AzureRealtimeTransport implements AzureTransport {
             }
           }
         },
-        io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+        BackpressureStrategy.BUFFER);
   }
 }

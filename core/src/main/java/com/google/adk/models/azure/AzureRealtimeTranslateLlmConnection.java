@@ -10,6 +10,7 @@ import com.google.genai.types.Part;
 import com.google.genai.types.Transcription;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.processors.FlowableProcessor;
 import io.reactivex.rxjava3.processors.PublishProcessor;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -47,15 +48,16 @@ public final class AzureRealtimeTranslateLlmConnection implements BaseLlmConnect
   private static final int CONNECT_TIMEOUT_SECONDS = 30;
 
   private final AzureConfig config;
-  private final PublishProcessor<LlmResponse> responseProcessor = PublishProcessor.create();
-  private final Flowable<LlmResponse> responseFlowable = responseProcessor.serialize();
+  private final FlowableProcessor<LlmResponse> responseProcessor =
+      PublishProcessor.<LlmResponse>create().toSerialized();
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final AtomicBoolean sessionClosing = new AtomicBoolean(false);
   private final CountDownLatch connectedLatch = new CountDownLatch(1);
+  private final Object wsLock = new Object();
 
   private final AtomicBoolean outputTranscriptHadDelta = new AtomicBoolean(false);
 
-  private TranslateWebSocketClient wsClient;
+  private volatile TranslateWebSocketClient wsClient;
 
   AzureRealtimeTranslateLlmConnection(AzureConfig config, LlmRequest llmRequest) {
     this.config = Objects.requireNonNull(config, "config cannot be null");
@@ -73,32 +75,62 @@ public final class AzureRealtimeTranslateLlmConnection implements BaseLlmConnect
 
   /** Returns true when the translation WebSocket is open and session.created was received. */
   public boolean isConnected() {
-    return wsClient != null && wsClient.isOpen() && connectedLatch.getCount() == 0;
+    TranslateWebSocketClient client = wsClient;
+    return client != null && client.isOpen() && connectedLatch.getCount() == 0;
   }
 
   private void initializeConnection() throws Exception {
     String apiKey = config.apiKey();
     String wsUrl = config.translationsWebSocketUrl();
 
-    logger.info("Connecting to Azure Realtime Translate WebSocket: {}", wsUrl);
+    logger.info(
+        "Connecting to Azure Realtime Translate WebSocket: {}",
+        AzureConfig.maskWebSocketUrl(wsUrl));
 
     URI uri = URI.create(wsUrl);
-    wsClient = new TranslateWebSocketClient(uri, apiKey);
-    wsClient.connectBlocking(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-    if (!wsClient.isOpen()) {
-      throw new IllegalStateException("Translation WebSocket failed to open within timeout");
+    TranslateWebSocketClient client = new TranslateWebSocketClient(uri, apiKey);
+    synchronized (wsLock) {
+      wsClient = client;
     }
 
-    if (!connectedLatch.await(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-      throw new IllegalStateException(
-          "Translation WebSocket connected but session.created not received");
-    }
+    try {
+      client.connectBlocking(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-    sendSessionUpdate();
-    logger.info(
-        "Azure Realtime Translate connection established (target language={}).",
-        config.translateTargetLanguage());
+      if (!client.isOpen()) {
+        throw new IllegalStateException("Translation WebSocket failed to open within timeout");
+      }
+
+      if (!connectedLatch.await(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        throw new IllegalStateException(
+            "Translation WebSocket connected but session.created not received");
+      }
+
+      sendSessionUpdate();
+      logger.info(
+          "Azure Realtime Translate connection established (target language={}).",
+          config.translateTargetLanguage());
+    } catch (Exception e) {
+      closeOpenWebSocket(client);
+      synchronized (wsLock) {
+        if (wsClient == client) {
+          wsClient = null;
+        }
+      }
+      throw e;
+    }
+  }
+
+  private void closeOpenWebSocket(WebSocketClient client) {
+    if (client == null) {
+      return;
+    }
+    try {
+      if (client.isOpen()) {
+        client.closeBlocking();
+      }
+    } catch (Exception e) {
+      logger.warn("Error closing translation WebSocket during init cleanup", e);
+    }
   }
 
   private void sendSessionUpdate() {
@@ -264,7 +296,16 @@ public final class AzureRealtimeTranslateLlmConnection implements BaseLlmConnect
 
   @Override
   public Completable clearRealtimeAudioBuffer() {
-    return Completable.complete();
+    return Completable.fromAction(
+        () -> {
+          if (closed.get()) {
+            throw new IllegalStateException("Connection is closed");
+          }
+          JSONObject event = new JSONObject();
+          event.put("type", "session.input_audio_buffer.clear");
+          logger.debug("Sending session.input_audio_buffer.clear");
+          sendMessage(event.toString());
+        });
   }
 
   /** Gracefully closes the translation session and flushes pending output. */
@@ -283,7 +324,7 @@ public final class AzureRealtimeTranslateLlmConnection implements BaseLlmConnect
 
   @Override
   public Flowable<LlmResponse> receive() {
-    return responseFlowable;
+    return responseProcessor;
   }
 
   @Override
@@ -298,17 +339,19 @@ public final class AzureRealtimeTranslateLlmConnection implements BaseLlmConnect
   }
 
   private void sendMessage(String json) {
-    if (wsClient == null || !wsClient.isOpen()) {
-      logger.warn("Translation WebSocket is not open, cannot send message.");
-      return;
-    }
-    try {
-      wsClient.send(json);
-      logger.trace(
-          "Sent over translation WebSocket: {} bytes",
-          json.getBytes(StandardCharsets.UTF_8).length);
-    } catch (Exception e) {
-      logger.error("Failed to send over translation WebSocket", e);
+    synchronized (wsLock) {
+      if (wsClient == null || !wsClient.isOpen()) {
+        logger.warn("Translation WebSocket is not open, cannot send message.");
+        return;
+      }
+      try {
+        wsClient.send(json);
+        logger.trace(
+            "Sent over translation WebSocket: {} bytes",
+            json.getBytes(StandardCharsets.UTF_8).length);
+      } catch (Exception e) {
+        logger.error("Failed to send over translation WebSocket", e);
+      }
     }
   }
 
@@ -322,22 +365,25 @@ public final class AzureRealtimeTranslateLlmConnection implements BaseLlmConnect
         responseProcessor.onError(throwable);
       }
 
-      try {
-        if (wsClient != null && wsClient.isOpen()) {
-          if (!sessionClosing.get()) {
-            try {
-              JSONObject event = new JSONObject();
-              event.put("type", "session.close");
-              wsClient.send(event.toString());
-            } catch (Exception e) {
-              logger.debug("session.close on shutdown failed: {}", e.getMessage());
+      synchronized (wsLock) {
+        try {
+          if (wsClient != null && wsClient.isOpen()) {
+            if (!sessionClosing.get()) {
+              try {
+                JSONObject event = new JSONObject();
+                event.put("type", "session.close");
+                wsClient.send(event.toString());
+              } catch (Exception e) {
+                logger.debug("session.close on shutdown failed: {}", e.getMessage());
+              }
             }
+            wsClient.closeBlocking();
           }
-          wsClient.closeBlocking();
+        } catch (Exception e) {
+          logger.warn("Error closing translation WebSocket", e);
+        } finally {
           wsClient = null;
         }
-      } catch (Exception e) {
-        logger.warn("Error closing translation WebSocket", e);
       }
     }
   }

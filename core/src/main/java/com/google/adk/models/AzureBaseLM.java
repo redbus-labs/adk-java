@@ -1,10 +1,9 @@
 package com.google.adk.models;
 
 import com.google.adk.models.azure.AzureConfig;
-import com.google.adk.models.azure.AzureRealtimeTranslateTransport;
-import com.google.adk.models.azure.AzureRealtimeTransport;
-import com.google.adk.models.azure.AzureRestTransport;
+import com.google.adk.models.azure.AzureModelUtils;
 import com.google.adk.models.azure.AzureTransport;
+import com.google.adk.models.azure.AzureTransportRegistry;
 import io.reactivex.rxjava3.core.Flowable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,7 +42,7 @@ public class AzureBaseLM extends BaseLlm {
   public AzureBaseLM(String modelName) {
     super(modelName);
     this.config = AzureConfig.fromEnvironment(modelName);
-    this.transport = selectTransport(modelName);
+    this.transport = AzureTransportRegistry.select(modelName);
     logger.info(
         "AzureBaseLM initialized: model={}, transport={}",
         modelName,
@@ -62,27 +61,11 @@ public class AzureBaseLM extends BaseLlm {
 
   /** Returns true if the given model name is GPT Realtime Translate. */
   public static boolean isTranslateModel(String modelName) {
-    if (modelName == null) {
-      return false;
-    }
-    return modelName.toLowerCase().contains("realtime-translate");
+    return AzureModelUtils.isTranslateModel(modelName);
   }
 
   /** Returns true if the given model name indicates an Azure Realtime voice-agent model. */
   public static boolean isRealtimeModel(String modelName) {
-    if (modelName == null) {
-      return false;
-    }
-    return modelName.toLowerCase().contains("realtime") && !isTranslateModel(modelName);
-  }
-
-  private static AzureTransport selectTransport(String modelName) {
-    if (isTranslateModel(modelName)) {
-      return new AzureRealtimeTranslateTransport();
-    }
-    if (isRealtimeModel(modelName)) {
-      return new AzureRealtimeTransport();
-    }
-    return new AzureRestTransport();
+    return AzureModelUtils.isRealtimeModel(modelName);
   }
 }

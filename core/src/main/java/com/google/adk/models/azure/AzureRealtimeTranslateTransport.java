@@ -15,7 +15,7 @@ public final class AzureRealtimeTranslateTransport implements AzureTransport {
 
   @Override
   public boolean supports(String modelName) {
-    return modelName != null && modelName.toLowerCase().contains("realtime-translate");
+    return AzureModelUtils.isTranslateModel(modelName);
   }
 
   @Override

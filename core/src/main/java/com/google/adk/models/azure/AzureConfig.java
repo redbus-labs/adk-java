@@ -1,5 +1,6 @@
 package com.google.adk.models.azure;
 
+import java.util.Collection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -102,6 +103,21 @@ public final class AzureConfig {
         translateTargetLanguage);
   }
 
+  /**
+   * Eagerly validates Azure environment configuration for the given deployment names. Call at
+   * application startup or from a health check.
+   */
+  public static void validateForDeployments(Collection<String> modelNames) {
+    for (String modelName : modelNames) {
+      fromEnvironment(modelName);
+    }
+  }
+
+  /** Returns host + path for logging without query parameters (model/deployment names). */
+  public static String maskWebSocketUrl(String url) {
+    return maskEndpoint(url);
+  }
+
   public String modelName() {
     return modelName;
   }
@@ -178,7 +194,12 @@ public final class AzureConfig {
   static String normalizeTranslateWebSocketUrl(String raw, String modelName) {
     String ws = toWebSocketUrl(raw);
     String http = ws.replaceFirst("^wss://", "https://").replaceFirst("^ws://", "http://");
-    java.net.URI uri = java.net.URI.create(http);
+    java.net.URI uri;
+    try {
+      uri = java.net.URI.create(http);
+    } catch (IllegalArgumentException e) {
+      throw new IllegalStateException("Invalid translate endpoint: " + raw, e);
+    }
     String host = uri.getHost();
     if (host == null || host.isBlank()) {
       throw new IllegalStateException("Invalid translate endpoint (no host): " + raw);

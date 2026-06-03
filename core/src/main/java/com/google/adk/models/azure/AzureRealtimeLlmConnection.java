@@ -11,6 +11,7 @@ import com.google.genai.types.Part;
 import com.google.genai.types.Transcription;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.processors.FlowableProcessor;
 import io.reactivex.rxjava3.processors.PublishProcessor;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -59,7 +60,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
    * Close-mic / phone-held noise reduction (not {@code far_field}, which favors room/distant
    * pickup).
    */
-  private static final String INPUT_AUDIO_NOISE_REDUCTION = "far_field";
+  private static final String INPUT_AUDIO_NOISE_REDUCTION = "near_field";
 
   private static final String SEMANTIC_VAD_EAGERNESS = "high";
 
@@ -69,13 +70,14 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
 
   private final AzureConfig config;
   private final LlmRequest llmRequest;
-  private final PublishProcessor<LlmResponse> responseProcessor = PublishProcessor.create();
-  private final Flowable<LlmResponse> responseFlowable = responseProcessor.serialize();
+  private final FlowableProcessor<LlmResponse> responseProcessor =
+      PublishProcessor.<LlmResponse>create().toSerialized();
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final AtomicBoolean sessionConfigured = new AtomicBoolean(false);
   private final CountDownLatch connectedLatch = new CountDownLatch(1);
+  private final Object wsLock = new Object();
 
-  private RealtimeWebSocketClient wsClient;
+  private volatile RealtimeWebSocketClient wsClient;
 
   /**
    * When true, we already forwarded assistant text via {@code response.*.delta} events for this
@@ -121,6 +123,8 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
     } catch (Exception e) {
       logger.error("Failed to initialize Azure Realtime WebSocket connection", e);
       responseProcessor.onError(e);
+      throw new IllegalStateException(
+          "Failed to initialize Azure Realtime WebSocket connection", e);
     }
   }
 
@@ -131,25 +135,51 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
         "Initializing Azure Realtime WebSocket connection for model: {}", config.modelName());
 
     String apiKey = config.apiKey();
-
     String wsUrl = config.realtimeWebSocketUrl();
 
-    logger.info("Connecting to WebSocket: {}", wsUrl);
+    logger.info("Connecting to WebSocket: {}", AzureConfig.maskWebSocketUrl(wsUrl));
 
     URI uri = URI.create(wsUrl);
-    wsClient = new RealtimeWebSocketClient(uri, apiKey);
-    wsClient.connectBlocking(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-    if (!wsClient.isOpen()) {
-      throw new IllegalStateException("WebSocket connection failed to open within timeout");
+    RealtimeWebSocketClient client = new RealtimeWebSocketClient(uri, apiKey);
+    synchronized (wsLock) {
+      wsClient = client;
     }
 
-    if (!connectedLatch.await(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-      throw new IllegalStateException("WebSocket connected but session.created not received");
-    }
+    try {
+      client.connectBlocking(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-    sendSessionUpdate();
-    logger.info("Azure Realtime WebSocket connection established.");
+      if (!client.isOpen()) {
+        throw new IllegalStateException("WebSocket connection failed to open within timeout");
+      }
+
+      if (!connectedLatch.await(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("WebSocket connected but session.created not received");
+      }
+
+      sendSessionUpdate();
+      logger.info("Azure Realtime WebSocket connection established.");
+    } catch (Exception e) {
+      closeOpenWebSocket(client);
+      synchronized (wsLock) {
+        if (wsClient == client) {
+          wsClient = null;
+        }
+      }
+      throw e;
+    }
+  }
+
+  private void closeOpenWebSocket(WebSocketClient client) {
+    if (client == null) {
+      return;
+    }
+    try {
+      if (client.isOpen()) {
+        client.closeBlocking();
+      }
+    } catch (Exception e) {
+      logger.warn("Error closing WebSocket during init cleanup", e);
+    }
   }
 
   private void sendSessionUpdate() {
@@ -232,6 +262,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
           break;
 
         case "response.created":
+          pendingFunctionCalls.clear();
           assistantOutputTextHadDelta.set(false);
           assistantAudioTranscriptHadDelta.set(false);
           activeResponse.set(true);
@@ -286,6 +317,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
             logger.info(
                 "Realtime: speech_started during active response — emitting interrupted (barge-in).");
             responseProcessor.onNext(LlmResponse.builder().interrupted(true).build());
+            clearInputAudioBufferIfOpen();
           } else {
             logger.debug("Realtime: speech_started (no active response).");
           }
@@ -478,6 +510,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
 
   private void handleResponseDone(JSONObject event) {
     activeResponse.set(false);
+    pendingFunctionCalls.clear();
     JSONObject resp = event.optJSONObject("response");
     String status =
         resp != null ? resp.optString("status", "").trim().toLowerCase(java.util.Locale.ROOT) : "";
@@ -497,6 +530,7 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
           status,
           statusReason.isEmpty() ? "n/a" : statusReason);
       responseProcessor.onNext(LlmResponse.builder().interrupted(true).build());
+      clearInputAudioBufferIfOpen();
     } else if ("completed".equals(status) || status.isEmpty()) {
       // Align turnComplete with response.done (after audio finishes), not transcript.done.
       logger.info(
@@ -611,16 +645,23 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
           if (closed.get()) {
             throw new IllegalStateException("Connection is closed");
           }
-          JSONObject event = new JSONObject();
-          event.put("type", "input_audio_buffer.clear");
-          logger.debug("Sending input_audio_buffer.clear");
-          sendMessage(event.toString());
+          clearInputAudioBufferIfOpen();
         });
+  }
+
+  private void clearInputAudioBufferIfOpen() {
+    if (closed.get()) {
+      return;
+    }
+    JSONObject event = new JSONObject();
+    event.put("type", "input_audio_buffer.clear");
+    logger.debug("Sending input_audio_buffer.clear");
+    sendMessage(event.toString());
   }
 
   @Override
   public Flowable<LlmResponse> receive() {
-    return responseFlowable;
+    return responseProcessor;
   }
 
   @Override
@@ -700,21 +741,24 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
   }
 
   private void sendMessage(String json) {
-    if (wsClient == null || !wsClient.isOpen()) {
-      logger.warn("WebSocket is not open, cannot send message.");
-      return;
-    }
-    try {
-      wsClient.send(json);
-      logger.debug("Sent over WebSocket: {} bytes", json.getBytes(StandardCharsets.UTF_8).length);
-    } catch (Exception e) {
-      logger.error("Failed to send over WebSocket", e);
+    synchronized (wsLock) {
+      if (wsClient == null || !wsClient.isOpen()) {
+        logger.warn("WebSocket is not open, cannot send message.");
+        return;
+      }
+      try {
+        wsClient.send(json);
+        logger.debug("Sent over WebSocket: {} bytes", json.getBytes(StandardCharsets.UTF_8).length);
+      } catch (Exception e) {
+        logger.error("Failed to send over WebSocket", e);
+      }
     }
   }
 
   private void closeInternal(Throwable throwable) {
     if (closed.compareAndSet(false, true)) {
       logger.info("Closing AzureRealtimeLlmConnection.");
+      pendingFunctionCalls.clear();
 
       if (throwable == null) {
         responseProcessor.onComplete();
@@ -722,13 +766,16 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
         responseProcessor.onError(throwable);
       }
 
-      try {
-        if (wsClient != null && wsClient.isOpen()) {
-          wsClient.closeBlocking();
+      synchronized (wsLock) {
+        try {
+          if (wsClient != null && wsClient.isOpen()) {
+            wsClient.closeBlocking();
+          }
+        } catch (Exception e) {
+          logger.warn("Error closing WebSocket", e);
+        } finally {
           wsClient = null;
         }
-      } catch (Exception e) {
-        logger.warn("Error closing WebSocket", e);
       }
     }
   }

@@ -62,8 +62,11 @@ public final class AzureRestTransport implements AzureTransport {
 
   @Override
   public boolean supports(String modelName) {
-    if (modelName == null) return false;
-    return !modelName.toLowerCase().contains("realtime");
+    if (modelName == null) {
+      return false;
+    }
+    return !AzureModelUtils.isRealtimeModel(modelName)
+        && !AzureModelUtils.isTranslateModel(modelName);
   }
 
   @Override
@@ -126,11 +129,10 @@ public final class AzureRestTransport implements AzureTransport {
     JSONObject response = callApi(payload, config);
 
     if (response.has("error") && !response.isNull("error")) {
+      JSONObject error = response.getJSONObject("error");
+      String message = error.optString("message", response.toString());
       logger.error("Azure Responses API error: {}", response);
-      return Flowable.just(
-          LlmResponse.builder()
-              .content(Content.builder().role("model").parts(Part.fromText("")).build())
-              .build());
+      return Flowable.error(new IllegalStateException("Azure Responses API error: " + message));
     }
 
     GenerateContentResponseUsageMetadata usageMetadata = extractUsageMetadata(response);
@@ -632,7 +634,11 @@ public final class AzureRestTransport implements AzureTransport {
           return new JSONObject().put("error", response.body());
         }
       }
-    } catch (IOException | InterruptedException ex) {
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      logger.error("HTTP request interrupted for Azure Responses API", ex);
+      return new JSONObject().put("error", ex.getMessage());
+    } catch (IOException ex) {
       logger.error("HTTP request failed for Azure Responses API", ex);
       return new JSONObject().put("error", ex.getMessage());
     }
@@ -673,7 +679,11 @@ public final class AzureRestTransport implements AzureTransport {
         }
         return null;
       }
-    } catch (IOException | InterruptedException ex) {
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      logger.error("HTTP request interrupted for Azure streaming", ex);
+      return null;
+    } catch (IOException ex) {
       logger.error("HTTP request failed for Azure streaming", ex);
       return null;
     }

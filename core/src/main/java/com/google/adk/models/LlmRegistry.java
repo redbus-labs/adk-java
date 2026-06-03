@@ -17,6 +17,7 @@
 package com.google.adk.models;
 
 import com.google.common.annotations.VisibleForTesting;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -32,8 +33,13 @@ public final class LlmRegistry {
     BaseLlm create(String modelName);
   }
 
-  /** Map of model name patterns regex to factories. */
-  private static final Map<String, LlmFactory> llmFactories = new ConcurrentHashMap<>();
+  private static final Object factoryLock = new Object();
+
+  /**
+   * Regex patterns to factories in registration order. First match wins; use specific patterns
+   * before broad catch-alls (e.g. {@code Azure\\|.*} before {@code .*realtime.*}).
+   */
+  private static final LinkedHashMap<String, LlmFactory> llmFactories = new LinkedHashMap<>();
 
   /** Registers default LLM factories, e.g. for Gemini models. */
   static {
@@ -42,15 +48,15 @@ public final class LlmRegistry {
     registerLlm("apigee/.*", modelName -> ApigeeLlm.builder().modelName(modelName).build());
     registerLlm("gpt-oss-.*", modelName -> GptOssLlm.builder().modelName(modelName).build());
     registerLlm(
-        ".*realtime.*",
-        modelName -> {
-          String actualModel = modelName.contains("|") ? modelName.split("\\|", 2)[1] : modelName;
-          return new AzureBaseLM(actualModel);
-        });
-    registerLlm(
         "Azure\\|.*",
         modelName -> {
           String actualModel = modelName.split("\\|", 2)[1];
+          return new AzureBaseLM(actualModel);
+        });
+    registerLlm(
+        ".*realtime.*",
+        modelName -> {
+          String actualModel = modelName.contains("|") ? modelName.split("\\|", 2)[1] : modelName;
           return new AzureBaseLM(actualModel);
         });
   }
@@ -62,7 +68,9 @@ public final class LlmRegistry {
    * @param factory Factory to create LLM instances.
    */
   public static void registerLlm(String modelNamePattern, LlmFactory factory) {
-    llmFactories.put(modelNamePattern, factory);
+    synchronized (factoryLock) {
+      llmFactories.put(modelNamePattern, factory);
+    }
   }
 
   /**
@@ -73,7 +81,9 @@ public final class LlmRegistry {
    */
   @VisibleForTesting
   static boolean matchesAnyPattern(String modelName) {
-    return llmFactories.keySet().stream().anyMatch(modelName::matches);
+    synchronized (factoryLock) {
+      return llmFactories.keySet().stream().anyMatch(modelName::matches);
+    }
   }
 
   /**
@@ -96,9 +106,11 @@ public final class LlmRegistry {
    * @throws IllegalArgumentException If no factory matches the model name.
    */
   private static BaseLlm createLlm(String modelName) {
-    for (Map.Entry<String, LlmFactory> entry : llmFactories.entrySet()) {
-      if (modelName.matches(entry.getKey())) {
-        return entry.getValue().create(modelName);
+    synchronized (factoryLock) {
+      for (Map.Entry<String, LlmFactory> entry : llmFactories.entrySet()) {
+        if (modelName.matches(entry.getKey())) {
+          return entry.getValue().create(modelName);
+        }
       }
     }
     throw new IllegalArgumentException("Unsupported model: " + modelName);
@@ -112,8 +124,9 @@ public final class LlmRegistry {
    * @param factory The {@link LlmFactory} to register.
    */
   static void registerTestLlm(String modelNamePattern, LlmFactory factory) {
-    llmFactories.put(modelNamePattern, factory);
-    // Clear any cached instances that match this pattern to ensure test isolation.
+    synchronized (factoryLock) {
+      llmFactories.put(modelNamePattern, factory);
+    }
     instances.keySet().removeIf(modelName -> modelName.matches(modelNamePattern));
   }
 
