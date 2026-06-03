@@ -16,6 +16,8 @@
 
 package com.google.adk.runner;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
+
 import com.google.adk.agents.ActiveStreamingTool;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.ContextCacheConfig;
@@ -45,6 +47,8 @@ import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.MapMaker;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.AudioTranscriptionConfig;
@@ -64,6 +68,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -485,6 +490,12 @@ public class Runner {
               BaseAgent rootAgent = this.agent;
               String invocationId = InvocationContext.newInvocationContextId();
 
+              // Pre-merge stateDelta so onUserMessageCallback can access it.
+              // Safe: session is a copy; persistence still happens via appendNewMessageToSession.
+              if (stateDelta != null && !stateDelta.isEmpty()) {
+                stateDelta.forEach((key, value) -> session.state().put(key, value));
+              }
+
               // Create initial context
               InvocationContext initialContext =
                   newInvocationContextBuilder(session)
@@ -769,12 +780,15 @@ public class Runner {
     return true;
   }
 
-  /**
-   * Returns the agent that should handle the next request based on session history.
-   *
-   * @return agent to run.
-   */
+  /** Returns the agent that should handle the next request based on session history. */
   private BaseAgent findAgentToRun(Session session, BaseAgent rootAgent) {
+    // Route function responses back to the originating function-call author so HITL tool
+    // confirmations resume the sub-agent even through non-LlmAgent ancestors.
+    Optional<BaseAgent> functionCallAuthor = findFunctionCallAuthor(session, rootAgent);
+    if (functionCallAuthor.isPresent()) {
+      return functionCallAuthor.get();
+    }
+
     List<Event> events = new ArrayList<>(session.events());
     Collections.reverse(events);
 
@@ -803,6 +817,39 @@ public class Runner {
     }
 
     return rootAgent;
+  }
+
+  /**
+   * If the last event is a function response, returns the agent that emitted the matching function
+   * call (by id), or empty if no match is found in the agent tree.
+   */
+  private static Optional<BaseAgent> findFunctionCallAuthor(Session session, BaseAgent rootAgent) {
+    List<Event> events = session.events();
+    if (events.isEmpty()) {
+      return Optional.empty();
+    }
+    ImmutableSet<String> functionResponseIds =
+        Iterables.getLast(events).functionResponses().stream()
+            .map(fr -> fr.id().orElse(null))
+            .filter(Objects::nonNull)
+            .collect(toImmutableSet());
+
+    // Iterate in reverse to prefer the most recent matching call, mirroring Python ADK's
+    // find_event_by_function_call_id. Function call IDs are unique in normal flows, so this
+    // is defense-in-depth and not covered by mutation testing.
+    List<Event> precedingEvents = new ArrayList<>(events.subList(0, events.size() - 1));
+    Collections.reverse(precedingEvents);
+    for (Event event : precedingEvents) {
+      boolean matches =
+          event.functionCalls().stream()
+              .map(fc -> fc.id().orElse(null))
+              .filter(Objects::nonNull)
+              .anyMatch(functionResponseIds::contains);
+      if (matches && event.author() != null) {
+        return rootAgent.findAgent(event.author());
+      }
+    }
+    return Optional.empty();
   }
 
   private void addActiveStreamingTools(InvocationContext invocationContext, List<BaseTool> tools) {
