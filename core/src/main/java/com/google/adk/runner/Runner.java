@@ -30,6 +30,7 @@ import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.flows.llmflows.PersistBarrier;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.Model;
 import com.google.adk.plugins.Plugin;
@@ -575,6 +576,9 @@ public class Runner {
                         .content(content)
                         .build());
 
+    // Let BaseLlmFlow block each step until this Runner has persisted the prior step's events.
+    PersistBarrier.enable(contextWithUpdatedSession);
+
     // Agent execution
     Flowable<Event> agentEvents =
         contextWithUpdatedSession
@@ -584,6 +588,16 @@ public class Runner {
                 agentEvent ->
                     this.sessionService
                         .appendEvent(updatedSession, agentEvent)
+                        // Release (or fail) BaseLlmFlow's wait for this step; the Runner stays the
+                        // sole appendEvent caller (see PersistBarrier).
+                        .doOnSuccess(
+                            unusedEvent ->
+                                PersistBarrier.markPersisted(
+                                    contextWithUpdatedSession, agentEvent.id()))
+                        .doOnError(
+                            error ->
+                                PersistBarrier.markFailed(
+                                    contextWithUpdatedSession, agentEvent.id(), error))
                         .flatMap(
                             registeredEvent -> {
                               // TODO: remove this hack after deprecating runAsync with Session.

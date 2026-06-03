@@ -38,6 +38,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.adk.agents.BaseAgent;
+import com.google.adk.agents.Callbacks;
+import com.google.adk.agents.Callbacks.AfterModelCallback;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
@@ -47,9 +49,14 @@ import com.google.adk.apps.App;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.Functions;
+import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.BaseSessionService;
+import com.google.adk.sessions.GetSessionConfig;
+import com.google.adk.sessions.InMemorySessionService;
+import com.google.adk.sessions.ListEventsResponse;
+import com.google.adk.sessions.ListSessionsResponse;
 import com.google.adk.sessions.Session;
 import com.google.adk.sessions.SessionKey;
 import com.google.adk.summarizer.EventsCompactionConfig;
@@ -85,6 +92,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.After;
@@ -858,6 +866,331 @@ public final class RunnerTest {
     subscriber1.assertError(RuntimeException.class);
     subscriber2.assertComplete();
     subscriber2.assertValue(agentEvent);
+  }
+
+  /**
+   * A slow appendEvent must not let the next LLM step start with a stale session missing the
+   * previous step's function-response event.
+   */
+  @Test
+  public void runAsync_slowAppendEvent_doesNotCauseStaleSessionInNextStep() throws Exception {
+    TestLlm raceTestLlm =
+        createTestLlm(
+            createFunctionCallLlmResponse("call_1", echoTool.name(), ImmutableMap.of("arg", "v1")),
+            createTextLlmResponse("done"));
+
+    LlmAgent agentForRace =
+        createTestAgentBuilder(raceTestLlm).tools(ImmutableList.of(echoTool)).build();
+
+    BaseSessionService delayedSessionService =
+        new AppendDelayingSessionService(new InMemorySessionService(), 50);
+
+    Runner runnerForRace =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agentForRace).build())
+            .sessionService(delayedSessionService)
+            .build();
+    Session raceSession =
+        runnerForRace.sessionService().createSession("test", "user").blockingGet();
+
+    var unused =
+        runnerForRace
+            .runAsync("user", raceSession.id(), createContent("start"))
+            .toList()
+            .blockingGet();
+
+    ImmutableList<LlmRequest> requests = raceTestLlm.getRequests();
+    assertThat(requests).hasSize(2);
+
+    // Second LLM request must see the function response from step 1.
+    boolean foundToolResponse =
+        requests.get(1).contents().stream()
+            .flatMap(c -> c.parts().stream().flatMap(List::stream))
+            .anyMatch(part -> part.functionResponse().isPresent());
+    assertThat(foundToolResponse).isTrue();
+  }
+
+  /**
+   * When an LlmAgent transfers to a sub-LlmAgent, the sub-agent's events flow back up through the
+   * parent's flow and must each be appended to the session exactly once.
+   */
+  @Test
+  public void runAsync_transferToSubAgent_eventsAppendedOnce() throws Exception {
+    LlmAgent subAgent =
+        createTestAgentBuilder(createTestLlm(createTextLlmResponse("sub response")))
+            .name("sub-agent")
+            .build();
+
+    // Force a transfer to sub-agent using an afterModelCallback.
+    AfterModelCallback transferCallback =
+        (ctx, response) -> {
+          ctx.eventActions().setTransferToAgent(subAgent.name());
+          return Maybe.empty();
+        };
+
+    TestLlm rootTestLlm = createTestLlm(createTextLlmResponse("initial"));
+    LlmAgent rootAgent =
+        createTestAgentBuilder(rootTestLlm)
+            .subAgents(subAgent)
+            .afterModelCallback(ImmutableList.of(transferCallback))
+            .build();
+
+    Runner transferRunner =
+        Runner.builder().app(App.builder().name("test").rootAgent(rootAgent).build()).build();
+    Session transferSession =
+        transferRunner.sessionService().createSession("test", "user").blockingGet();
+
+    var unused =
+        transferRunner
+            .runAsync("user", transferSession.id(), createContent("start"))
+            .toList()
+            .blockingGet();
+
+    Session finalSession =
+        transferRunner
+            .sessionService()
+            .getSession(
+                transferSession.appName(),
+                transferSession.userId(),
+                transferSession.id(),
+                Optional.empty())
+            .blockingGet();
+
+    // Each event id should appear at most once in the session.
+    List<String> eventIds = finalSession.events().stream().map(Event::id).toList();
+    assertThat(eventIds).containsNoDuplicates();
+  }
+
+  /** {@link BaseSessionService} that delays {@link #appendEvent} to surface ordering bugs. */
+  private static final class AppendDelayingSessionService implements BaseSessionService {
+    private final BaseSessionService delegate;
+    private final long appendDelayMs;
+
+    AppendDelayingSessionService(BaseSessionService delegate, long appendDelayMs) {
+      this.delegate = delegate;
+      this.appendDelayMs = appendDelayMs;
+    }
+
+    // Wrapper must preserve the deprecated overload's signature.
+    @SuppressWarnings("deprecation")
+    @Override
+    public Single<Session> createSession(
+        String appName, String userId, ConcurrentMap<String, Object> state, String sessionId) {
+      return delegate.createSession(appName, userId, state, sessionId);
+    }
+
+    @Override
+    public Maybe<Session> getSession(
+        String appName, String userId, String sessionId, Optional<GetSessionConfig> config) {
+      return delegate.getSession(appName, userId, sessionId, config);
+    }
+
+    @Override
+    public Single<ListSessionsResponse> listSessions(String appName, String userId) {
+      return delegate.listSessions(appName, userId);
+    }
+
+    @Override
+    public Completable deleteSession(String appName, String userId, String sessionId) {
+      return delegate.deleteSession(appName, userId, sessionId);
+    }
+
+    @Override
+    public Single<ListEventsResponse> listEvents(String appName, String userId, String sessionId) {
+      return delegate.listEvents(appName, userId, sessionId);
+    }
+
+    @Override
+    public Single<Event> appendEvent(Session session, Event event) {
+      // Delay the mutation itself so session.events() lags behind the flow's emissions.
+      return Single.timer(appendDelayMs, MILLISECONDS)
+          .flatMap(unused -> delegate.appendEvent(session, event));
+    }
+  }
+
+  /**
+   * Regression test: {@code outputKey} state delta must reach {@code session.state()}. {@code
+   * LlmAgent} applies {@code maybeSaveOutputToState} to the event before the Runner persists it.
+   */
+  @Test
+  public void runAsync_llmAgentWithOutputKey_writesValueToSessionState() {
+    Content modelContent = Content.fromParts(Part.fromText("Saved output"));
+    TestLlm outputKeyTestLlm = createTestLlm(createLlmResponse(modelContent));
+    LlmAgent outputKeyAgent =
+        createTestAgentBuilder(outputKeyTestLlm).outputKey("myOutput").build();
+
+    Runner outputKeyRunner =
+        Runner.builder().app(App.builder().name("test").rootAgent(outputKeyAgent).build()).build();
+    Session outputKeySession =
+        outputKeyRunner.sessionService().createSession("test", "user").blockingGet();
+
+    var unused =
+        outputKeyRunner
+            .runAsync("user", outputKeySession.id(), createContent("hi"))
+            .toList()
+            .blockingGet();
+
+    Session persistedSession =
+        outputKeyRunner
+            .sessionService()
+            .getSession("test", "user", outputKeySession.id(), Optional.empty())
+            .blockingGet();
+    assertThat(persistedSession.state()).containsEntry("myOutput", "Saved output");
+  }
+
+  /**
+   * Regression test: the Runner is the sole event persister, so each LlmAgent event reaches {@code
+   * BaseSessionService.appendEvent} exactly once -- a single-step run appends 2 (user msg + agent
+   * event). A second writer would regress this to 3.
+   */
+  @Test
+  public void runAsync_serviceAppendEventCalledOncePerEvent() {
+    TestLlm idempotencyTestLlm = createTestLlm(createLlmResponse(createContent("from agent")));
+    LlmAgent llmAgent = createTestAgentBuilder(idempotencyTestLlm).build();
+
+    InMemorySessionService realSessionService = new InMemorySessionService();
+    BaseSessionService mockSessionService = mock(BaseSessionService.class);
+    Session realSession = realSessionService.createSession("test", "user").blockingGet();
+    when(mockSessionService.createSession(anyString(), anyString()))
+        .thenReturn(Single.just(realSession));
+    when(mockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenAnswer(invocation -> Maybe.just(realSession));
+    when(mockSessionService.appendEvent(any(), any()))
+        .thenAnswer(
+            invocation ->
+                realSessionService.appendEvent(
+                    invocation.getArgument(0), invocation.getArgument(1)));
+
+    Runner countingRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(llmAgent).build())
+            .sessionService(mockSessionService)
+            .build();
+
+    var unused =
+        countingRunner
+            .runAsync("user", realSession.id(), createContent("user message"))
+            .toList()
+            .blockingGet();
+
+    // Two calls only: user message + agent response. A second writer would push this to 3.
+    verify(mockSessionService, times(2)).appendEvent(any(), any());
+  }
+
+  /**
+   * Regression test: an {@code afterAgentCallback} that mutates state emits a state-delta event
+   * authored by the agent; the Runner must persist it like any other agent event (3 events total).
+   * Exercised through the Runner, unlike {@code CallbacksTest}.
+   */
+  @Test
+  public void runAsync_afterAgentCallbackWritesState_callbackEventIsPersisted() {
+    TestLlm callbackTestLlm = createTestLlm(createLlmResponse(createContent("from agent")));
+    Callbacks.AfterAgentCallback writeState =
+        callbackContext -> {
+          var unused = callbackContext.state().put("after_agent_callback_state_key", "value1");
+          return Maybe.empty();
+        };
+    LlmAgent callbackAgent =
+        createTestAgentBuilder(callbackTestLlm).afterAgentCallback(writeState).build();
+
+    Runner callbackRunner =
+        Runner.builder().app(App.builder().name("test").rootAgent(callbackAgent).build()).build();
+    Session session = callbackRunner.sessionService().createSession("test", "user").blockingGet();
+
+    var unused =
+        callbackRunner.runAsync("user", session.id(), createContent("hi")).toList().blockingGet();
+
+    Session persisted =
+        callbackRunner
+            .sessionService()
+            .getSession("test", "user", session.id(), Optional.empty())
+            .blockingGet();
+
+    // user message + model response + after-agent-callback state-delta event.
+    assertThat(persisted.events()).hasSize(3);
+    Event callbackEvent = persisted.events().get(2);
+    assertThat(callbackEvent.author()).isEqualTo(callbackAgent.name());
+    assertThat(callbackEvent.actions().stateDelta())
+        .containsEntry("after_agent_callback_state_key", "value1");
+    assertThat(persisted.state()).containsEntry("after_agent_callback_state_key", "value1");
+  }
+
+  /**
+   * Pure-mock {@link BaseSessionService} returning a sentinel from {@code appendEvent}; verifies
+   * the Runner calls it exactly 2 times (user msg + agent event).
+   */
+  @Test
+  public void runAsync_pureMockSessionService_appendEventCalledOncePerLlmAgentEvent() {
+    Event sentinelEvent =
+        Event.builder()
+            .id("sentinel")
+            .author("test agent")
+            .content(createContent("sentinel response"))
+            .build();
+    BaseSessionService pureMockSessionService = mock(BaseSessionService.class);
+    Session backingSession = Session.builder("session-id").appName("test").userId("user").build();
+    when(pureMockSessionService.createSession(anyString(), anyString()))
+        .thenReturn(Single.just(backingSession));
+    when(pureMockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenAnswer(invocation -> Maybe.just(backingSession));
+    when(pureMockSessionService.appendEvent(any(), any())).thenReturn(Single.just(sentinelEvent));
+
+    TestLlm pureMockLlm = createTestLlm(createLlmResponse(createContent("from agent")));
+    LlmAgent pureMockLlmAgent = createTestAgentBuilder(pureMockLlm).build();
+    Runner pureMockRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(pureMockLlmAgent).build())
+            .sessionService(pureMockSessionService)
+            .build();
+
+    var unused =
+        pureMockRunner
+            .runAsync("user", backingSession.id(), createContent("user message"))
+            .toList()
+            .blockingGet();
+
+    // Exactly 2: user message + agent event. A second writer would make it 3.
+    verify(pureMockSessionService, times(2)).appendEvent(any(), any());
+  }
+
+  /**
+   * Multi-step variant: tool call + final response. The append count is 1 (user msg) + N (agent
+   * events), never 1 + 2N.
+   */
+  @Test
+  public void runAsync_pureMockSessionService_multiStepLlmAgent_appendsExactlyOncePerEvent() {
+    Event sentinelEvent = Event.builder().id("sentinel").author("test agent").build();
+    BaseSessionService pureMockSessionService = mock(BaseSessionService.class);
+    Session backingSession = Session.builder("session-id").appName("test").userId("user").build();
+    when(pureMockSessionService.createSession(anyString(), anyString()))
+        .thenReturn(Single.just(backingSession));
+    when(pureMockSessionService.getSession(anyString(), anyString(), anyString(), any()))
+        .thenAnswer(invocation -> Maybe.just(backingSession));
+    when(pureMockSessionService.appendEvent(any(), any())).thenReturn(Single.just(sentinelEvent));
+
+    // Function call, then function-response triggers a second LLM call returning the final text.
+    TestLlm twoStepLlm =
+        createTestLlm(
+            createFunctionCallLlmResponse(
+                "call_1", new EchoTool().name(), ImmutableMap.of("arg", "v1")),
+            createTextLlmResponse("final answer"));
+    LlmAgent twoStepLlmAgent =
+        createTestAgentBuilder(twoStepLlm).tools(ImmutableList.of(new EchoTool())).build();
+    Runner twoStepRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(twoStepLlmAgent).build())
+            .sessionService(pureMockSessionService)
+            .build();
+
+    var emittedEvents =
+        twoStepRunner
+            .runAsync("user", backingSession.id(), createContent("start"))
+            .toList()
+            .blockingGet();
+
+    // 1 (user msg) + N (agent events); a second writer would make it 1 + 2N.
+    int expectedAppendCount = 1 + emittedEvents.size();
+    verify(pureMockSessionService, times(expectedAppendCount)).appendEvent(any(), any());
   }
 
   @Test
