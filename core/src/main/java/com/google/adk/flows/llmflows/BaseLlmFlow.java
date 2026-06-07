@@ -523,7 +523,10 @@ public abstract class BaseLlmFlow implements BaseFlow {
                     return Flowable.empty();
                   } else {
                     logger.debug("Continuing to next step of the flow.");
-                    return run(spanContext, invocationContext, stepsCompleted + 1);
+                    // Wait until the Runner has persisted this step's events so the next step's
+                    // request is not built from a stale session (see PersistBarrier).
+                    return PersistBarrier.awaitPersisted(invocationContext, eventList)
+                        .andThen(run(spanContext, invocationContext, stepsCompleted + 1));
                   }
                 }));
   }

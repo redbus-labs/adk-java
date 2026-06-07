@@ -213,7 +213,8 @@ public final class PluginStateTest {
 
     // Wait for cleanup side effects which run after terminal signal.
     long deadline = Instant.now().plusMillis(1000).toEpochMilli();
-    while (!pluginState.getPendingTasksForInvocation(invocationId).isEmpty()
+    while ((!pluginState.getBatchProcessors().isEmpty()
+            || !pluginState.getTraceManagers().isEmpty())
         && Instant.now().toEpochMilli() < deadline) {
       try {
         Thread.sleep(10);

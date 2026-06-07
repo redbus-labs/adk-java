@@ -44,7 +44,7 @@ public abstract class AbstractSkillSource<PathT> implements SkillSource {
   private static final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
 
   /** A container class that holds a skill's name and the path to its SKILL.md file. */
-  protected final class SkillMdPath {
+  public static final class SkillMdPath<PathT> {
 
     private final String name;
     private final PathT mdPath;
@@ -55,8 +55,7 @@ public abstract class AbstractSkillSource<PathT> implements SkillSource {
      * @param name the name of the skill
      * @param mdPath the path to the SKILL.md file
      */
-    @SuppressWarnings("ProtectedMembersInFinalClass")
-    protected SkillMdPath(String name, PathT mdPath) {
+    public SkillMdPath(String name, PathT mdPath) {
       this.name = name;
       this.mdPath = mdPath;
     }
@@ -127,7 +126,7 @@ public abstract class AbstractSkillSource<PathT> implements SkillSource {
   /**
    * Returns a {@link Flowable} of skills as a pair of skill name and the path to the SKILL.md file.
    */
-  protected abstract Flowable<SkillMdPath> listSkills();
+  protected abstract Flowable<SkillMdPath<PathT>> listSkills();
 
   /** Returns the path to the SKILL.md file for the given skill. */
   protected abstract Single<PathT> findSkillMdPath(String skillName);
