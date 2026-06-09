@@ -41,6 +41,7 @@ import com.google.adk.flows.llmflows.Functions;
 import com.google.adk.flows.llmflows.PersistBarrier;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.Model;
+import com.google.adk.platform.UuidProvider;
 import com.google.adk.plugins.Plugin;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
@@ -73,6 +74,7 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Scheduler;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.subjects.CompletableSubject;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -97,6 +99,8 @@ public class Runner {
   @Nullable private final ContextCacheConfig contextCacheConfig;
   private final @Nullable ResumabilityConfig resumabilityConfig;
   @Nullable private final Scheduler scheduler;
+  private final InstantSource instantSource;
+  private final UuidProvider uuidProvider;
   private final ConcurrentMap<String, Completable> activeSessionCompletables =
       new MapMaker().weakValues().makeMap();
 
@@ -106,10 +110,14 @@ public class Runner {
     private BaseAgent agent;
     private String appName;
     private BaseArtifactService artifactService = new InMemoryArtifactService();
-    private BaseSessionService sessionService = new InMemorySessionService();
+    private @Nullable BaseSessionService sessionService = null;
+    // Distinguishes "never set" (a shared in-memory default is created) from an explicit null.
+    private boolean sessionServiceSet;
     @Nullable private BaseMemoryService memoryService = null;
     private List<? extends Plugin> plugins = ImmutableList.of();
     @Nullable private Scheduler scheduler = null;
+    private InstantSource instantSource = InstantSource.system();
+    private UuidProvider uuidProvider = UuidProvider.SYSTEM;
 
     @CanIgnoreReturnValue
     public Builder app(App app) {
@@ -141,6 +149,7 @@ public class Runner {
     @CanIgnoreReturnValue
     public Builder sessionService(BaseSessionService sessionService) {
       this.sessionService = sessionService;
+      this.sessionServiceSet = true;
       return this;
     }
 
@@ -183,6 +192,32 @@ public class Runner {
       return this;
     }
 
+    /**
+     * Sets the {@link InstantSource} that supplies every timestamp this runner generates: event
+     * timestamps, and the {@code lastUpdateTime} of sessions created by the default in-memory
+     * session service, which is created on the first {@code build()}. {@code null} (the default)
+     * selects {@link InstantSource#system()}.
+     */
+    @CanIgnoreReturnValue
+    public Builder instantSource(@Nullable InstantSource instantSource) {
+      this.instantSource = instantSource != null ? instantSource : InstantSource.system();
+      return this;
+    }
+
+    /**
+     * Sets the {@link UuidProvider} that supplies every identifier this runner generates: event,
+     * invocation, and client function-call ids, and the ids of sessions created by the default
+     * in-memory session service, which is created on the first {@code build()}. {@code null} (the
+     * default) selects {@link UuidProvider#SYSTEM}.
+     */
+    @CanIgnoreReturnValue
+    public Builder uuidProvider(@Nullable UuidProvider uuidProvider) {
+      this.uuidProvider = uuidProvider != null ? uuidProvider : UuidProvider.SYSTEM;
+      return this;
+    }
+
+    // OVERWRITE is the documented default of new InMemorySessionService() until callers migrate.
+    @SuppressWarnings("deprecation")
     public Runner build() {
       BaseAgent buildAgent;
       String buildAppName;
@@ -223,7 +258,15 @@ public class Runner {
         throw new IllegalStateException("Artifact service must be provided.");
       }
       if (sessionService == null) {
-        throw new IllegalStateException("Session service must be provided.");
+        if (sessionServiceSet) {
+          throw new IllegalStateException("Session service must be provided.");
+        }
+        // Created once per builder, so every runner built from it shares the same sessions.
+        sessionService =
+            new InMemorySessionService(
+                InMemorySessionService.DuplicateSessionIdBehavior.OVERWRITE,
+                instantSource,
+                uuidProvider);
       }
       return new Runner(
           buildAgent,
@@ -235,7 +278,9 @@ public class Runner {
           buildEventsCompactionConfig,
           buildContextCacheConfig,
           buildResumabilityConfig,
-          scheduler);
+          scheduler,
+          instantSource,
+          uuidProvider);
     }
   }
 
@@ -327,7 +372,9 @@ public class Runner {
         eventsCompactionConfig,
         contextCacheConfig,
         resumabilityConfig,
-        /* scheduler= */ null);
+        /* scheduler= */ null,
+        InstantSource.system(),
+        UuidProvider.SYSTEM);
   }
 
   private Runner(
@@ -340,17 +387,22 @@ public class Runner {
       @Nullable EventsCompactionConfig eventsCompactionConfig,
       @Nullable ContextCacheConfig contextCacheConfig,
       @Nullable ResumabilityConfig resumabilityConfig,
-      @Nullable Scheduler scheduler) {
+      @Nullable Scheduler scheduler,
+      InstantSource instantSource,
+      UuidProvider uuidProvider) {
     this.agent = agent;
     this.appName = appName;
     this.artifactService = artifactService;
     this.sessionService = sessionService;
     this.memoryService = memoryService;
     this.pluginManager = new PluginManager(plugins);
-    this.eventsCompactionConfig = createEventsCompactionConfig(agent, eventsCompactionConfig);
+    this.eventsCompactionConfig =
+        createEventsCompactionConfig(agent, eventsCompactionConfig, instantSource, uuidProvider);
     this.contextCacheConfig = contextCacheConfig;
     this.resumabilityConfig = resumabilityConfig;
     this.scheduler = scheduler;
+    this.instantSource = instantSource;
+    this.uuidProvider = uuidProvider;
   }
 
   /**
@@ -462,7 +514,8 @@ public class Runner {
     }
     Event.Builder eventBuilder =
         Event.builder()
-            .id(Event.generateEventId())
+            .id(invocationContext.newUuid())
+            .timestamp(invocationContext.now().toEpochMilli())
             .invocationId(invocationContext.invocationId())
             .author(Role.USER)
             .branch(branch)
@@ -685,7 +738,7 @@ public class Runner {
             () -> {
               Context capturedContext = Context.current();
               BaseAgent rootAgent = this.agent;
-              String invocationId = InvocationContext.newInvocationContextId();
+              String invocationId = InvocationContext.newInvocationContextId(this.uuidProvider);
 
               // Eagerly merge stateDelta into session state so onUserMessageCallback() can see it.
               // Safe: this in-memory update is ahead of time; canonical persistence still happens
@@ -859,7 +912,8 @@ public class Runner {
         .map(
             content ->
                 Event.builder()
-                    .id(Event.generateEventId())
+                    .id(context.newUuid())
+                    .timestamp(context.now().toEpochMilli())
                     .invocationId(context.invocationId())
                     .author("model")
                     .content(content)
@@ -981,7 +1035,8 @@ public class Runner {
             // No message to carry the delta, so persist a content-less event, as Python does.
             Event stateDeltaEvent =
                 Event.builder()
-                    .id(Event.generateEventId())
+                    .id(initialContext.newUuid())
+                    .timestamp(initialContext.now().toEpochMilli())
                     .invocationId(resolvedInvocationId)
                     .author(Role.USER)
                     .actions(
@@ -1323,6 +1378,8 @@ public class Runner {
         .contextCacheConfig(this.contextCacheConfig)
         .resumabilityConfig(this.resumabilityConfig)
         .scheduler(this.scheduler)
+        .instantSource(this.instantSource)
+        .uuidProvider(this.uuidProvider)
         .agent(agent);
   }
 
@@ -1538,7 +1595,10 @@ public class Runner {
 
   @Nullable
   private static EventsCompactionConfig createEventsCompactionConfig(
-      BaseAgent agent, @Nullable EventsCompactionConfig config) {
+      BaseAgent agent,
+      @Nullable EventsCompactionConfig config,
+      InstantSource instantSource,
+      UuidProvider uuidProvider) {
     if (config == null || config.summarizer() != null) {
       return config;
     }
@@ -1548,7 +1608,10 @@ public class Runner {
             .map(LlmAgent.class::cast)
             .flatMap(LlmAgent::model)
             .flatMap(Model::model)
-            .map(LlmEventSummarizer::new)
+            .map(
+                baseLlm ->
+                    new LlmEventSummarizer(
+                        baseLlm, /* promptTemplate= */ null, instantSource, uuidProvider))
             .orElseThrow(
                 () ->
                     new IllegalArgumentException(
