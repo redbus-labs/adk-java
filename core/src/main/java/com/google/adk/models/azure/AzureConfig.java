@@ -16,7 +16,6 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code AZURE_RESPONSE_ENDPOINT} — HTTP Responses API
  *   <li>{@code AZURE_REALTIME_ENDPOINT} — WebSocket voice-agent Realtime API
  *   <li>{@code AZURE_TRANSLATE_ENDPOINT} — WebSocket GPT Realtime Translate
- *   <li>{@code AZURE_MODEL_ENDPOINT} — (legacy) fallback for all of the above
  *   <li>{@code AZURE_OPENAI_API_KEY} — API key
  *   <li>{@code AZURE_REALTIME_VOICE} — (optional) voice for realtime models, defaults to "alloy"
  *   <li>{@code AZURE_TRANSLATE_TARGET_LANGUAGE} — (optional) default target language, defaults to
@@ -27,16 +26,6 @@ public final class AzureConfig {
 
   private static final Logger logger = LoggerFactory.getLogger(AzureConfig.class);
 
-  /**
-   * @deprecated Use contract-specific endpoint variables.
-   */
-  public static final String LEGACY_ENDPOINT_ENV = "AZURE_MODEL_ENDPOINT";
-
-  /**
-   * @deprecated Use {@link #LEGACY_ENDPOINT_ENV} or contract-specific variables.
-   */
-  @Deprecated public static final String ENDPOINT_ENV = LEGACY_ENDPOINT_ENV;
-
   public static final String RESPONSE_ENDPOINT_ENV = "AZURE_RESPONSE_ENDPOINT";
   public static final String REALTIME_ENDPOINT_ENV = "AZURE_REALTIME_ENDPOINT";
   public static final String TRANSLATE_ENDPOINT_ENV = "AZURE_TRANSLATE_ENDPOINT";
@@ -45,7 +34,27 @@ public final class AzureConfig {
   public static final String VOICE_ENV = "AZURE_REALTIME_VOICE";
   public static final String TRANSLATE_TARGET_LANGUAGE_ENV = "AZURE_TRANSLATE_TARGET_LANGUAGE";
 
-  private static final String DEFAULT_VOICE = "alloy";
+  /** Available voices for Azure Realtime models. */
+  public enum Voice {
+    ALLOY("alloy"),
+    ECHO("echo"),
+    FABLE("fable"),
+    ONYX("onyx"),
+    NOVA("nova"),
+    SHIMMER("shimmer");
+
+    private final String value;
+
+    Voice(String value) {
+      this.value = value;
+    }
+
+    public String getValue() {
+      return value;
+    }
+  }
+
+  private static final String DEFAULT_VOICE = Voice.ALLOY.getValue();
   private static final String DEFAULT_TRANSLATE_LANGUAGE = "en";
 
   private final String modelName;
@@ -74,12 +83,11 @@ public final class AzureConfig {
   }
 
   public static AzureConfig fromEnvironment(String modelName) {
-    String legacy = resolveOptionalEnv(LEGACY_ENDPOINT_ENV);
     String responseEndpoint =
-        resolveContractEndpoint(RESPONSE_ENDPOINT_ENV, legacy, "Responses API");
+        resolveContractEndpoint(RESPONSE_ENDPOINT_ENV, "Responses API");
     String realtimeEndpoint =
-        resolveContractEndpoint(REALTIME_ENDPOINT_ENV, legacy, "Realtime voice API");
-    String translateEndpoint = resolveTranslateEndpoint(legacy, modelName);
+        resolveContractEndpoint(REALTIME_ENDPOINT_ENV, "Realtime voice API");
+    String translateEndpoint = resolveTranslateEndpoint(modelName);
 
     String apiKey = resolveRequired(API_KEY_ENV);
     String voice = resolveOptional(VOICE_ENV, DEFAULT_VOICE);
@@ -209,34 +217,25 @@ public final class AzureConfig {
     return "wss://" + host + "/openai/v1/realtime/translations?model=" + modelParam;
   }
 
-  private static String resolveContractEndpoint(
-      String specificEnv, String legacyFallback, String label) {
+  private static String resolveContractEndpoint(String specificEnv, String label) {
     String val = resolveOptionalEnv(specificEnv);
-    if (val == null) {
-      val = legacyFallback;
-    }
     if (val == null || val.isBlank()) {
       throw new IllegalStateException(
           "Azure "
               + label
               + " endpoint not configured. Set "
-              + specificEnv
-              + " or "
-              + LEGACY_ENDPOINT_ENV);
+              + specificEnv);
     }
     return val;
   }
 
-  private static String resolveTranslateEndpoint(String legacyFallback, String modelName) {
+  private static String resolveTranslateEndpoint(String modelName) {
     String explicit = resolveOptionalEnv(TRANSLATE_ENDPOINT_ENV);
     if (explicit != null) {
       return normalizeTranslateWebSocketUrl(explicit, modelName);
     }
 
     String base = resolveOptionalEnv(REALTIME_ENDPOINT_ENV);
-    if (base == null) {
-      base = legacyFallback;
-    }
     if (base == null || base.isBlank()) {
       return null;
     }

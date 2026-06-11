@@ -20,7 +20,6 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code AZURE_RESPONSE_ENDPOINT} — REST Responses API
  *   <li>{@code AZURE_REALTIME_ENDPOINT} — WebSocket voice-agent Realtime API
  *   <li>{@code AZURE_TRANSLATE_ENDPOINT} — WebSocket GPT Realtime Translate
- *   <li>{@code AZURE_MODEL_ENDPOINT} — (legacy) fallback for all contracts above
  *   <li>{@code AZURE_OPENAI_API_KEY} — API key
  *   <li>{@code AZURE_REALTIME_VOICE} — (optional) voice for realtime models
  * </ul>

@@ -317,7 +317,6 @@ wss://<resource>.openai.azure.com/openai/v1/realtime/translations?model=<deploym
 | `AZURE_RESPONSE_ENDPOINT` | For REST | `AzureRestTransport` | HTTP Responses API URL |
 | `AZURE_REALTIME_ENDPOINT` | For Realtime | `AzureRealtimeTransport` | Realtime WebSocket base URL |
 | `AZURE_TRANSLATE_ENDPOINT` | For Translate | `AzureRealtimeTranslateTransport` | Translate WebSocket URL |
-| `AZURE_MODEL_ENDPOINT` | Fallback | All (legacy) | Used when contract-specific vars are unset |
 | `AZURE_REALTIME_VOICE` | No | Realtime | Voice (default: `alloy`) |
 | `AZURE_TRANSLATE_TARGET_LANGUAGE` | No | Translate | Target language (default: `en`) |
 
@@ -338,10 +337,6 @@ export AZURE_REALTIME_VOICE="alloy"
 export AZURE_TRANSLATE_ENDPOINT="https://my-resource.openai.azure.com/openai/v1/realtime/translations"
 export AZURE_TRANSLATE_TARGET_LANGUAGE="hi"
 ```
-
-### Legacy single-endpoint setup
-
-If you only set `AZURE_MODEL_ENDPOINT`, it is used as a fallback for REST, Realtime, and Translate when the contract-specific variables are missing. Prefer contract-specific variables in production.
 
 ---
 
