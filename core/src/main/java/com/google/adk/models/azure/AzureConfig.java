@@ -83,10 +83,8 @@ public final class AzureConfig {
   }
 
   public static AzureConfig fromEnvironment(String modelName) {
-    String responseEndpoint =
-        resolveContractEndpoint(RESPONSE_ENDPOINT_ENV, "Responses API");
-    String realtimeEndpoint =
-        resolveContractEndpoint(REALTIME_ENDPOINT_ENV, "Realtime voice API");
+    String responseEndpoint = resolveContractEndpoint(RESPONSE_ENDPOINT_ENV, "Responses API");
+    String realtimeEndpoint = resolveContractEndpoint(REALTIME_ENDPOINT_ENV, "Realtime voice API");
     String translateEndpoint = resolveTranslateEndpoint(modelName);
 
     String apiKey = resolveRequired(API_KEY_ENV);
@@ -221,10 +219,7 @@ public final class AzureConfig {
     String val = resolveOptionalEnv(specificEnv);
     if (val == null || val.isBlank()) {
       throw new IllegalStateException(
-          "Azure "
-              + label
-              + " endpoint not configured. Set "
-              + specificEnv);
+          "Azure " + label + " endpoint not configured. Set " + specificEnv);
     }
     return val;
   }
