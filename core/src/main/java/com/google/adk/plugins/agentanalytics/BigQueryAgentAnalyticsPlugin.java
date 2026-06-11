@@ -253,7 +253,10 @@ public class BigQueryAgentAnalyticsPlugin extends BasePlugin {
       parseFuture =
           state
               .getParser()
-              .parse(content)
+              .parse(
+                  content,
+                  traceIds.traceId(),
+                  traceIds.spanId() != null ? traceIds.spanId() : "no_span")
               .thenAccept(
                   parsedContent -> {
                     row.put(
