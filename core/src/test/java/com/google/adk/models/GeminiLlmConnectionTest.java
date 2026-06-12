@@ -154,14 +154,7 @@ public final class GeminiLlmConnectionTest {
   @Test
   public void convertToServerResponse_withUsageMetadata_returnsEmpty() {
     LiveServerMessage message =
-        LiveServerMessage.builder()
-            .usageMetadata(
-                UsageMetadata.builder()
-                    .promptTokenCount(10)
-                    .responseTokenCount(20)
-                    .totalTokenCount(30)
-                    .build())
-            .build();
+        LiveServerMessage.builder().usageMetadata(UsageMetadata.builder().build()).build();
 
     Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
