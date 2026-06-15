@@ -4,6 +4,9 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -29,6 +32,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -442,6 +446,31 @@ public class VertexAiSessionServiceTest {
 
     // afterTimestamp falls strictly between e2 and e3, so only e3 is kept.
     assertThat(session.events().stream().map(Event::id)).containsExactly("e3");
+  }
+
+  @Test
+  public void getSession_afterTimestampConfig_urlEscapesFilterInRequest() {
+    sessionMap.put("9", mockSessionJson("9", "2024-12-12T12:00:30.000000Z"));
+    eventMap.put("9", mockEventsJson(mockEventJson("e1", "2024-12-12T12:00:15.000000Z")));
+    GetSessionConfig config =
+        GetSessionConfig.builder()
+            .afterTimestamp(Instant.parse("2024-12-12T12:00:10.000000Z"))
+            .build();
+
+    Object unused =
+        vertexAiSessionService.getSession("123", "user", "9", Optional.of(config)).blockingGet();
+
+    ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
+    verify(mockApiClient, atLeastOnce()).request(eq("GET"), pathCaptor.capture(), eq(""));
+    String eventsPath =
+        pathCaptor.getAllValues().stream()
+            .filter(path -> path.contains("/events"))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("No list-events request was made"));
+    // The filter operator and quotes are URL-escaped (>= -> %3E%3D, " -> %22),
+    // not sent raw.
+    assertThat(eventsPath).contains("filter=timestamp%3E%3D%22");
+    assertThat(eventsPath).doesNotContain("timestamp>=");
   }
 
   @Test
