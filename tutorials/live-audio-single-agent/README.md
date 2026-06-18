@@ -59,6 +59,35 @@ Once running, you can interact with the agent through:
    - Process the request and call the `getWeather` tool
    - Respond with audio (automatically transcribed via outputAudioTranscription)
 
+## Testing Audio Token Capture
+
+This tutorial also includes samples to test the capture of audio token metrics from LLM responses. The ADK provides a unified `GenerateContentResponseUsageMetadata` object that exposes `promptTokensDetails` and `candidatesTokensDetails` for audio modalities across supported providers (Gemini, OpenAI, Bedrock, Ollama, Sarvam).
+
+### 1. Run the Live Audio Tokens Test
+This test sends an audio instruction to a Gemini model and prints out the token usage breakdown (including audio tokens).
+
+```shell
+# Ensure your API key is set
+export GEMINI_API_KEY={YOUR-KEY}
+
+# Run the test
+mvn compile exec:java -pl tutorials/live-audio-single-agent -Dexec.mainClass="com.google.adk.tutorials.LiveAudioTokensTest"
+```
+
+### 2. Run the List Models Utility
+This utility lists all available Gemini models that support audio or live capabilities.
+
+```shell
+mvn compile exec:java -pl tutorials/live-audio-single-agent -Dexec.mainClass="com.google.adk.tutorials.ListModels"
+```
+
+### 3. Run the Unit Tests
+To verify the token parsing logic across different model providers (e.g., OpenAI, Bedrock, Sarvam, Ollama):
+
+```shell
+mvn test -pl core -Dtest=ChatCompletionsResponseAudioTokensTest
+```
+
 ## Learn More
 
 See https://google.github.io/adk-docs/get-started/quickstart/#java for more information.
