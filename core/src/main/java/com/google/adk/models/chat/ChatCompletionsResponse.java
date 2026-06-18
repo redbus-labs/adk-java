@@ -30,8 +30,6 @@ import com.google.genai.types.FinishReason;
 import com.google.genai.types.FinishReason.Known;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
-import com.google.genai.types.MediaModality;
-import com.google.genai.types.ModalityTokenCount;
 import com.google.genai.types.Part;
 import java.util.Base64;
 import java.util.HashMap;
@@ -85,23 +83,6 @@ public final class ChatCompletionsResponse {
     } else if (usage.completionTokensDetails != null
         && usage.completionTokensDetails.reasoningTokens != null) {
       builder.thoughtsTokenCount(usage.completionTokensDetails.reasoningTokens);
-    }
-    if (usage.promptTokensDetails != null && usage.promptTokensDetails.audioTokens != null) {
-      builder.promptTokensDetails(
-          ImmutableList.of(
-              ModalityTokenCount.builder()
-                  .modality(MediaModality.Known.AUDIO)
-                  .tokenCount(usage.promptTokensDetails.audioTokens)
-                  .build()));
-    }
-    if (usage.completionTokensDetails != null
-        && usage.completionTokensDetails.audioTokens != null) {
-      builder.candidatesTokensDetails(
-          ImmutableList.of(
-              ModalityTokenCount.builder()
-                  .modality(MediaModality.Known.AUDIO)
-                  .tokenCount(usage.completionTokensDetails.audioTokens)
-                  .build()));
     }
     return builder.build();
   }
