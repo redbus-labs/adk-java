@@ -19,6 +19,8 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
+import com.google.genai.types.MediaModality;
+import com.google.genai.types.ModalityTokenCount;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
@@ -461,6 +463,8 @@ public class OllamaBaseLM extends BaseLlm {
     final AtomicInteger outputTokens = new AtomicInteger(0);
     final AtomicLong promptEvalDuration = new AtomicLong(0);
     final AtomicLong evalDuration = new AtomicLong(0);
+    final AtomicInteger promptAudioTokens = new AtomicInteger(0);
+    final AtomicInteger completionAudioTokens = new AtomicInteger(0);
 
     return Flowable.generate(
         () -> callLLMChatStream(modelId, messages, functions),
@@ -530,7 +534,33 @@ public class OllamaBaseLM extends BaseLlm {
             if (responseJson.optBoolean("done", false)) {
               streamCompleted.set(true);
 
-              GenerateContentResponseUsageMetadata usageMetadata = getUsageMetadata(responseJson);
+              if (responseJson.has("prompt_eval_count")) {
+                inputTokens.set(responseJson.getInt("prompt_eval_count"));
+              }
+              if (responseJson.has("eval_count")) {
+                outputTokens.set(responseJson.getInt("eval_count"));
+              }
+              // Check for audio tokens if Ollama adds them in the future
+              if (responseJson.has("prompt_tokens_details")) {
+                JSONObject pDetails = responseJson.optJSONObject("prompt_tokens_details");
+                if (pDetails != null && pDetails.has("audio_tokens")) {
+                  promptAudioTokens.set(pDetails.getInt("audio_tokens"));
+                }
+              }
+              if (responseJson.has("completion_tokens_details")) {
+                JSONObject cDetails = responseJson.optJSONObject("completion_tokens_details");
+                if (cDetails != null && cDetails.has("audio_tokens")) {
+                  completionAudioTokens.set(cDetails.getInt("audio_tokens"));
+                }
+              }
+
+              GenerateContentResponseUsageMetadata usageMetadata =
+                  getUsageMetadata(
+                      inputTokens.get(),
+                      outputTokens.get(),
+                      inputTokens.get() + outputTokens.get(),
+                      promptAudioTokens.get(),
+                      completionAudioTokens.get());
 
               if (accumulatedText.length() > 0 && !inFunctionCall.get()) {
                 LlmResponse.Builder aggregatedResponseBuilder =
@@ -612,13 +642,35 @@ public class OllamaBaseLM extends BaseLlm {
   }
 
   private GenerateContentResponseUsageMetadata getUsageMetadata(
-      int promptTokens, int completionTokens, int totalTokens) {
+      int promptTokens,
+      int completionTokens,
+      int totalTokens,
+      int promptAudioTokens,
+      int completionAudioTokens) {
     if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
-      return GenerateContentResponseUsageMetadata.builder()
-          .promptTokenCount(promptTokens)
-          .candidatesTokenCount(completionTokens)
-          .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
-          .build();
+      GenerateContentResponseUsageMetadata.Builder builder =
+          GenerateContentResponseUsageMetadata.builder()
+              .promptTokenCount(promptTokens)
+              .candidatesTokenCount(completionTokens)
+              .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens);
+
+      if (promptAudioTokens > 0) {
+        builder.promptTokensDetails(
+            ImmutableList.of(
+                ModalityTokenCount.builder()
+                    .modality(MediaModality.Known.AUDIO)
+                    .tokenCount(promptAudioTokens)
+                    .build()));
+      }
+      if (completionAudioTokens > 0) {
+        builder.candidatesTokensDetails(
+            ImmutableList.of(
+                ModalityTokenCount.builder()
+                    .modality(MediaModality.Known.AUDIO)
+                    .tokenCount(completionAudioTokens)
+                    .build()));
+      }
+      return builder.build();
     }
     return null;
   }
@@ -632,6 +684,8 @@ public class OllamaBaseLM extends BaseLlm {
       int promptTokens = 0;
       int completionTokens = 0;
       int totalTokens = 0;
+      int promptAudioTokens = 0;
+      int completionAudioTokens = 0;
 
       if (agentResponse.has("prompt_eval_count")) {
         promptTokens = agentResponse.getInt("prompt_eval_count");
@@ -642,17 +696,48 @@ public class OllamaBaseLM extends BaseLlm {
       }
       totalTokens = promptTokens + completionTokens;
 
+      if (agentResponse.has("prompt_tokens_details")) {
+        JSONObject pDetails = agentResponse.optJSONObject("prompt_tokens_details");
+        if (pDetails != null && pDetails.has("audio_tokens")) {
+          promptAudioTokens = pDetails.getInt("audio_tokens");
+        }
+      }
+      if (agentResponse.has("completion_tokens_details")) {
+        JSONObject cDetails = agentResponse.optJSONObject("completion_tokens_details");
+        if (cDetails != null && cDetails.has("audio_tokens")) {
+          completionAudioTokens = cDetails.getInt("audio_tokens");
+        }
+      }
+
       if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
         logger.info(
             "Ollama token counts: prompt={}, completion={}, total={}",
             promptTokens,
             completionTokens,
             totalTokens);
-        return GenerateContentResponseUsageMetadata.builder()
-            .promptTokenCount(promptTokens)
-            .candidatesTokenCount(completionTokens)
-            .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
-            .build();
+        GenerateContentResponseUsageMetadata.Builder builder =
+            GenerateContentResponseUsageMetadata.builder()
+                .promptTokenCount(promptTokens)
+                .candidatesTokenCount(completionTokens)
+                .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens);
+
+        if (promptAudioTokens > 0) {
+          builder.promptTokensDetails(
+              ImmutableList.of(
+                  ModalityTokenCount.builder()
+                      .modality(MediaModality.Known.AUDIO)
+                      .tokenCount(promptAudioTokens)
+                      .build()));
+        }
+        if (completionAudioTokens > 0) {
+          builder.candidatesTokensDetails(
+              ImmutableList.of(
+                  ModalityTokenCount.builder()
+                      .modality(MediaModality.Known.AUDIO)
+                      .tokenCount(completionAudioTokens)
+                      .build()));
+        }
+        return builder.build();
       }
     } catch (Exception e) {
       logger.warn("Failed to parse token usage from Ollama response", e);
