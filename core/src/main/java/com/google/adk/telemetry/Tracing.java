@@ -216,7 +216,7 @@ public class Tracing {
       String toolType,
       Map<String, Object> args,
       @Nullable Event functionResponseEvent,
-      @Nullable Exception error) {
+      @Nullable Throwable error) {
     span.setAttribute(GEN_AI_OPERATION_NAME, EXECUTE_TOOL_OPERATION);
     span.setAttribute(GEN_AI_TOOL_NAME, toolName);
     span.setAttribute(GEN_AI_TOOL_DESCRIPTION, toolDescription);

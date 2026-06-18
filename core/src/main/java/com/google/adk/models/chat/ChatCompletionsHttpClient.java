@@ -16,10 +16,13 @@
 
 package com.google.adk.models.chat;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.HttpOptions;
 import io.reactivex.rxjava3.core.BackpressureStrategy;
@@ -38,6 +41,7 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import okio.BufferedSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,11 +53,12 @@ import org.slf4j.LoggerFactory;
  * <a href="https://developers.openai.com/api/reference/resources/chat">OpenAI Chat Completions API
  * reference</a> for the wire protocol.
  */
-public class ChatCompletionsHttpClient {
+public final class ChatCompletionsHttpClient {
   private static final Logger logger = LoggerFactory.getLogger(ChatCompletionsHttpClient.class);
   private static final ObjectMapper objectMapper = JsonBaseModel.getMapper();
 
   private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+  private static final String SSE_DATA_PREFIX = "data:";
 
   /**
    * Default OkHttp call timeout used when the caller does not supply an {@link HttpOptions}
@@ -113,6 +118,10 @@ public class ChatCompletionsHttpClient {
    *     HTTP(S) URL.
    */
   public ChatCompletionsHttpClient(HttpOptions httpOptions) {
+    this(httpOptions, buildClient(httpOptions));
+  }
+
+  private ChatCompletionsHttpClient(HttpOptions httpOptions, OkHttpClient client) {
     Objects.requireNonNull(httpOptions, "httpOptions cannot be null");
     String baseUrl =
         httpOptions
@@ -133,14 +142,30 @@ public class ChatCompletionsHttpClient {
             .headers()
             .<ImmutableMap<String, String>>map(ImmutableMap::copyOf)
             .orElse(ImmutableMap.of());
+    this.client = client;
+  }
 
-    // Apply custom timeouts per instance. All internal timeouts are bounded by callTimeout.
+  /**
+   * Test-only factory that injects a custom {@link OkHttpClient} (typically a mock) without
+   * touching production wiring. Production callers should use the public constructor.
+   */
+  @VisibleForTesting
+  static ChatCompletionsHttpClient forTesting(HttpOptions httpOptions, OkHttpClient client) {
+    return new ChatCompletionsHttpClient(httpOptions, client);
+  }
+
+  /**
+   * Builds the production OkHttpClient by forking {@link #SHARED_POOL_CLIENT} so the connection
+   * pool and dispatcher are reused across instances while applying per-instance timeouts.
+   */
+  private static OkHttpClient buildClient(HttpOptions httpOptions) {
+    Objects.requireNonNull(httpOptions, "httpOptions cannot be null");
     OkHttpClient.Builder builder = SHARED_POOL_CLIENT.newBuilder();
     builder.connectTimeout(Duration.ZERO);
     builder.readTimeout(Duration.ZERO);
     builder.writeTimeout(Duration.ZERO);
     builder.callTimeout(resolveCallTimeout(httpOptions));
-    this.client = builder.build();
+    return builder.build();
   }
 
   /** Resolves the call timeout from HttpOptions. */
@@ -165,14 +190,21 @@ public class ChatCompletionsHttpClient {
   public Flowable<LlmResponse> complete(LlmRequest llmRequest, boolean stream) {
     return Flowable.defer(
         () -> {
+          String effectiveModelName = llmRequest.model().orElse("?");
+          logger.trace("Chat Completion Request Contents: {}", llmRequest.contents());
+          llmRequest.config().ifPresent(c -> logger.trace("Chat Completion Request Config: {}", c));
+
           ChatCompletionsRequest dtoRequest =
               ChatCompletionsRequest.fromLlmRequest(llmRequest, stream);
           String jsonPayload = objectMapper.writeValueAsString(dtoRequest);
-          logger.trace(
-              "Chat Completion Request: model={}, stream={}, messagesCount={}",
-              dtoRequest.model,
-              dtoRequest.stream,
-              dtoRequest.messages != null ? dtoRequest.messages.size() : 0);
+          logger.trace("Chat Completion Request JSON: {}", jsonPayload);
+
+          if (stream) {
+            logger.debug(
+                "Sending streaming chat-completion request to model {}", effectiveModelName);
+          } else {
+            logger.debug("Sending chat-completion request to model {}", effectiveModelName);
+          }
 
           Request.Builder requestBuilder =
               new Request.Builder().url(completionsUrl).post(RequestBody.create(jsonPayload, JSON));
@@ -184,19 +216,90 @@ public class ChatCompletionsHttpClient {
           requestBuilder.header("Content-Type", JSON.toString());
 
           Request request = requestBuilder.build();
-          if (stream) {
-            return createStreamingFlowable(request);
-          } else {
-            return createNonStreamingFlowable(request);
-          }
+          return stream ? createStreamingFlowable(request) : createNonStreamingFlowable(request);
         });
   }
 
-  /** Placeholder for streaming responses. Errors with {@link UnsupportedOperationException}. */
-  @SuppressWarnings("UnusedVariable")
   private Flowable<LlmResponse> createStreamingFlowable(Request request) {
-    return Flowable.error(
-        new UnsupportedOperationException("Streaming is not yet implemented in this client."));
+    return Flowable.create(
+        emitter -> {
+          Call call = client.newCall(request);
+          emitter.setCancellable(call::cancel);
+          call.enqueue(
+              new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                  emitter.tryOnError(e);
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) {
+                  try (ResponseBody body = response.body()) {
+                    if (!response.isSuccessful()) {
+                      String bodyStr = body != null ? body.string() : "";
+                      emitter.tryOnError(
+                          new IOException(
+                              "HTTP request failed with status: "
+                                  + response
+                                  + " - body: "
+                                  + bodyStr));
+                      return;
+                    }
+                    if (body == null) {
+                      emitter.tryOnError(new IOException("Empty response body"));
+                      return;
+                    }
+
+                    BufferedSource source = body.source();
+                    ChatCompletionsResponse.ChatCompletionChunkCollection collection =
+                        new ChatCompletionsResponse.ChatCompletionChunkCollection();
+                    while (!source.exhausted() && !emitter.isCancelled()) {
+                      String line = source.readUtf8Line();
+                      if (line == null) {
+                        break;
+                      }
+                      if (line.isEmpty()) {
+                        continue;
+                      }
+                      // TODO: Support SSE "event", "id", and "retry".
+                      // See
+                      // https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
+                      if (!line.startsWith(SSE_DATA_PREFIX)) {
+                        logger.debug("Ignoring SSE line without data prefix: {}", line);
+                        continue;
+                      }
+                      // The SSE spec allows whitespace after the prefix,
+                      //   eg: "data:foo" vs "data: foo".
+                      String data = line.substring(SSE_DATA_PREFIX.length()).stripLeading();
+                      if (data.equals("[DONE]")) {
+                        break;
+                      }
+                      // A single malformed chunk must not abort the entire stream. Log a
+                      // warning and continue.
+                      try {
+                        logger.trace("Raw streaming chat-completion chunk: {}", data);
+                        ChatCompletionsResponse.ChatCompletionChunk chunk =
+                            objectMapper.readValue(
+                                data, ChatCompletionsResponse.ChatCompletionChunk.class);
+                        ImmutableList<LlmResponse> responses = collection.processChunk(chunk);
+                        if (!responses.isEmpty()) {
+                          logger.trace("Responses to emit: {}", responses);
+                        }
+                        for (LlmResponse resp : responses) {
+                          emitter.onNext(resp);
+                        }
+                      } catch (JsonProcessingException e) {
+                        logger.warn("Failed to parse JSON chunk: {}", data, e);
+                      }
+                    }
+                    emitter.onComplete();
+                  } catch (Exception e) {
+                    emitter.tryOnError(e);
+                  }
+                }
+              });
+        },
+        BackpressureStrategy.BUFFER);
   }
 
   /**
@@ -235,7 +338,8 @@ public class ChatCompletionsHttpClient {
         if (!response.isSuccessful()) {
           String bodyStr = body != null ? body.string() : "";
           emitter.tryOnError(
-              new IOException("Unexpected code " + response + " - body: " + bodyStr));
+              new IOException(
+                  "HTTP request failed with status: " + response + " - body: " + bodyStr));
           return;
         }
         if (body == null) {
@@ -244,9 +348,12 @@ public class ChatCompletionsHttpClient {
         }
 
         String jsonResponse = body.string();
+        logger.trace("Raw non-streaming chat-completion response: {}", jsonResponse);
         ChatCompletionsResponse.ChatCompletion completion =
             objectMapper.readValue(jsonResponse, ChatCompletionsResponse.ChatCompletion.class);
-        emitter.onNext(completion.toLlmResponse());
+        LlmResponse llmResponse = completion.toLlmResponse();
+        logger.trace("Response to emit: {}", llmResponse);
+        emitter.onNext(llmResponse);
         emitter.onComplete();
       } catch (Exception e) {
         emitter.tryOnError(e);
