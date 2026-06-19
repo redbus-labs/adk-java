@@ -1,9 +1,10 @@
 /*
  * Author: Sandeep Belgavi
- * Date: June 18, 2026
+ * Date: June 19, 2026
  */
 package com.google.adk.tutorials;
 
+import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.runner.Runner;
@@ -19,7 +20,7 @@ public class LiveAudioTokensTest {
     LlmAgent agent =
         LlmAgent.builder()
             .name("audio_agent")
-            .model("gemini-2.5-pro") // using the requested model
+            .model("gemini-3.1-flash-live-preview")
             .instruction(
                 "You are a helpful assistant. Please say 'Hello, how can I help you today?'")
             .build();
@@ -29,6 +30,7 @@ public class LiveAudioTokensTest {
     RunConfig runConfig =
         RunConfig.builder()
             .autoCreateSession(true)
+            .streamingMode(RunConfig.StreamingMode.BIDI)
             .responseModalities(ImmutableList.of(new Modality(Modality.Known.AUDIO)))
             .build();
 
@@ -38,13 +40,25 @@ public class LiveAudioTokensTest {
             .parts(ImmutableList.of(Part.fromText("Please introduce yourself.")))
             .build();
 
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+    liveRequestQueue.content(userMessage);
+
     System.out.println("Sending request to model...");
 
     runner
-        .runAsync("user1", "session1", userMessage, runConfig)
+        .runLive("user1", "session1", liveRequestQueue, runConfig)
         .doOnNext(
             event -> {
-              if (event.author() != null && event.author().equals("model")) {
+              System.out.println(
+                  "Got event from author: "
+                      + event.author()
+                      + " content: "
+                      + event.content().map(c -> c.parts().map(ps -> ps.size()).orElse(0)).orElse(0)
+                      + " parts");
+              if (event.author() != null && event.author().equals("audio_agent")) {
+                if (event.turnComplete().orElse(false)) {
+                  liveRequestQueue.close();
+                }
                 if (event.content().isPresent()) {
                   Content c = event.content().get();
                   for (Part p : c.parts().get()) {
@@ -56,6 +70,7 @@ public class LiveAudioTokensTest {
                 if (event.usageMetadata().isPresent()) {
                   GenerateContentResponseUsageMetadata usage = event.usageMetadata().get();
                   System.out.println("Total Tokens: " + usage.totalTokenCount().orElse(0));
+                  System.out.println("Usage details: " + usage);
 
                   if (usage.promptTokensDetails().isPresent()) {
                     for (ModalityTokenCount mtc : usage.promptTokensDetails().get()) {
