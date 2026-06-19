@@ -7,6 +7,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Blob;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
+import com.google.genai.types.ModalityTokenCount;
 import com.google.genai.types.Part;
 import com.google.genai.types.Transcription;
 import io.reactivex.rxjava3.core.Completable;
@@ -548,6 +550,33 @@ public final class AzureRealtimeLlmConnection implements BaseLlmConnection {
             "Realtime token usage — input: {}, output: {}",
             usage.optInt("input_tokens", 0),
             usage.optInt("output_tokens", 0));
+
+        GenerateContentResponseUsageMetadata.Builder usageBuilder =
+            GenerateContentResponseUsageMetadata.builder()
+                .promptTokenCount(usage.optInt("input_tokens", 0))
+                .candidatesTokenCount(usage.optInt("output_tokens", 0))
+                .totalTokenCount(usage.optInt("total_tokens", 0));
+
+        JSONObject inputDetails = usage.optJSONObject("input_token_details");
+        if (inputDetails != null && inputDetails.has("audio_tokens")) {
+          usageBuilder.promptTokensDetails(
+              ImmutableList.of(
+                  ModalityTokenCount.builder()
+                      .modality(com.google.genai.types.MediaModality.Known.AUDIO)
+                      .tokenCount(inputDetails.optInt("audio_tokens", 0))
+                      .build()));
+        }
+
+        JSONObject outputDetails = usage.optJSONObject("output_token_details");
+        if (outputDetails != null && outputDetails.has("audio_tokens")) {
+          usageBuilder.candidatesTokensDetails(
+              ImmutableList.of(
+                  ModalityTokenCount.builder()
+                      .modality(com.google.genai.types.MediaModality.Known.AUDIO)
+                      .tokenCount(outputDetails.optInt("audio_tokens", 0))
+                      .build()));
+        }
+        responseProcessor.onNext(LlmResponse.builder().usageMetadata(usageBuilder.build()).build());
       }
     }
   }

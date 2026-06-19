@@ -152,13 +152,15 @@ public final class GeminiLlmConnectionTest {
   }
 
   @Test
-  public void convertToServerResponse_withUsageMetadata_returnsEmpty() {
-    LiveServerMessage message =
-        LiveServerMessage.builder().usageMetadata(UsageMetadata.builder().build()).build();
+  public void convertToServerResponse_withUsageMetadata_returnsResponseWithUsage() {
+    UsageMetadata usageMetadata = UsageMetadata.builder().promptTokenCount(10).build();
+    LiveServerMessage message = LiveServerMessage.builder().usageMetadata(usageMetadata).build();
 
     Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
-    assertThat(result.isPresent()).isFalse();
+    assertThat(result.isPresent()).isTrue();
+    assertThat(result.get().usageMetadata()).isPresent();
+    assertThat(result.get().usageMetadata().get().promptTokenCount()).hasValue(10);
   }
 
   @Test

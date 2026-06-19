@@ -127,6 +127,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   /** Converts a server message into the standardized LlmResponse format. */
   static Optional<LlmResponse> convertToServerResponse(LiveServerMessage message) {
     LlmResponse.Builder builder = LlmResponse.builder();
+    boolean hasRelevantData = false;
 
     if (message.serverContent().isPresent()) {
       LiveServerContent serverContent = message.serverContent().get();
@@ -140,6 +141,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       // overwrite the audio modelTurn content.
       serverContent.outputTranscription().ifPresent(builder::outputTranscription);
       serverContent.inputTranscription().ifPresent(builder::inputTranscription);
+      hasRelevantData = true;
     } else if (message.toolCall().isPresent()) {
       LiveServerToolCall toolCall = message.toolCall().get();
       toolCall
@@ -154,24 +156,37 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
                 }
               });
       builder.partial(false).turnComplete(false);
-    } else if (message.usageMetadata().isPresent()) {
-      logger.debug("Received usage metadata: {}", message.usageMetadata().get());
-      return Optional.empty();
+      hasRelevantData = true;
     } else if (message.toolCallCancellation().isPresent()) {
       logger.debug("Received tool call cancellation: {}", message.toolCallCancellation().get());
       builder.interrupted(true).turnComplete(true);
-      return Optional.of(builder.build());
+      hasRelevantData = true;
     } else if (message.setupComplete().isPresent()) {
       logger.debug("Received setup complete.");
       return Optional.empty();
-    } else {
+    } else if (message.usageMetadata().isEmpty()) {
       logger.warn("Received unknown or empty server message: {}", message.toJson());
       builder
           .errorCode(new FinishReason("Unknown server message."))
           .errorMessage("Received unknown server message.");
+      hasRelevantData = true;
     }
 
-    return Optional.of(builder.build());
+    if (message.usageMetadata().isPresent()) {
+      logger.debug("Received usage metadata: {}", message.usageMetadata().get());
+      builder.usageMetadata(
+          GeminiUtil.toGenerateContentResponseUsageMetadata(message.usageMetadata().get()));
+      if (!hasRelevantData) {
+        builder.partial(false).turnComplete(false);
+      }
+      hasRelevantData = true;
+    }
+
+    if (hasRelevantData) {
+      return Optional.of(builder.build());
+    }
+
+    return Optional.empty();
   }
 
   /** Handles errors that occur *during* the initial connection attempt. */
