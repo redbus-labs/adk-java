@@ -359,6 +359,46 @@ public class ContextPropagationTest {
   }
 
   @Test
+  public void testTraceCallLlm_withReasoningAndCacheTokens() {
+    Span span = tracer.spanBuilder("test-reasoning").startSpan();
+    try (Scope scope = span.makeCurrent()) {
+      LlmRequest llmRequest =
+          LlmRequest.builder()
+              .model("gemini-pro")
+              .contents(ImmutableList.of(Content.fromParts(Part.fromText("hello"))))
+              .config(GenerateContentConfig.builder().topP(0.9f).maxOutputTokens(100).build())
+              .build();
+      LlmResponse llmResponse =
+          LlmResponse.builder()
+              .content(Content.builder().parts(Part.fromText("world")).build())
+              .finishReason(new FinishReason(FinishReason.Known.STOP))
+              .usageMetadata(
+                  GenerateContentResponseUsageMetadata.builder()
+                      .promptTokenCount(10)
+                      .cachedContentTokenCount(5)
+                      .candidatesTokenCount(20)
+                      .thoughtsTokenCount(15)
+                      .totalTokenCount(50)
+                      .build())
+              .build();
+      Tracing.traceCallLlm(
+          span, buildInvocationContext(), "event-1", llmRequest, llmResponse, null);
+    } finally {
+      span.end();
+    }
+    List<SpanData> spans = openTelemetryRule.getSpans();
+    assertThat(spans).hasSize(1);
+    SpanData spanData = spans.get(0);
+    Attributes attrs = spanData.getAttributes();
+    assertEquals(10L, (long) attrs.get(AttributeKey.longKey("gen_ai.usage.input_tokens")));
+    assertEquals(35L, (long) attrs.get(AttributeKey.longKey("gen_ai.usage.output_tokens")));
+    assertEquals(
+        5L, (long) attrs.get(AttributeKey.longKey("gen_ai.usage.cache_read.input_tokens")));
+    assertEquals(
+        15L, (long) attrs.get(AttributeKey.longKey("gen_ai.usage.reasoning.output_tokens")));
+  }
+
+  @Test
   public void testTraceSendData() {
     Span span = tracer.spanBuilder("test").startSpan();
     try (Scope scope = span.makeCurrent()) {
