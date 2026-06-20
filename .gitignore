@@ -33,3 +33,9 @@ Thumbs.db
 # Local documentation and plans
 docs/
 plans/
+
+# Sample build artifacts / local scratch
+contrib/samples/**/bin/
+mkpro_logs.db
+
+

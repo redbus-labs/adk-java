@@ -38,7 +38,7 @@ public class GoogleAudioVideoStreamWithTrig {
     }
     return LlmAgent.builder()
         .name(NAME)
-        .model(new Gemini("gemini-2.0-flash-exp", apiKey))
+        .model(new Gemini("gemini-2.5-flash-exp", apiKey))
         .description(
             "A voice agent that can use tools to answer questions about stocks and perform trigonometry calculations.")
         .instruction(

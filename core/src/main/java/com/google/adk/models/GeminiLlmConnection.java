@@ -127,6 +127,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   /** Converts a server message into the standardized LlmResponse format. */
   static Optional<LlmResponse> convertToServerResponse(LiveServerMessage message) {
     LlmResponse.Builder builder = LlmResponse.builder();
+    boolean hasRelevantData = false;
 
     if (message.serverContent().isPresent()) {
       LiveServerContent serverContent = message.serverContent().get();
@@ -134,19 +135,13 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       builder
           .partial(serverContent.turnComplete().map(completed -> !completed).orElse(false))
           .turnComplete(serverContent.turnComplete().orElse(false))
-          .interrupted(serverContent.interrupted());
-      if (serverContent.outputTranscription().isPresent()) {
-        Part part =
-            Part.builder()
-                .text(serverContent.outputTranscription().get().text().toString())
-                .build();
-        builder.content(Content.builder().role("model").parts(ImmutableList.of(part)).build());
-      }
-      if (serverContent.inputTranscription().isPresent()) {
-        Part part =
-            Part.builder().text(serverContent.inputTranscription().get().text().toString()).build();
-        builder.content(Content.builder().role("user").parts(ImmutableList.of(part)).build());
-      }
+          .interrupted(serverContent.interrupted().orElse(null));
+      // Gemini can send audio + transcription in the SAME server event.
+      // Transcriptions travel in dedicated LlmResponse fields so they never
+      // overwrite the audio modelTurn content.
+      serverContent.outputTranscription().ifPresent(builder::outputTranscription);
+      serverContent.inputTranscription().ifPresent(builder::inputTranscription);
+      hasRelevantData = true;
     } else if (message.toolCall().isPresent()) {
       LiveServerToolCall toolCall = message.toolCall().get();
       toolCall
@@ -161,24 +156,37 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
                 }
               });
       builder.partial(false).turnComplete(false);
-    } else if (message.usageMetadata().isPresent()) {
-      logger.debug("Received usage metadata: {}", message.usageMetadata().get());
-      return Optional.empty();
+      hasRelevantData = true;
     } else if (message.toolCallCancellation().isPresent()) {
       logger.debug("Received tool call cancellation: {}", message.toolCallCancellation().get());
-      // TODO: implement proper CFC and thus tool call cancellation handling.
-      return Optional.empty();
+      builder.interrupted(true).turnComplete(true);
+      hasRelevantData = true;
     } else if (message.setupComplete().isPresent()) {
       logger.debug("Received setup complete.");
       return Optional.empty();
-    } else {
+    } else if (message.usageMetadata().isEmpty()) {
       logger.warn("Received unknown or empty server message: {}", message.toJson());
       builder
           .errorCode(new FinishReason("Unknown server message."))
           .errorMessage("Received unknown server message.");
+      hasRelevantData = true;
     }
 
-    return Optional.of(builder.build());
+    if (message.usageMetadata().isPresent()) {
+      logger.debug("Received usage metadata: {}", message.usageMetadata().get());
+      builder.usageMetadata(
+          GeminiUtil.toGenerateContentResponseUsageMetadata(message.usageMetadata().get()));
+      if (!hasRelevantData) {
+        builder.partial(false).turnComplete(false);
+      }
+      hasRelevantData = true;
+    }
+
+    if (hasRelevantData) {
+      return Optional.of(builder.build());
+    }
+
+    return Optional.empty();
   }
 
   /** Handles errors that occur *during* the initial connection attempt. */
@@ -242,9 +250,17 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   public Completable sendRealtime(Blob blob) {
     return Completable.fromFuture(
         sessionFuture.thenCompose(
-            session ->
-                session.sendRealtimeInput(
-                    LiveSendRealtimeInputParameters.builder().media(blob).build())));
+            session -> {
+              LiveSendRealtimeInputParameters.Builder builder =
+                  LiveSendRealtimeInputParameters.builder();
+              String mimeType = blob.mimeType().orElse("").toLowerCase();
+              if (mimeType.startsWith("video/") || mimeType.startsWith("image/")) {
+                builder.video(blob);
+              } else {
+                builder.audio(blob);
+              }
+              return session.sendRealtimeInput(builder.build());
+            }));
   }
 
   /** Helper to send client content parameters. */

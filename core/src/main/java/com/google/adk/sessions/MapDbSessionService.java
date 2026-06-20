@@ -478,6 +478,52 @@ public final class MapDbSessionService implements BaseSessionService, AutoClosea
     return session;
   }
 
+  /**
+   * Exports all session and state data managed by this service.
+   *
+   * @return A map containing all exported data (sessions, userState, appState).
+   */
+  public Map<String, Object> exportData() {
+    Map<String, Object> export = new java.util.HashMap<>();
+    ObjectMapper objectMapper = new ObjectMapper();
+    List<Session> sessions = new java.util.ArrayList<>();
+
+    for (String sessionJson : sessionsMap.values()) {
+      try {
+        sessions.add(objectMapper.readValue(sessionJson, Session.class));
+      } catch (JsonProcessingException e) {
+        logger.error("Failed to deserialize session during export", e);
+      }
+    }
+
+    export.put("sessions", sessions);
+    export.put("userState", new java.util.HashMap<>(userStateMap));
+    export.put("appState", new java.util.HashMap<>(appStateMap));
+    return export;
+  }
+
+  /**
+   * Returns a map containing all session and state data managed by this service.
+   *
+   * @return A map of all data.
+   */
+  public Map<String, Object> getAllData() {
+    Map<String, Object> export = new java.util.HashMap<>();
+    ObjectMapper objectMapper = new ObjectMapper();
+    List<Session> sessions = new java.util.ArrayList<>();
+    for (String sessionJson : sessionsMap.values()) {
+      try {
+        sessions.add(objectMapper.readValue(sessionJson, Session.class));
+      } catch (JsonProcessingException e) {
+        logger.error("Failed to deserialize session during export", e);
+      }
+    }
+    export.put("sessions", sessions);
+    export.put("userState", new java.util.HashMap<>(userStateMap));
+    export.put("appState", new java.util.HashMap<>(appStateMap));
+    return export;
+  }
+
   /** Closes the MapDB database connection. Should be called on application shutdown. */
   @Override
   public void close() throws IOException {

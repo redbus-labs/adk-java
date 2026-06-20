@@ -78,16 +78,16 @@ class ReplayPluginTest {
             agent_name: "test_agent"
             llm_recording:
               llm_request:
-                model: "gemini-2.0-flash"
+                model: "gemini-2.5-flash"
                 contents:
                   - role: "user"
                     parts:
                       - text: "Hello"
-              llm_response:
-                content:
-                  role: "model"
-                  parts:
-                    - text: "Recorded response"
+              llm_responses:
+                - content:
+                    role: "model"
+                    parts:
+                      - text: "Recorded response"
         """);
 
     // Step 1: Setup replay config
@@ -109,7 +109,7 @@ class ReplayPluginTest {
 
     var request =
         LlmRequest.builder()
-            .model("gemini-2.0-flash")
+            .model("gemini-2.5-flash")
             .contents(
                 ImmutableList.of(
                     Content.builder()
@@ -163,7 +163,7 @@ class ReplayPluginTest {
 
     var request =
         LlmRequest.builder()
-            .model("gemini-2.0-flash") // Different model
+            .model("gemini-2.5-flash") // Different model
             .contents(
                 ImmutableList.of(
                     Content.builder()

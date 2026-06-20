@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.ConfigAgentUtils.ConfigurationException;
 import com.google.adk.models.LlmRequest;
@@ -38,7 +39,7 @@ import io.reactivex.rxjava3.core.Single;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import javax.annotation.Nonnull;
+import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,11 +51,11 @@ public abstract class BaseTool {
   private final boolean isLongRunning;
   private final HashMap<String, Object> customMetadata;
 
-  protected BaseTool(@Nonnull String name, @Nonnull String description) {
+  protected BaseTool(String name, String description) {
     this(name, description, /* isLongRunning= */ false);
   }
 
-  protected BaseTool(@Nonnull String name, @Nonnull String description, boolean isLongRunning) {
+  protected BaseTool(String name, String description, boolean isLongRunning) {
     this.name = name;
     this.description = description;
     this.isLongRunning = isLongRunning;
@@ -91,6 +92,85 @@ public abstract class BaseTool {
   /** Calls a tool. */
   public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
     throw new UnsupportedOperationException("This method is not implemented.");
+  }
+
+  /**
+   * Calls a tool with generic arguments and returns a map of results. The args type {@code T} need
+   * to be serializable with {@link JsonBaseModel#getMapper()}
+   */
+  public final <T> Single<Map<String, Object>> runAsync(T args, ToolContext toolContext) {
+    return runAsync(args, toolContext, JsonBaseModel.getMapper());
+  }
+
+  /**
+   * Calls a tool with generic arguments using a custom {@link ObjectMapper} and returns a map of
+   * results. The args type {@code T} needs to be serializable with the provided {@link
+   * ObjectMapper}.
+   */
+  public final <T> Single<Map<String, Object>> runAsync(
+      T args, ToolContext toolContext, ObjectMapper objectMapper) {
+    return runAsync(args, toolContext, objectMapper, output -> output);
+  }
+
+  /**
+   * Calls a tool with generic arguments and a custom {@link ObjectMapper}, returning the results
+   * converted to a specified class. The input type {@code I} needs to be serializable and the
+   * output type {@code O} needs to be deserializable with the provided {@link ObjectMapper}.
+   */
+  public final <I, O> Single<O> runAsync(
+      I args, ToolContext toolContext, ObjectMapper objectMapper, Class<? extends O> oClass) {
+    return runAsync(
+        args, toolContext, objectMapper, output -> objectMapper.convertValue(output, oClass));
+  }
+
+  /**
+   * Calls a tool with generic arguments and a custom {@link ObjectMapper}, returning the results
+   * converted to a specified type reference. The input type {@code I} needs to be serializable and
+   * the output type {@code O} needs to be deserializable with the provided {@link ObjectMapper}.
+   */
+  public final <I, O> Single<O> runAsync(
+      I args,
+      ToolContext toolContext,
+      ObjectMapper objectMapper,
+      TypeReference<? extends O> typeReference) {
+    return runAsync(
+        args,
+        toolContext,
+        objectMapper,
+        output -> objectMapper.convertValue(output, typeReference));
+  }
+
+  /**
+   * Calls a tool with generic arguments, returning the results converted to a specified class. The
+   * input type {@code I} needs to be serializable and the output type {@code O} needs to be
+   * deserializable with {@link JsonBaseModel#getMapper()}
+   */
+  public final <I, O> Single<O> runAsync(
+      I args, ToolContext toolContext, Class<? extends O> oClass) {
+    return runAsync(args, toolContext, JsonBaseModel.getMapper(), oClass);
+  }
+
+  /**
+   * Calls a tool with generic arguments, returning the results converted to a specified type
+   * reference. The input type needs to be serializable and the output type needs to be
+   * deserializable with {@link JsonBaseModel#getMapper()}
+   */
+  public final <I, O> Single<O> runAsync(
+      I args, ToolContext toolContext, TypeReference<? extends O> typeReference) {
+    return runAsync(args, toolContext, JsonBaseModel.getMapper(), typeReference);
+  }
+
+  private <I, O> Single<O> runAsync(
+      I args,
+      ToolContext toolContext,
+      ObjectMapper objectMapper,
+      Function<? super Map<String, Object>, ? extends O> deserializer) {
+    return Single.defer(
+            () ->
+                Single.just(
+                    objectMapper.convertValue(args, new TypeReference<Map<String, Object>>() {})))
+        .flatMap(argsMap -> runAsync(argsMap, toolContext))
+        .map(deserializer::apply);
   }
 
   /**

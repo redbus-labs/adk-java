@@ -4,10 +4,14 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.events.Event;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -29,20 +33,32 @@ class MockApiAnswer implements Answer<ApiResponse> {
   private static final Pattern APPEND_EVENT_REGEX =
       Pattern.compile("^reasoningEngines/([^/]+)/sessions/([^/]+):appendEvent$");
   private static final Pattern EVENTS_REGEX =
-      Pattern.compile("^reasoningEngines/([^/]+)/sessions/([^/]+)/events$");
+      Pattern.compile("^reasoningEngines/([^/]+)/sessions/([^/]+)/events(?:\\?filter=(.*))?$");
+  private static final Pattern TIMESTAMP_FILTER_REGEX = Pattern.compile("timestamp>=\"(.*)\"");
   private static final MediaType JSON_MEDIA_TYPE =
       MediaType.parse("application/json; charset=utf-8");
 
   private final Map<String, String> sessionMap;
   private final Map<String, String> eventMap;
+  private final String rawApiResponse;
 
   MockApiAnswer(Map<String, String> sessionMap, Map<String, String> eventMap) {
     this.sessionMap = sessionMap;
     this.eventMap = eventMap;
+    this.rawApiResponse = null;
+  }
+
+  MockApiAnswer(String rawApiResponse) {
+    this.sessionMap = null;
+    this.eventMap = null;
+    this.rawApiResponse = rawApiResponse;
   }
 
   @Override
   public ApiResponse answer(InvocationOnMock invocation) throws Throwable {
+    if (rawApiResponse != null) {
+      return responseWithBody(rawApiResponse);
+    }
     String httpMethod = invocation.getArgument(0);
     String path = invocation.getArgument(1);
     if (httpMethod.equals("POST") && SESSIONS_REGEX.matcher(path).matches()) {
@@ -164,6 +180,18 @@ class MockApiAnswer implements Answer<ApiResponse> {
       eventsData.add(newEventData);
 
       eventMap.put(sessionId, mapper.writeValueAsString(eventsData));
+
+      // Apply stateDelta to session state
+      extractObjectMap(newEventData, "actions")
+          .flatMap(actions -> extractObjectMap(actions, "stateDelta"))
+          .ifPresent(
+              stateDelta -> {
+                try {
+                  applyStateDelta(sessionId, stateDelta);
+                } catch (Exception e) {
+                  throw new RuntimeException(e);
+                }
+              });
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -176,8 +204,16 @@ class MockApiAnswer implements Answer<ApiResponse> {
       return null;
     }
     String sessionId = matcher.group(2);
+    // The client URL-escapes the filter value; decode it as the real server would.
+    String filter =
+        matcher.group(3) == null
+            ? null
+            : URLDecoder.decode(matcher.group(3), StandardCharsets.UTF_8);
     String eventData = eventMap.get(sessionId);
     if (eventData != null) {
+      if (filter != null) {
+        eventData = applyTimestampFilter(eventData, filter);
+      }
       return responseWithBody(
           String.format(
               """
@@ -190,6 +226,25 @@ class MockApiAnswer implements Answer<ApiResponse> {
       // Return an empty list if no events are found for the session
       return responseWithBody("{}");
     }
+  }
+
+  /** Emulates the server-side inclusive {@code timestamp>=} filter on the events list. */
+  private static String applyTimestampFilter(String eventData, String filter) throws Exception {
+    Matcher filterMatcher = TIMESTAMP_FILTER_REGEX.matcher(filter);
+    if (!filterMatcher.matches()) {
+      return eventData;
+    }
+    Instant threshold = Instant.parse(filterMatcher.group(1));
+    List<Map<String, Object>> events =
+        mapper.readValue(eventData, new TypeReference<List<Map<String, Object>>>() {});
+    List<Map<String, Object>> kept = new ArrayList<>();
+    for (Map<String, Object> event : events) {
+      Instant timestamp = Instant.parse((String) event.get("timestamp"));
+      if (!timestamp.isBefore(threshold)) {
+        kept.add(event);
+      }
+    }
+    return mapper.writeValueAsString(kept);
   }
 
   private ApiResponse handleGetLro(String path) {
@@ -212,5 +267,31 @@ class MockApiAnswer implements Answer<ApiResponse> {
     String sessionIdToDelete = sessionMatcher.group(2);
     sessionMap.remove(sessionIdToDelete);
     return responseWithBody("");
+  }
+
+  private void applyStateDelta(String sessionId, Map<String, Object> stateDelta) throws Exception {
+    String sessionDataString = sessionMap.get(sessionId);
+    if (sessionDataString == null) {
+      return;
+    }
+    Map<String, Object> sessionData =
+        mapper.readValue(sessionDataString, new TypeReference<Map<String, Object>>() {});
+    Map<String, Object> sessionState =
+        extractObjectMap(sessionData, "sessionState").map(HashMap::new).orElseGet(HashMap::new);
+
+    for (Map.Entry<String, Object> entry : stateDelta.entrySet()) {
+      if (entry.getValue() == null) {
+        sessionState.remove(entry.getKey());
+      } else {
+        sessionState.put(entry.getKey(), entry.getValue());
+      }
+    }
+    sessionData.put("sessionState", sessionState);
+    sessionMap.put(sessionId, mapper.writeValueAsString(sessionData));
+  }
+
+  @SuppressWarnings("unchecked") // Safe because map values are Maps read from JSON.
+  private Optional<Map<String, Object>> extractObjectMap(Map<String, Object> map, String key) {
+    return Optional.ofNullable((Map<String, Object>) map.get(key));
   }
 }

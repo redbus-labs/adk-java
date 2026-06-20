@@ -19,26 +19,53 @@ package com.google.adk.telemetry;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.events.Event;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Content;
+import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
+import io.reactivex.rxjava3.core.Completable;
+import io.reactivex.rxjava3.core.CompletableObserver;
+import io.reactivex.rxjava3.core.CompletableSource;
+import io.reactivex.rxjava3.core.CompletableTransformer;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.FlowableTransformer;
+import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.core.MaybeObserver;
+import io.reactivex.rxjava3.core.MaybeSource;
+import io.reactivex.rxjava3.core.MaybeTransformer;
+import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.core.SingleObserver;
+import io.reactivex.rxjava3.core.SingleSource;
+import io.reactivex.rxjava3.core.SingleTransformer;
+import io.reactivex.rxjava3.disposables.Disposable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.jspecify.annotations.Nullable;
+import org.reactivestreams.Publisher;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,8 +79,65 @@ public class Tracing {
 
   private static final Logger log = LoggerFactory.getLogger(Tracing.class);
 
+  private static final String INVOKE_AGENT_OPERATION = "invoke_agent";
+  private static final String EXECUTE_TOOL_OPERATION = "execute_tool";
+  private static final String SEND_DATA_OPERATION = "send_data";
+  private static final String CALL_LLM_OPERATION = "call_llm";
+
+  private static final AttributeKey<List<String>> GEN_AI_RESPONSE_FINISH_REASONS =
+      AttributeKey.stringArrayKey("gen_ai.response.finish_reasons");
+
+  private static final AttributeKey<String> GEN_AI_OPERATION_NAME =
+      AttributeKey.stringKey("gen_ai.operation.name");
+  private static final AttributeKey<String> GEN_AI_AGENT_DESCRIPTION =
+      AttributeKey.stringKey("gen_ai.agent.description");
+  private static final AttributeKey<String> GEN_AI_AGENT_NAME =
+      AttributeKey.stringKey("gen_ai.agent.name");
+  private static final AttributeKey<String> GEN_AI_CONVERSATION_ID =
+      AttributeKey.stringKey("gen_ai.conversation.id");
+  private static final AttributeKey<String> GEN_AI_SYSTEM = AttributeKey.stringKey("gen_ai.system");
+  private static final AttributeKey<String> GEN_AI_TOOL_CALL_ID =
+      AttributeKey.stringKey("gen_ai.tool_call.id");
+  private static final AttributeKey<String> GEN_AI_TOOL_DESCRIPTION =
+      AttributeKey.stringKey("gen_ai.tool.description");
+  private static final AttributeKey<String> GEN_AI_TOOL_NAME =
+      AttributeKey.stringKey("gen_ai.tool.name");
+  private static final AttributeKey<String> GEN_AI_TOOL_TYPE =
+      AttributeKey.stringKey("gen_ai.tool.type");
+  private static final AttributeKey<String> GEN_AI_REQUEST_MODEL =
+      AttributeKey.stringKey("gen_ai.request.model");
+  private static final AttributeKey<Double> GEN_AI_REQUEST_TOP_P =
+      AttributeKey.doubleKey("gen_ai.request.top_p");
+  private static final AttributeKey<Long> GEN_AI_REQUEST_MAX_TOKENS =
+      AttributeKey.longKey("gen_ai.request.max_tokens");
+  private static final AttributeKey<Long> GEN_AI_USAGE_INPUT_TOKENS =
+      AttributeKey.longKey("gen_ai.usage.input_tokens");
+  private static final AttributeKey<Long> GEN_AI_USAGE_OUTPUT_TOKENS =
+      AttributeKey.longKey("gen_ai.usage.output_tokens");
+  private static final AttributeKey<Long> GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS =
+      AttributeKey.longKey("gen_ai.usage.cache_read.input_tokens");
+  private static final AttributeKey<Long> GEN_AI_USAGE_REASONING_OUTPUT_TOKENS =
+      AttributeKey.longKey("gen_ai.usage.reasoning.output_tokens");
+
+  private static final AttributeKey<String> ADK_TOOL_CALL_ARGS =
+      AttributeKey.stringKey("gcp.vertex.agent.tool_call_args");
+  private static final AttributeKey<String> ADK_LLM_REQUEST =
+      AttributeKey.stringKey("gcp.vertex.agent.llm_request");
+  private static final AttributeKey<String> ADK_LLM_RESPONSE =
+      AttributeKey.stringKey("gcp.vertex.agent.llm_response");
+  private static final AttributeKey<String> ADK_INVOCATION_ID =
+      AttributeKey.stringKey("gcp.vertex.agent.invocation_id");
+  private static final AttributeKey<String> ADK_EVENT_ID =
+      AttributeKey.stringKey("gcp.vertex.agent.event_id");
+  private static final AttributeKey<String> ADK_TOOL_RESPONSE =
+      AttributeKey.stringKey("gcp.vertex.agent.tool_response");
+  private static final AttributeKey<String> ADK_SESSION_ID =
+      AttributeKey.stringKey("gcp.vertex.agent.session_id");
+  private static final AttributeKey<String> ADK_DATA =
+      AttributeKey.stringKey("gcp.vertex.agent.data");
+
   @SuppressWarnings("NonFinalStaticField")
-  private static Tracer tracer = GlobalOpenTelemetry.getTracer("com.google.adk");
+  private static Tracer tracer = GlobalOpenTelemetry.getTracer("gcp.vertex.agent");
 
   private static final boolean CAPTURE_MESSAGE_CONTENT_IN_SPANS =
       Boolean.parseBoolean(
@@ -61,56 +145,119 @@ public class Tracing {
 
   private Tracing() {}
 
+  private static void setInvocationAttributes(
+      Span span, InvocationContext invocationContext, String eventId) {
+    span.setAttribute(ADK_INVOCATION_ID, invocationContext.invocationId());
+    if (eventId != null && !eventId.isEmpty()) {
+      span.setAttribute(ADK_EVENT_ID, eventId);
+    }
+
+    if (invocationContext.session() != null && invocationContext.session().id() != null) {
+      span.setAttribute(ADK_SESSION_ID, invocationContext.session().id());
+    } else {
+      log.trace(
+          "InvocationContext session or session ID is null, cannot set {}",
+          ADK_SESSION_ID.getKey());
+    }
+  }
+
+  private static void setJsonAttribute(Span span, AttributeKey<String> key, Object value) {
+    if (!CAPTURE_MESSAGE_CONTENT_IN_SPANS) {
+      span.setAttribute(key, "{}");
+      return;
+    }
+    try {
+      String json =
+          (value instanceof String stringValue)
+              ? stringValue
+              : JsonBaseModel.getMapper().writeValueAsString(value);
+      span.setAttribute(key, json);
+    } catch (JsonProcessingException | RuntimeException e) {
+      log.warn("Failed to serialize {} to JSON", key.getKey(), e);
+      span.setAttribute(key, "{\"error\": \"serialization failed\"}");
+    }
+  }
+
   /** Sets the OpenTelemetry instance to be used for tracing. This is for testing purposes only. */
   public static void setTracerForTesting(Tracer tracer) {
     Tracing.tracer = tracer;
   }
 
   /**
-   * Traces tool call arguments.
+   * Sets span attributes immediately available on agent invocation according to OTEL semconv
+   * version 1.37.
    *
-   * @param args The arguments to the tool call.
+   * @param span Span on which attributes are set.
+   * @param agentName Agent name from which attributes are gathered.
+   * @param agentDescription Agent description from which attributes are gathered.
+   * @param invocationContext InvocationContext from which attributes are gathered.
    */
-  public static void traceToolCall(Map<String, Object> args) {
-    Span span = Span.current();
-    if (span == null || !span.getSpanContext().isValid()) {
-      log.trace("traceToolCall: No valid span in current context.");
-      return;
-    }
-
-    span.setAttribute("gen_ai.system", "com.google.adk");
-    try {
-      span.setAttribute("adk.tool_call_args", JsonBaseModel.getMapper().writeValueAsString(args));
-    } catch (JsonProcessingException e) {
-      log.warn("traceToolCall: Failed to serialize tool call args to JSON", e);
+  public static void traceAgentInvocation(
+      Span span, String agentName, String agentDescription, InvocationContext invocationContext) {
+    span.setAttribute(GEN_AI_OPERATION_NAME, INVOKE_AGENT_OPERATION);
+    span.setAttribute(GEN_AI_AGENT_DESCRIPTION, agentDescription);
+    span.setAttribute(GEN_AI_AGENT_NAME, agentName);
+    if (invocationContext.session() != null && invocationContext.session().id() != null) {
+      span.setAttribute(GEN_AI_CONVERSATION_ID, invocationContext.session().id());
     }
   }
 
   /**
-   * Traces tool response event.
+   * Traces a tool execution, including its arguments, response, and any potential error.
    *
-   * @param invocationContext The invocation context for the current agent run.
-   * @param eventId The ID of the event.
-   * @param functionResponseEvent The function response event.
+   * @param span The span representing the tool execution.
+   * @param toolName The name of the tool.
+   * @param toolDescription The tool's description.
+   * @param toolType The tool's type (e.g., "FunctionTool").
+   * @param args The arguments passed to the tool.
+   * @param functionResponseEvent The event containing the tool's response, if successful.
+   * @param error The exception thrown during execution, if any.
    */
-  public static void traceToolResponse(
-      InvocationContext invocationContext, String eventId, Event functionResponseEvent) {
-    Span span = Span.current();
-    if (span == null || !span.getSpanContext().isValid()) {
-      log.trace("traceToolResponse: No valid span in current context.");
-      return;
+  public static void traceToolExecution(
+      Span span,
+      String toolName,
+      String toolDescription,
+      String toolType,
+      Map<String, Object> args,
+      @Nullable Event functionResponseEvent,
+      @Nullable Throwable error) {
+    span.setAttribute(GEN_AI_OPERATION_NAME, EXECUTE_TOOL_OPERATION);
+    span.setAttribute(GEN_AI_TOOL_NAME, toolName);
+    span.setAttribute(GEN_AI_TOOL_DESCRIPTION, toolDescription);
+    span.setAttribute(GEN_AI_TOOL_TYPE, toolType);
+
+    setJsonAttribute(span, ADK_TOOL_CALL_ARGS, args);
+
+    if (functionResponseEvent != null) {
+      span.setAttribute(ADK_EVENT_ID, functionResponseEvent.id());
+      FunctionResponse functionResponse =
+          functionResponseEvent.functionResponses().stream().findFirst().orElse(null);
+
+      String toolCallId = "<not specified>";
+      Object toolResponse = "<not specified>";
+      if (functionResponse != null) {
+        toolCallId = functionResponse.id().orElse(toolCallId);
+        if (functionResponse.response().isPresent()) {
+          toolResponse = functionResponse.response().get();
+        }
+      }
+      span.setAttribute(GEN_AI_TOOL_CALL_ID, toolCallId);
+      Object finalToolResponse =
+          (toolResponse instanceof Map) ? toolResponse : ImmutableMap.of("result", toolResponse);
+      setJsonAttribute(span, ADK_TOOL_RESPONSE, finalToolResponse);
+    } else {
+      // Set placeholder if no response event is available (e.g., due to an error)
+      span.setAttribute(GEN_AI_TOOL_CALL_ID, "<not specified>");
+      setJsonAttribute(span, ADK_TOOL_RESPONSE, "{}");
     }
 
-    span.setAttribute("gen_ai.system", "com.google.adk");
-    span.setAttribute("adk.invocation_id", invocationContext.invocationId());
-    span.setAttribute("adk.event_id", eventId);
-    span.setAttribute("adk.tool_response", functionResponseEvent.toJson());
+    // Also set empty LLM attributes for UI compatibility, like in traceToolResponse
+    span.setAttribute(ADK_LLM_REQUEST, "{}");
+    span.setAttribute(ADK_LLM_RESPONSE, "{}");
 
-    // Setting empty llm request and response (as the AdkDevServer UI expects these)
-    span.setAttribute("adk.llm_request", "{}");
-    span.setAttribute("adk.llm_response", "{}");
-    if (invocationContext.session() != null && invocationContext.session().id() != null) {
-      span.setAttribute("adk.session_id", invocationContext.session().id());
+    if (error != null) {
+      span.setStatus(StatusCode.ERROR, error.getMessage());
+      span.recordException(error);
     }
   }
 
@@ -152,42 +299,69 @@ public class Tracing {
    * @param llmResponse The LLM response object.
    */
   public static void traceCallLlm(
+      Span span,
       InvocationContext invocationContext,
       String eventId,
       LlmRequest llmRequest,
-      LlmResponse llmResponse) {
-    Span span = Span.current();
-    if (span == null || !span.getSpanContext().isValid()) {
-      log.trace("traceCallLlm: No valid span in current context.");
-      return;
+      LlmResponse llmResponse,
+      @Nullable Exception error) {
+    span.setAttribute(GEN_AI_SYSTEM, "gcp.vertex.agent");
+    span.setAttribute(GEN_AI_OPERATION_NAME, CALL_LLM_OPERATION);
+    llmRequest.model().ifPresent(modelName -> span.setAttribute(GEN_AI_REQUEST_MODEL, modelName));
+
+    setInvocationAttributes(span, invocationContext, eventId);
+
+    setJsonAttribute(span, ADK_LLM_REQUEST, buildLlmRequestForTrace(llmRequest));
+    setJsonAttribute(span, ADK_LLM_RESPONSE, llmResponse);
+
+    if (error != null) {
+      span.setStatus(StatusCode.ERROR, error.getMessage());
+      span.recordException(error);
     }
 
-    span.setAttribute("gen_ai.system", "com.google.adk");
-    llmRequest.model().ifPresent(modelName -> span.setAttribute("gen_ai.request.model", modelName));
-    span.setAttribute("adk.invocation_id", invocationContext.invocationId());
-    span.setAttribute("adk.event_id", eventId);
-
-    if (invocationContext.session() != null && invocationContext.session().id() != null) {
-      span.setAttribute("adk.session_id", invocationContext.session().id());
-    } else {
-      log.trace(
-          "traceCallLlm: InvocationContext session or session ID is null, cannot set"
-              + " adk.session_id");
-    }
-
-    if (CAPTURE_MESSAGE_CONTENT_IN_SPANS) {
-      try {
-        span.setAttribute(
-            "adk.llm_request",
-            JsonBaseModel.getMapper().writeValueAsString(buildLlmRequestForTrace(llmRequest)));
-        span.setAttribute("adk.llm_response", llmResponse.toJson());
-      } catch (JsonProcessingException e) {
-        log.warn("traceCallLlm: Failed to serialize LlmRequest or LlmResponse to JSON", e);
-      }
-    } else {
-      span.setAttribute("adk.llm_request", "{}");
-      span.setAttribute("adk.llm_response", "{}");
-    }
+    llmRequest
+        .config()
+        .ifPresent(
+            config -> {
+              config
+                  .topP()
+                  .ifPresent(topP -> span.setAttribute(GEN_AI_REQUEST_TOP_P, topP.doubleValue()));
+              config
+                  .maxOutputTokens()
+                  .ifPresent(
+                      maxTokens ->
+                          span.setAttribute(GEN_AI_REQUEST_MAX_TOKENS, maxTokens.longValue()));
+            });
+    llmResponse
+        .usageMetadata()
+        .ifPresent(
+            usage -> {
+              usage
+                  .promptTokenCount()
+                  .ifPresent(tokens -> span.setAttribute(GEN_AI_USAGE_INPUT_TOKENS, (long) tokens));
+              // According to OpenTelemetry Semantic Conventions:
+              // https://github.com/open-telemetry/semantic-conventions/blob/v1.41.0/docs/registry/attributes/gen-ai.md
+              // gen_ai.usage.reasoning.output_tokens (thoughts_token_count) SHOULD be included in
+              // gen_ai.usage.output_tokens.
+              Optional<Integer> candidates = usage.candidatesTokenCount();
+              Optional<Integer> thoughts = usage.thoughtsTokenCount();
+              if (candidates.isPresent() || thoughts.isPresent()) {
+                span.setAttribute(
+                    GEN_AI_USAGE_OUTPUT_TOKENS, (long) candidates.orElse(0) + thoughts.orElse(0));
+              }
+              thoughts.ifPresent(
+                  tokens -> span.setAttribute(GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, (long) tokens));
+              usage
+                  .cachedContentTokenCount()
+                  .ifPresent(
+                      tokens ->
+                          span.setAttribute(GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, (long) tokens));
+            });
+    llmResponse
+        .finishReason()
+        .map(reason -> reason.knownEnum().name().toLowerCase(Locale.ROOT))
+        .ifPresent(
+            reason -> span.setAttribute(GEN_AI_RESPONSE_FINISH_REASONS, ImmutableList.of(reason)));
   }
 
   /**
@@ -198,37 +372,45 @@ public class Tracing {
    * @param data A list of content objects being sent.
    */
   public static void traceSendData(
-      InvocationContext invocationContext, String eventId, List<Content> data) {
-    Span span = Span.current();
-    if (span == null || !span.getSpanContext().isValid()) {
+      Span span, InvocationContext invocationContext, String eventId, List<Content> data) {
+    if (!span.getSpanContext().isValid()) {
       log.trace("traceSendData: No valid span in current context.");
       return;
     }
+    setInvocationAttributes(span, invocationContext, eventId);
+    span.setAttribute(GEN_AI_OPERATION_NAME, SEND_DATA_OPERATION);
 
-    span.setAttribute("adk.invocation_id", invocationContext.invocationId());
-    if (eventId != null && !eventId.isEmpty()) {
-      span.setAttribute("adk.event_id", eventId);
-    }
+    ImmutableList<Content> safeData =
+        Optional.ofNullable(data).orElse(ImmutableList.of()).stream()
+            .filter(Objects::nonNull)
+            .collect(toImmutableList());
+    setJsonAttribute(span, ADK_DATA, safeData);
+  }
 
-    if (invocationContext.session() != null && invocationContext.session().id() != null) {
-      span.setAttribute("adk.session_id", invocationContext.session().id());
+  /**
+   * Traces merged tool call events.
+   *
+   * <p>Calling this function is not needed for telemetry purposes. This is provided for preventing
+   * /debug/trace requests (typically sent by web UI).
+   *
+   * @param responseEventId The ID of the response event.
+   * @param functionResponseEvent The merged response event.
+   */
+  public static void traceMergedToolCalls(
+      Span span, String responseEventId, Event functionResponseEvent) {
+    if (!span.getSpanContext().isValid()) {
+      log.trace("traceMergedToolCalls: No valid span in current context.");
+      return;
     }
-
-    try {
-      List<Map<String, Object>> dataList = new ArrayList<>();
-      if (data != null) {
-        for (Content content : data) {
-          if (content != null) {
-            dataList.add(
-                JsonBaseModel.getMapper()
-                    .convertValue(content, new TypeReference<Map<String, Object>>() {}));
-          }
-        }
-      }
-      span.setAttribute("adk.data", JsonBaseModel.toJsonString(dataList));
-    } catch (IllegalStateException e) {
-      log.warn("traceSendData: Failed to serialize data to JSON", e);
-    }
+    span.setAttribute(GEN_AI_OPERATION_NAME, EXECUTE_TOOL_OPERATION);
+    span.setAttribute(GEN_AI_TOOL_NAME, "(merged tools)");
+    span.setAttribute(GEN_AI_TOOL_DESCRIPTION, "(merged tools)");
+    span.setAttribute(GEN_AI_TOOL_CALL_ID, responseEventId);
+    span.setAttribute(ADK_TOOL_CALL_ARGS, "N/A");
+    span.setAttribute(ADK_EVENT_ID, responseEventId);
+    setJsonAttribute(span, ADK_TOOL_RESPONSE, functionResponseEvent);
+    span.setAttribute(ADK_LLM_REQUEST, "{}");
+    span.setAttribute(ADK_LLM_RESPONSE, "{}");
   }
 
   /**
@@ -272,5 +454,334 @@ public class Tracing {
               scope.close();
               span.end();
             });
+  }
+
+  /**
+   * Returns a transformer that traces the execution of an RxJava stream.
+   *
+   * @param spanName The name of the span to create.
+   * @param <T> The type of the stream.
+   * @return A TracerProvider that can be used with .compose().
+   */
+  public static <T> TracerProvider<T> trace(String spanName) {
+    return new TracerProvider<>(spanName);
+  }
+
+  /**
+   * Returns a transformer that traces an agent invocation.
+   *
+   * @param spanName The name of the span to create.
+   * @param agentName The name of the agent.
+   * @param agentDescription The description of the agent.
+   * @param invocationContext The invocation context.
+   * @param <T> The type of the stream.
+   * @return A TracerProvider configured for agent invocation.
+   */
+  public static <T> TracerProvider<T> traceAgent(
+      String spanName,
+      String agentName,
+      String agentDescription,
+      InvocationContext invocationContext) {
+    return new TracerProvider<T>(spanName)
+        .configure(
+            span -> traceAgentInvocation(span, agentName, agentDescription, invocationContext));
+  }
+
+  /**
+   * A transformer that manages an OpenTelemetry span and scope for RxJava streams.
+   *
+   * @param <T> The type of the stream.
+   */
+  public static final class TracerProvider<T>
+      implements FlowableTransformer<T, T>,
+          SingleTransformer<T, T>,
+          MaybeTransformer<T, T>,
+          CompletableTransformer {
+    private final String spanName;
+    private Context explicitParentContext;
+    private final List<Consumer<Span>> spanConfigurers = new ArrayList<>();
+    private BiConsumer<Span, T> onSuccessConsumer;
+
+    private TracerProvider(String spanName) {
+      this.spanName = spanName;
+    }
+
+    /** Configures the span created by this transformer. */
+    @CanIgnoreReturnValue
+    public TracerProvider<T> configure(Consumer<Span> configurer) {
+      spanConfigurers.add(configurer);
+      return this;
+    }
+
+    /** Sets an explicit parent context for the span created by this transformer. */
+    @CanIgnoreReturnValue
+    public TracerProvider<T> setParent(Context parentContext) {
+      this.explicitParentContext = parentContext;
+      return this;
+    }
+
+    /**
+     * Registers a callback to be executed with the span and the result item when the stream emits a
+     * success value.
+     */
+    @CanIgnoreReturnValue
+    public TracerProvider<T> onSuccess(BiConsumer<Span, T> consumer) {
+      this.onSuccessConsumer = consumer;
+      return this;
+    }
+
+    private Context getParentContext() {
+      return explicitParentContext != null ? explicitParentContext : Context.current();
+    }
+
+    private final class TracingLifecycle {
+      private Span span;
+      private Scope scope;
+
+      @SuppressWarnings("MustBeClosedChecker")
+      void start() {
+        span = tracer.spanBuilder(spanName).setParent(getParentContext()).startSpan();
+        spanConfigurers.forEach(c -> c.accept(span));
+        scope = span.makeCurrent();
+      }
+
+      void end() {
+        if (scope != null) {
+          scope.close();
+        }
+        if (span != null) {
+          span.end();
+        }
+      }
+    }
+
+    @Override
+    public Publisher<T> apply(Flowable<T> upstream) {
+      return Flowable.defer(
+          () -> {
+            TracingLifecycle lifecycle = new TracingLifecycle();
+            Flowable<T> pipeline = upstream.doOnSubscribe(s -> lifecycle.start());
+            if (onSuccessConsumer != null) {
+              pipeline = pipeline.doOnNext(t -> onSuccessConsumer.accept(lifecycle.span, t));
+            }
+            return pipeline.doFinally(lifecycle::end);
+          });
+    }
+
+    @Override
+    public SingleSource<T> apply(Single<T> upstream) {
+      return Single.defer(
+          () -> {
+            TracingLifecycle lifecycle = new TracingLifecycle();
+            Single<T> pipeline = upstream.doOnSubscribe(s -> lifecycle.start());
+            if (onSuccessConsumer != null) {
+              pipeline = pipeline.doOnSuccess(t -> onSuccessConsumer.accept(lifecycle.span, t));
+            }
+            return pipeline.doFinally(lifecycle::end);
+          });
+    }
+
+    @Override
+    public MaybeSource<T> apply(Maybe<T> upstream) {
+      return Maybe.defer(
+          () -> {
+            TracingLifecycle lifecycle = new TracingLifecycle();
+            Maybe<T> pipeline = upstream.doOnSubscribe(s -> lifecycle.start());
+            if (onSuccessConsumer != null) {
+              pipeline = pipeline.doOnSuccess(t -> onSuccessConsumer.accept(lifecycle.span, t));
+            }
+            return pipeline.doFinally(lifecycle::end);
+          });
+    }
+
+    @Override
+    public CompletableSource apply(Completable upstream) {
+      return Completable.defer(
+          () -> {
+            TracingLifecycle lifecycle = new TracingLifecycle();
+            return upstream.doOnSubscribe(s -> lifecycle.start()).doFinally(lifecycle::end);
+          });
+    }
+  }
+
+  /**
+   * Returns a transformer that re-activates a given context for the duration of the stream's
+   * subscription.
+   *
+   * @param context The context to re-activate.
+   * @param <T> The type of the stream.
+   * @return A transformer that re-activates the context.
+   */
+  public static <T> ContextTransformer<T> withContext(Context context) {
+    return new ContextTransformer<>(context);
+  }
+
+  /**
+   * A transformer that re-activates a given context for the duration of the stream's subscription.
+   *
+   * @param <T> The type of the stream.
+   */
+  public static final class ContextTransformer<T>
+      implements FlowableTransformer<T, T>,
+          SingleTransformer<T, T>,
+          MaybeTransformer<T, T>,
+          CompletableTransformer {
+    private final Context context;
+
+    private ContextTransformer(Context context) {
+      this.context = context;
+    }
+
+    @Override
+    public Publisher<T> apply(Flowable<T> upstream) {
+      return upstream.lift(subscriber -> TracingObserver.wrap(context, subscriber));
+    }
+
+    @Override
+    public SingleSource<T> apply(Single<T> upstream) {
+      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
+    }
+
+    @Override
+    public MaybeSource<T> apply(Maybe<T> upstream) {
+      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
+    }
+
+    @Override
+    public CompletableSource apply(Completable upstream) {
+      return upstream.lift(observer -> TracingObserver.wrap(context, observer));
+    }
+  }
+
+  /**
+   * An observer that wraps another observer and ensures that the OpenTelemetry context is active
+   * during all callback methods.
+   *
+   * <p>This implementation only wraps the data-flow callbacks (`onNext`, `onSuccess`, etc.). The
+   * `Subscription.request/cancel` and `Disposable.dispose` calls are not wrapped in the context. If
+   * the upstream logic depends on the context during these signals, they might lose trace
+   * information. Given this is a manual `withContext` utility, this might be an acceptable
+   * trade-off for simplicity/performance, but worth keeping in mind.
+   *
+   * @param <T> The type of the items emitted by the stream.
+   */
+  private static final class TracingObserver<T>
+      implements Subscriber<T>, SingleObserver<T>, MaybeObserver<T>, CompletableObserver {
+    private final Context context;
+    private final Subscriber<? super T> subscriber;
+    private final SingleObserver<? super T> singleObserver;
+    private final MaybeObserver<? super T> maybeObserver;
+    private final CompletableObserver completableObserver;
+
+    private TracingObserver(
+        Context context,
+        Subscriber<? super T> subscriber,
+        SingleObserver<? super T> singleObserver,
+        MaybeObserver<? super T> maybeObserver,
+        CompletableObserver completableObserver) {
+      this.context = context;
+      this.subscriber = subscriber;
+      this.singleObserver = singleObserver;
+      this.maybeObserver = maybeObserver;
+      this.completableObserver = completableObserver;
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, Subscriber<? super T> subscriber) {
+      return new TracingObserver<>(context, subscriber, null, null, null);
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, SingleObserver<? super T> observer) {
+      return new TracingObserver<>(context, null, observer, null, null);
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, MaybeObserver<? super T> observer) {
+      return new TracingObserver<>(context, null, null, observer, null);
+    }
+
+    static <T> TracingObserver<T> wrap(Context context, CompletableObserver observer) {
+      return new TracingObserver<>(context, null, null, null, observer);
+    }
+
+    private void runInContext(Runnable action) {
+      try (Scope scope = context.makeCurrent()) {
+        action.run();
+      }
+    }
+
+    @Override
+    public void onSubscribe(Subscription s) {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onSubscribe(s);
+            }
+          });
+    }
+
+    @Override
+    public void onSubscribe(Disposable d) {
+      runInContext(
+          () -> {
+            if (singleObserver != null) {
+              singleObserver.onSubscribe(d);
+            } else if (maybeObserver != null) {
+              maybeObserver.onSubscribe(d);
+            } else if (completableObserver != null) {
+              completableObserver.onSubscribe(d);
+            }
+          });
+    }
+
+    @Override
+    public void onNext(T t) {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onNext(t);
+            }
+          });
+    }
+
+    @Override
+    public void onSuccess(T t) {
+      runInContext(
+          () -> {
+            if (singleObserver != null) {
+              singleObserver.onSuccess(t);
+            } else if (maybeObserver != null) {
+              maybeObserver.onSuccess(t);
+            }
+          });
+    }
+
+    @Override
+    public void onError(Throwable t) {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onError(t);
+            } else if (singleObserver != null) {
+              singleObserver.onError(t);
+            } else if (maybeObserver != null) {
+              maybeObserver.onError(t);
+            } else if (completableObserver != null) {
+              completableObserver.onError(t);
+            }
+          });
+    }
+
+    @Override
+    public void onComplete() {
+      runInContext(
+          () -> {
+            if (subscriber != null) {
+              subscriber.onComplete();
+            } else if (maybeObserver != null) {
+              maybeObserver.onComplete();
+            } else if (completableObserver != null) {
+              completableObserver.onComplete();
+            }
+          });
+    }
   }
 }

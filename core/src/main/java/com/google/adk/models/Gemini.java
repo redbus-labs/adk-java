@@ -67,7 +67,7 @@ public class Gemini extends BaseLlm {
   /**
    * Constructs a new Gemini instance.
    *
-   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
+   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param apiClient The genai {@link com.google.genai.Client} instance for making API calls.
    */
   public Gemini(String modelName, Client apiClient) {
@@ -78,7 +78,7 @@ public class Gemini extends BaseLlm {
   /**
    * Constructs a new Gemini instance with a Google Gemini API key.
    *
-   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
+   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param apiKey The Google Gemini API key.
    */
   public Gemini(String modelName, String apiKey) {
@@ -94,7 +94,7 @@ public class Gemini extends BaseLlm {
   /**
    * Constructs a new Gemini instance with a Google Gemini API key.
    *
-   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
+   * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param vertexCredentials The Vertex AI credentials to access the Gemini model.
    */
   public Gemini(String modelName, VertexCredentials vertexCredentials) {
@@ -131,7 +131,7 @@ public class Gemini extends BaseLlm {
     /**
      * Sets the name of the Gemini model to use.
      *
-     * @param modelName The model name (e.g., "gemini-2.0-flash").
+     * @param modelName The model name (e.g., "gemini-2.5-flash").
      * @return This builder.
      */
     @CanIgnoreReturnValue
@@ -239,7 +239,7 @@ public class Gemini extends BaseLlm {
                                           p ->
                                               p.functionCall().isPresent()
                                                   || p.functionResponse().isPresent()
-                                                  || p.text().map(t -> !t.isBlank()).orElse(false)))
+                                                  || p.text().isPresent()))
                       .orElse(false));
     } else {
       logger.debug("Sending generateContent request to model {}", effectiveModelName);
@@ -272,11 +272,17 @@ public class Gemini extends BaseLlm {
                 if (part.get().thought().orElse(false)) {
                   accumulatedThoughtText.append(currentTextChunk);
                   responsesToEmit.add(
-                      thinkingResponseFromText(currentTextChunk).toBuilder().partial(true).build());
+                      thinkingResponseFromText(currentTextChunk).toBuilder()
+                          .usageMetadata(currentProcessedLlmResponse.usageMetadata().orElse(null))
+                          .partial(true)
+                          .build());
                 } else {
                   accumulatedText.append(currentTextChunk);
                   responsesToEmit.add(
-                      responseFromText(currentTextChunk).toBuilder().partial(true).build());
+                      responseFromText(currentTextChunk).toBuilder()
+                          .usageMetadata(currentProcessedLlmResponse.usageMetadata().orElse(null))
+                          .partial(true)
+                          .build());
                 }
               } else {
                 if (accumulatedThoughtText.length() > 0
@@ -316,11 +322,20 @@ public class Gemini extends BaseLlm {
                     List<LlmResponse> finalResponses = new ArrayList<>();
                     if (accumulatedThoughtText.length() > 0) {
                       finalResponses.add(
-                          thinkingResponseFromText(accumulatedThoughtText.toString()));
+                          thinkingResponseFromText(accumulatedThoughtText.toString()).toBuilder()
+                              .usageMetadata(
+                                  accumulatedText.length() > 0
+                                      ? null
+                                      : finalRawResp.usageMetadata().orElse(null))
+                              .build());
                     }
                     if (accumulatedText.length() > 0) {
-                      finalResponses.add(responseFromText(accumulatedText.toString()));
+                      finalResponses.add(
+                          responseFromText(accumulatedText.toString()).toBuilder()
+                              .usageMetadata(finalRawResp.usageMetadata().orElse(null))
+                              .build());
                     }
+
                     return Flowable.fromIterable(finalResponses);
                   }
                   return Flowable.empty();

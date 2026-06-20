@@ -8,19 +8,19 @@ import com.google.adk.JsonBaseModel;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Iterables;
+import com.google.common.net.UrlEscapers;
 import com.google.genai.types.HttpOptions;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.Map;
 import java.util.concurrent.TimeoutException;
-import javax.annotation.Nullable;
 import okhttp3.ResponseBody;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,22 +37,20 @@ final class VertexAiClient {
   }
 
   VertexAiClient() {
-    this.apiClient =
-        new HttpApiClient(Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+    this.apiClient = new HttpApiClient((String) null, null, null, null);
   }
 
   VertexAiClient(
       String project,
       String location,
-      Optional<GoogleCredentials> credentials,
-      Optional<HttpOptions> httpOptions) {
-    this.apiClient =
-        new HttpApiClient(Optional.of(project), Optional.of(location), credentials, httpOptions);
+      @Nullable GoogleCredentials credentials,
+      @Nullable HttpOptions httpOptions) {
+    this.apiClient = new HttpApiClient(project, location, credentials, httpOptions);
   }
 
   Maybe<JsonNode> createSession(
-      String reasoningEngineId, String userId, ConcurrentMap<String, Object> state) {
-    ConcurrentHashMap<String, Object> sessionJsonMap = new ConcurrentHashMap<>();
+      String reasoningEngineId, String userId, Map<String, Object> state) {
+    Map<String, Object> sessionJsonMap = new HashMap<>();
     sessionJsonMap.put("userId", userId);
     if (state != null) {
       sessionJsonMap.put("sessionState", state);
@@ -114,11 +112,12 @@ final class VertexAiClient {
         .flatMapMaybe(VertexAiClient::getJsonResponse);
   }
 
-  Maybe<JsonNode> listEvents(String reasoningEngineId, String sessionId) {
-    return performApiRequest(
-            "GET",
-            "reasoningEngines/" + reasoningEngineId + "/sessions/" + sessionId + "/events",
-            "")
+  Maybe<JsonNode> listEvents(String reasoningEngineId, String sessionId, @Nullable String filter) {
+    String path = "reasoningEngines/" + reasoningEngineId + "/sessions/" + sessionId + "/events";
+    if (filter != null) {
+      path += "?filter=" + UrlEscapers.urlFormParameterEscaper().escape(filter);
+    }
+    return performApiRequest("GET", path, "")
         .doOnSuccess(apiResponse -> logger.debug("List events response {}", apiResponse))
         .flatMapMaybe(VertexAiClient::getJsonResponse);
   }

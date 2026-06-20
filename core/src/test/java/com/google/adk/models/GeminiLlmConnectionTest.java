@@ -28,6 +28,7 @@ import com.google.genai.types.LiveServerToolCall;
 import com.google.genai.types.LiveServerToolCallCancellation;
 import com.google.genai.types.Part;
 import com.google.genai.types.UsageMetadata;
+import java.util.Optional;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -46,8 +47,10 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.content()).isPresent();
     assertThat(response.content().get().text()).isEqualTo("Model response");
     assertThat(response.partial()).hasValue(true);
@@ -66,8 +69,10 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.interrupted()).hasValue(false);
     assertThat(response.turnComplete()).hasValue(false);
   }
@@ -82,8 +87,10 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.interrupted()).isEmpty();
     assertThat(response.turnComplete()).hasValue(true);
   }
@@ -98,8 +105,10 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.partial()).hasValue(false);
     assertThat(response.turnComplete()).hasValue(true);
   }
@@ -114,8 +123,10 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().serverContent(serverContent).build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.partial()).hasValue(true);
     assertThat(response.turnComplete()).hasValue(false);
   }
@@ -128,8 +139,10 @@ public final class GeminiLlmConnectionTest {
 
     LiveServerMessage message = LiveServerMessage.builder().toolCall(toolCall).build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.content()).isPresent();
     assertThat(response.content().get().parts()).isPresent();
     assertThat(response.content().get().parts().get()).hasSize(1);
@@ -139,40 +152,83 @@ public final class GeminiLlmConnectionTest {
   }
 
   @Test
-  public void convertToServerResponse_withUsageMetadata_returnsEmptyOptional() {
-    LiveServerMessage message =
-        LiveServerMessage.builder().usageMetadata(UsageMetadata.builder().build()).build();
+  public void convertToServerResponse_withUsageMetadata_returnsResponseWithUsage() {
+    UsageMetadata usageMetadata = UsageMetadata.builder().promptTokenCount(10).build();
+    LiveServerMessage message = LiveServerMessage.builder().usageMetadata(usageMetadata).build();
 
-    assertThat(GeminiLlmConnection.convertToServerResponse(message)).isEmpty();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
+
+    assertThat(result.isPresent()).isTrue();
+    assertThat(result.get().usageMetadata()).isPresent();
+    assertThat(result.get().usageMetadata().get().promptTokenCount()).hasValue(10);
   }
 
   @Test
-  public void convertToServerResponse_withToolCallCancellation_returnsEmptyOptional() {
+  public void convertToServerResponse_withToolCallCancellation_returnsInterrupted() {
     LiveServerMessage message =
         LiveServerMessage.builder()
             .toolCallCancellation(LiveServerToolCallCancellation.builder().build())
             .build();
 
-    assertThat(GeminiLlmConnection.convertToServerResponse(message)).isEmpty();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
+
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
+    assertThat(response.interrupted()).hasValue(true);
+    assertThat(response.turnComplete()).hasValue(true);
   }
 
   @Test
-  public void convertToServerResponse_withSetupComplete_returnsEmptyOptional() {
+  public void convertToServerResponse_withSetupComplete_returnsEmpty() {
     LiveServerMessage message =
         LiveServerMessage.builder()
             .setupComplete(LiveServerSetupComplete.builder().build())
             .build();
 
-    assertThat(GeminiLlmConnection.convertToServerResponse(message)).isEmpty();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
+
+    assertThat(result.isPresent()).isFalse();
   }
 
   @Test
   public void convertToServerResponse_withUnknownMessage_returnsErrorResponse() {
     LiveServerMessage message = LiveServerMessage.builder().build();
 
-    LlmResponse response = GeminiLlmConnection.convertToServerResponse(message).get();
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
 
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
     assertThat(response.errorCode()).isPresent();
     assertThat(response.errorMessage()).hasValue("Received unknown server message.");
+  }
+
+  @Test
+  public void convertToServerResponse_withContentAndUsageMetadata_returnsContentOnly() {
+    LiveServerContent serverContent =
+        LiveServerContent.builder()
+            .modelTurn(Content.fromParts(Part.fromText("Model response")))
+            .turnComplete(true)
+            .build();
+
+    UsageMetadata usageMetadata =
+        UsageMetadata.builder()
+            .promptTokenCount(10)
+            .responseTokenCount(20)
+            .totalTokenCount(30)
+            .build();
+
+    LiveServerMessage message =
+        LiveServerMessage.builder()
+            .serverContent(serverContent)
+            .usageMetadata(usageMetadata)
+            .build();
+
+    Optional<LlmResponse> result = GeminiLlmConnection.convertToServerResponse(message);
+
+    assertThat(result.isPresent()).isTrue();
+    LlmResponse response = result.get();
+    assertThat(response.content()).isPresent();
+    assertThat(response.content().get().text()).isEqualTo("Model response");
+    assertThat(response.turnComplete()).hasValue(true);
   }
 }

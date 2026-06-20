@@ -797,7 +797,7 @@ public final class ConfigAgentUtilsTest {
         """
         agent_class: LlmAgent
         name: InitialWriterAgent
-        model: gemini-2.0-flash
+        model: gemini-2.5-flash
         description: Writes the initial document draft based on the topic
         instruction: |
           You are a Creative Writing Assistant tasked with starting a story.
@@ -844,7 +844,7 @@ public final class ConfigAgentUtilsTest {
         """
         agent_class: LlmAgent
         name: CompleteAgentWithOutputKey
-        model: gemini-2.0-flash
+        model: gemini-2.5-flash
         description: Agent with output key and other configurations
         instruction: Process and store output
         output_key: result_data
@@ -935,7 +935,7 @@ public final class ConfigAgentUtilsTest {
         description: Agent with examples configured via tool
         instruction: You are a test agent
         agent_class: LlmAgent
-        model: gemini-2.0-flash
+        model: gemini-2.5-flash
         tools:
           - name: multi_agent_llm_config.example_tool
         """);
@@ -952,7 +952,7 @@ public final class ConfigAgentUtilsTest {
     LlmAgent llmAgent = (LlmAgent) agent;
 
     // Process tools to verify ExampleTool appends the examples to the request
-    LlmRequest.Builder requestBuilder = LlmRequest.builder().model("gemini-2.0-flash");
+    LlmRequest.Builder requestBuilder = LlmRequest.builder().model("gemini-2.5-flash");
     InvocationContext context = TestUtils.createInvocationContext(agent);
     llmAgent
         .canonicalTools(new ReadonlyContext(context))
@@ -1020,7 +1020,7 @@ public final class ConfigAgentUtilsTest {
         mainAgentFile.toPath(),
         """
         name: root_agent
-        model: gemini-2.0-flash
+        model: gemini-2.5-flash
         description: Root agent
         instruction: |
           If the user query is about life, you should route it to the life sub-agent.
@@ -1161,20 +1161,25 @@ public final class ConfigAgentUtilsTest {
 
     String pfx = "test.callbacks.";
     registry.register(
-        pfx + "before_agent_1", (Callbacks.BeforeAgentCallback) (ctx) -> Maybe.empty());
+        pfx + "before_agent_1", (Callbacks.BeforeAgentCallback) (unusedCtx) -> Maybe.empty());
     registry.register(
-        pfx + "before_agent_2", (Callbacks.BeforeAgentCallback) (ctx) -> Maybe.empty());
-    registry.register(pfx + "after_agent_1", (Callbacks.AfterAgentCallback) (ctx) -> Maybe.empty());
+        pfx + "before_agent_2", (Callbacks.BeforeAgentCallback) (unusedCtx) -> Maybe.empty());
     registry.register(
-        pfx + "before_model_1", (Callbacks.BeforeModelCallback) (ctx, req) -> Maybe.empty());
+        pfx + "after_agent_1", (Callbacks.AfterAgentCallback) (unusedCtx) -> Maybe.empty());
     registry.register(
-        pfx + "after_model_1", (Callbacks.AfterModelCallback) (ctx, resp) -> Maybe.empty());
+        pfx + "before_model_1",
+        (Callbacks.BeforeModelCallback) (unusedCtx, unusedReq) -> Maybe.empty());
+    registry.register(
+        pfx + "after_model_1",
+        (Callbacks.AfterModelCallback) (unusedCtx, unusedResp) -> Maybe.empty());
     registry.register(
         pfx + "before_tool_1",
-        (Callbacks.BeforeToolCallback) (inv, tool, args, toolCtx) -> Maybe.empty());
+        (Callbacks.BeforeToolCallback)
+            (unusedInv, unusedTool, unusedArgs, unusedToolCtx) -> Maybe.empty());
     registry.register(
         pfx + "after_tool_1",
-        (Callbacks.AfterToolCallback) (inv, tool, args, toolCtx, resp) -> Maybe.empty());
+        (Callbacks.AfterToolCallback)
+            (unusedInv, unusedTool, unusedArgs, unusedToolCtx, unusedResp) -> Maybe.empty());
 
     File configFile = tempFolder.newFile("with_callbacks.yaml");
     Files.writeString(
@@ -1204,20 +1209,14 @@ public final class ConfigAgentUtilsTest {
     assertThat(agent).isInstanceOf(LlmAgent.class);
     LlmAgent llm = (LlmAgent) agent;
 
-    assertThat(agent.beforeAgentCallback()).isPresent();
-    assertThat(agent.beforeAgentCallback().get()).hasSize(2);
-    assertThat(agent.afterAgentCallback()).isPresent();
-    assertThat(agent.afterAgentCallback().get()).hasSize(1);
+    assertThat(agent.beforeAgentCallback()).hasSize(2);
+    assertThat(agent.afterAgentCallback()).hasSize(1);
 
-    assertThat(llm.beforeModelCallback()).isPresent();
-    assertThat(llm.beforeModelCallback().get()).hasSize(1);
-    assertThat(llm.afterModelCallback()).isPresent();
-    assertThat(llm.afterModelCallback().get()).hasSize(1);
+    assertThat(llm.beforeModelCallback()).hasSize(1);
+    assertThat(llm.afterModelCallback()).hasSize(1);
 
-    assertThat(llm.beforeToolCallback()).isPresent();
-    assertThat(llm.beforeToolCallback().get()).hasSize(1);
-    assertThat(llm.afterToolCallback()).isPresent();
-    assertThat(llm.afterToolCallback().get()).hasSize(1);
+    assertThat(llm.beforeToolCallback()).hasSize(1);
+    assertThat(llm.afterToolCallback()).hasSize(1);
   }
 
   @Test
