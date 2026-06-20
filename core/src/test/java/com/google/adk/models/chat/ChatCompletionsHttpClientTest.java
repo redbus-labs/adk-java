@@ -33,12 +33,14 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
 import com.google.genai.types.FinishReason;
+import com.google.genai.types.FunctionCall;
 import com.google.genai.types.HttpOptions;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.time.Duration;
+import java.util.Base64;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.MediaType;
@@ -62,6 +64,7 @@ import org.mockito.junit.MockitoRule;
 public final class ChatCompletionsHttpClientTest {
   private static final ObjectMapper objectMapper = JsonBaseModel.getMapper();
   private static final MediaType JSON = MediaType.get("application/json");
+  private static final MediaType EVENT_STREAM = MediaType.get("text/event-stream");
 
   /**
    * Bounded wait for {@link TestSubscriber#await} so a buggy callback wiring cannot hang the test
@@ -79,23 +82,21 @@ public final class ChatCompletionsHttpClientTest {
   private ChatCompletionsHttpClient client;
 
   @Before
-  public void setUp() throws Exception {
+  public void setUp() {
+    when(mockHttpClient.newCall(any())).thenReturn(mockCall);
     client =
-        new ChatCompletionsHttpClient(
-            HttpOptions.builder().baseUrl("https://example.com/").build());
-    swapInMockHttpClient(client);
+        ChatCompletionsHttpClient.forTesting(
+            HttpOptions.builder().baseUrl("https://example.com/").build(), mockHttpClient);
   }
 
   /**
-   * Reflectively replaces the production {@link OkHttpClient} on a {@link
-   * ChatCompletionsHttpClient} with the test's mock so callbacks can be captured. Used by both
-   * setUp and tests that construct their own client (e.g. timeout tests, header tests).
+   * Wires the per-test mock {@link OkHttpClient} into a fresh {@link ChatCompletionsHttpClient}
+   * built from the supplied options. Used by tests that need a non-default {@link HttpOptions}
+   * (e.g. custom headers, baseUrl variants) but still want callbacks captured by the mock.
    */
-  private void swapInMockHttpClient(ChatCompletionsHttpClient target) throws Exception {
+  private ChatCompletionsHttpClient newClientWithMock(HttpOptions options) {
     when(mockHttpClient.newCall(any())).thenReturn(mockCall);
-    Field clientField = ChatCompletionsHttpClient.class.getDeclaredField("client");
-    clientField.setAccessible(true);
-    clientField.set(target, mockHttpClient);
+    return ChatCompletionsHttpClient.forTesting(options, mockHttpClient);
   }
 
   private Response createMockResponse(String body, MediaType mediaType) {
@@ -181,6 +182,39 @@ public final class ChatCompletionsHttpClientTest {
   }
 
   @Test
+  public void complete_streaming_parsesChunks() throws Exception {
+    String responseBody =
+        """
+        data: {"choices":[{"delta":{"content":"Chunk"},"index":0}]}
+
+        data: [DONE]
+        """;
+
+    Response mockResponse = createMockResponse(responseBody, EVENT_STREAM);
+
+    ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
+    doNothing().when(mockCall).enqueue(callbackCaptor.capture());
+
+    TestSubscriber<LlmResponse> testSubscriber = client.complete(minimalRequest(), true).test();
+
+    callbackCaptor.getValue().onResponse(mockCall, mockResponse);
+    testSubscriber.await(AWAIT_TIMEOUT.toMillis(), MILLISECONDS);
+
+    LlmResponse response = testSubscriber.values().get(0);
+
+    LlmResponse expectedResponse =
+        LlmResponse.builder()
+            .content(
+                Content.builder().role("").parts(ImmutableList.of(Part.fromText("Chunk"))).build())
+            .partial(true)
+            .modelVersion("")
+            .customMetadata(ImmutableList.of())
+            .build();
+
+    assertThat(response).isEqualTo(expectedResponse);
+  }
+
+  @Test
   public void complete_nonStreaming_propagateFailure() throws Exception {
     ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
     doNothing().when(mockCall).enqueue(callbackCaptor.capture());
@@ -193,13 +227,121 @@ public final class ChatCompletionsHttpClientTest {
     testSubscriber.assertError(IOException.class);
   }
 
+  @Test
+  public void complete_streaming_propagateFailure() throws Exception {
+    ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
+    doNothing().when(mockCall).enqueue(callbackCaptor.capture());
+
+    TestSubscriber<LlmResponse> testSubscriber = client.complete(minimalRequest(), true).test();
+
+    callbackCaptor.getValue().onFailure(mockCall, new IOException("Network Error"));
+    testSubscriber.await(AWAIT_TIMEOUT.toMillis(), MILLISECONDS);
+
+    testSubscriber.assertError(IOException.class);
+  }
+
+  // -- Streaming-specific tests. ---------------------------------------------------------
+
+  /**
+   * Verifies that an HTTP error status (e.g. 500) on a streaming request propagates as a stream
+   * error rather than producing zero values silently. Mirror of the non-streaming variant for
+   * symmetric coverage, since the streaming and non-streaming Flowables have separate error-path
+   * code.
+   */
+  @Test
+  public void complete_streaming_propagatesHttpErrorStatus() throws Exception {
+    Response mockResponse =
+        createMockResponse("{\"error\":\"server exploded\"}", JSON, 500, "Internal Server Error");
+
+    ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
+    doNothing().when(mockCall).enqueue(callbackCaptor.capture());
+
+    TestSubscriber<LlmResponse> testSubscriber = client.complete(minimalRequest(), true).test();
+
+    callbackCaptor.getValue().onResponse(mockCall, mockResponse);
+    testSubscriber.await(AWAIT_TIMEOUT.toMillis(), MILLISECONDS);
+
+    testSubscriber.assertNoValues();
+    testSubscriber.assertError(
+        e ->
+            e instanceof IOException
+                && e.getMessage().contains("HTTP request failed with status:")
+                && e.getMessage().contains("server exploded"));
+  }
+
+  /**
+   * Verifies that a single malformed JSON chunk in the middle of a stream does NOT abort the
+   * stream. The good chunks before AND after the malformed chunk must still be emitted.
+   */
+  @Test
+  public void complete_streaming_continuesOnMalformedChunk() throws Exception {
+    String responseBody =
+        """
+        data: {"choices":[{"delta":{"content":"Good1"},"index":0}]}
+
+        data: {this is not valid json}
+
+        data: {"choices":[{"delta":{"content":"Good2"},"index":0}]}
+
+        data: [DONE]
+        """;
+
+    Response mockResponse = createMockResponse(responseBody, EVENT_STREAM);
+
+    ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
+    doNothing().when(mockCall).enqueue(callbackCaptor.capture());
+
+    TestSubscriber<LlmResponse> testSubscriber = client.complete(minimalRequest(), true).test();
+
+    callbackCaptor.getValue().onResponse(mockCall, mockResponse);
+    testSubscriber.await(AWAIT_TIMEOUT.toMillis(), MILLISECONDS);
+
+    testSubscriber.assertNoErrors();
+    testSubscriber.assertValueCount(2);
+    assertThat(testSubscriber.values().get(0).content().get().parts().get().get(0).text())
+        .hasValue("Good1");
+    assertThat(testSubscriber.values().get(1).content().get().parts().get().get(0).text())
+        .hasValue("Good2");
+  }
+
+  /**
+   * Verifies that SSE chunks which omit the trailing space after {@code data:} are still parsed.
+   * Some upstream providers send {@code data:{json}} (no space), and the SSE spec allows it; a
+   * strict {@code "data: "} match would silently drop these lines.
+   */
+  @Test
+  public void complete_streaming_acceptsDataPrefixWithoutSpace() throws Exception {
+    // Note: NO space after "data:" on the data line.
+    String responseBody =
+        """
+        data:{"choices":[{"delta":{"content":"NoSpace"},"index":0}]}
+
+        data:[DONE]
+        """;
+
+    Response mockResponse = createMockResponse(responseBody, EVENT_STREAM);
+
+    ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
+    doNothing().when(mockCall).enqueue(callbackCaptor.capture());
+
+    TestSubscriber<LlmResponse> testSubscriber = client.complete(minimalRequest(), true).test();
+
+    callbackCaptor.getValue().onResponse(mockCall, mockResponse);
+    testSubscriber.await(AWAIT_TIMEOUT.toMillis(), MILLISECONDS);
+
+    testSubscriber.assertNoErrors();
+    testSubscriber.assertValueCount(1);
+    assertThat(testSubscriber.values().get(0).content().get().parts().get().get(0).text())
+        .hasValue("NoSpace");
+  }
+
   // -- Header, error-propagation, and timeout coverage. ----------------------------------
 
   /**
    * Verifies that an HTTP error status (e.g. 500) propagates as a stream error and that the error
    * message includes the response body so callers can debug. Covers the {@code
-   * !response.isSuccessful()} branch of the non-streaming path. The streaming counterpart lives in
-   * the streaming follow-up CL.
+   * !response.isSuccessful()} branch of the non-streaming path; the streaming counterpart is tested
+   * above in the streaming-specific section.
    */
   @Test
   public void complete_nonStreaming_propagatesHttpErrorStatus() throws Exception {
@@ -217,7 +359,7 @@ public final class ChatCompletionsHttpClientTest {
     testSubscriber.assertError(
         e ->
             e instanceof IOException
-                && e.getMessage().contains("Unexpected code")
+                && e.getMessage().contains("HTTP request failed with status:")
                 && e.getMessage().contains("server exploded"));
   }
 
@@ -259,12 +401,11 @@ public final class ChatCompletionsHttpClientTest {
   @Test
   public void complete_sendsCustomHeaders() throws Exception {
     ChatCompletionsHttpClient clientWithHeaders =
-        new ChatCompletionsHttpClient(
+        newClientWithMock(
             HttpOptions.builder()
                 .baseUrl("https://example.com/")
                 .headers(ImmutableMap.of("Authorization", "Bearer test-token", "X-Custom", "value"))
                 .build());
-    swapInMockHttpClient(clientWithHeaders);
 
     String responseBody =
         """
@@ -298,12 +439,11 @@ public final class ChatCompletionsHttpClientTest {
   @Test
   public void complete_overridesCallerContentType() throws Exception {
     ChatCompletionsHttpClient clientWithBadHeader =
-        new ChatCompletionsHttpClient(
+        newClientWithMock(
             HttpOptions.builder()
                 .baseUrl("https://example.com/")
                 .headers(ImmutableMap.of("Content-Type", "text/plain"))
                 .build());
-    swapInMockHttpClient(clientWithBadHeader);
 
     String responseBody =
         """
@@ -336,8 +476,7 @@ public final class ChatCompletionsHttpClientTest {
   @Test
   public void complete_handlesBaseUrlWithoutTrailingSlash() throws Exception {
     ChatCompletionsHttpClient clientNoSlash =
-        new ChatCompletionsHttpClient(HttpOptions.builder().baseUrl("https://example.com").build());
-    swapInMockHttpClient(clientNoSlash);
+        newClientWithMock(HttpOptions.builder().baseUrl("https://example.com").build());
 
     String responseBody =
         """
@@ -366,9 +505,7 @@ public final class ChatCompletionsHttpClientTest {
   @Test
   public void constructor_missingHeaders_isTreatedAsEmpty() throws Exception {
     ChatCompletionsHttpClient clientWithoutHeaders =
-        new ChatCompletionsHttpClient(
-            HttpOptions.builder().baseUrl("https://example.com/").build());
-    swapInMockHttpClient(clientWithoutHeaders);
+        newClientWithMock(HttpOptions.builder().baseUrl("https://example.com/").build());
 
     String responseBody =
         """
@@ -473,5 +610,80 @@ public final class ChatCompletionsHttpClientTest {
     } catch (ReflectiveOperationException e) {
       throw new LinkageError("Failed to read internal client", e);
     }
+  }
+
+  // -- thought_signature end-to-end through the HTTP layer. ------------------------------
+  //
+  // A single round-trip test that covers the request encoder, the HTTP body writer, the
+  // response decoder, and the ToolCall.applyThoughtSignature site in one shot. Wider
+  // request- and response-side coverage lives in the unit tests in
+  // ChatCompletionsRequestTest and ChatCompletionsResponseTest.
+
+  private static final byte[] httpSigBytes = {0x21, 0x22, 0x23, 0x24};
+  private static final String HTTP_SIG_B64 = Base64.getEncoder().encodeToString(httpSigBytes);
+
+  /**
+   * Round-trip: a {@link Part} with a {@code thoughtSignature} sent on the request must decode
+   * bytewise-equal on the response when the mock server echoes the same base64 string back. This is
+   * the strongest single regression guard for the thought_signature pipeline because it covers the
+   * request encoder, the HTTP body writer, the response decoder, and the {@link
+   * ChatCompletionsCommon.ToolCall#applyThoughtSignature} site in a single test.
+   */
+  @Test
+  public void complete_nonStreaming_thoughtSignatureRoundTrip() throws Exception {
+    // Send a request with a function-call Part carrying httpSigBytes, then mock a response
+    // whose tool_call carries the same base64 signature, and assert the decoded bytes match.
+    LlmRequest llmRequest =
+        LlmRequest.builder()
+            .model("gemini-1.5-pro")
+            .contents(
+                ImmutableList.of(
+                    Content.builder()
+                        .role("model")
+                        .parts(
+                            ImmutableList.of(
+                                Part.builder()
+                                    .functionCall(
+                                        FunctionCall.builder().id("call_rt").name("ping").build())
+                                    .thoughtSignature(httpSigBytes)
+                                    .build()))
+                        .build()))
+            .build();
+
+    String responseBody =
+        String.format(
+            """
+            {
+              "choices": [{
+                "message": {
+                  "role": "assistant",
+                  "tool_calls": [{
+                    "id": "call_rt",
+                    "type": "function",
+                    "function": { "name": "ping", "arguments": "{}" },
+                    "extra_content": {
+                      "google": { "thought_signature": "%s" }
+                    }
+                  }]
+                },
+                "finish_reason": "tool_calls"
+              }]
+            }
+            """,
+            HTTP_SIG_B64);
+    Response mockResponse = createMockResponse(responseBody, JSON);
+
+    ArgumentCaptor<Callback> callbackCaptor = ArgumentCaptor.forClass(Callback.class);
+    doNothing().when(mockCall).enqueue(callbackCaptor.capture());
+
+    TestSubscriber<LlmResponse> testSubscriber = client.complete(llmRequest, false).test();
+    callbackCaptor.getValue().onResponse(mockCall, mockResponse);
+    testSubscriber.await(AWAIT_TIMEOUT.toMillis(), MILLISECONDS);
+
+    testSubscriber.assertNoErrors();
+    LlmResponse response = testSubscriber.values().get(0);
+    Part decodedToolPart = response.content().get().parts().get().get(0);
+    assertThat(decodedToolPart.functionCall().get().id()).hasValue("call_rt");
+    assertThat(decodedToolPart.thoughtSignature().get()).isEqualTo(httpSigBytes);
   }
 }

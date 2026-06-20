@@ -13,6 +13,8 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
+import com.google.genai.types.MediaModality;
+import com.google.genai.types.ModalityTokenCount;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
@@ -183,6 +185,8 @@ public class SarvamBaseLM extends BaseLlm {
     final AtomicBoolean streamCompleted = new AtomicBoolean(false);
     final AtomicInteger inputTokens = new AtomicInteger(0);
     final AtomicInteger outputTokens = new AtomicInteger(0);
+    final AtomicInteger promptAudioTokens = new AtomicInteger(0);
+    final AtomicInteger completionAudioTokens = new AtomicInteger(0);
 
     return Flowable.generate(
         () ->
@@ -208,7 +212,9 @@ public class SarvamBaseLM extends BaseLlm {
                   functionCallName,
                   functionCallArgs,
                   inputTokens.get(),
-                  outputTokens.get());
+                  outputTokens.get(),
+                  promptAudioTokens.get(),
+                  completionAudioTokens.get());
               emitter.onComplete();
               return;
             }
@@ -226,7 +232,9 @@ public class SarvamBaseLM extends BaseLlm {
                   functionCallName,
                   functionCallArgs,
                   inputTokens.get(),
-                  outputTokens.get());
+                  outputTokens.get(),
+                  promptAudioTokens.get(),
+                  completionAudioTokens.get());
               emitter.onComplete();
               return;
             }
@@ -248,6 +256,18 @@ public class SarvamBaseLM extends BaseLlm {
               JSONObject usage = chunk.getJSONObject("usage");
               inputTokens.set(usage.optInt("prompt_tokens", 0));
               outputTokens.set(usage.optInt("completion_tokens", 0));
+              if (usage.has("prompt_tokens_details")) {
+                JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
+                if (pDetails != null && pDetails.has("audio_tokens")) {
+                  promptAudioTokens.set(pDetails.getInt("audio_tokens"));
+                }
+              }
+              if (usage.has("completion_tokens_details")) {
+                JSONObject cDetails = usage.optJSONObject("completion_tokens_details");
+                if (cDetails != null && cDetails.has("audio_tokens")) {
+                  completionAudioTokens.set(cDetails.getInt("audio_tokens"));
+                }
+              }
             }
 
             JSONArray choices = chunk.optJSONArray("choices");
@@ -308,10 +328,13 @@ public class SarvamBaseLM extends BaseLlm {
       StringBuilder functionCallName,
       StringBuilder functionCallArgs,
       int promptTokens,
-      int completionTokens) {
+      int completionTokens,
+      int promptAudioTokens,
+      int completionAudioTokens) {
 
     GenerateContentResponseUsageMetadata usageMetadata =
-        buildUsageMetadata(promptTokens, completionTokens);
+        buildUsageMetadata(
+            promptTokens, completionTokens, promptAudioTokens, completionAudioTokens);
 
     if (inFunctionCall.get() && functionCallName.length() > 0) {
       try {
@@ -657,11 +680,35 @@ public class SarvamBaseLM extends BaseLlm {
             promptTokens,
             completionTokens,
             totalTokens);
-        return GenerateContentResponseUsageMetadata.builder()
-            .promptTokenCount(promptTokens)
-            .candidatesTokenCount(completionTokens)
-            .totalTokenCount(totalTokens)
-            .build();
+        GenerateContentResponseUsageMetadata.Builder builder =
+            GenerateContentResponseUsageMetadata.builder()
+                .promptTokenCount(promptTokens)
+                .candidatesTokenCount(completionTokens)
+                .totalTokenCount(totalTokens);
+
+        if (usage.has("prompt_tokens_details")) {
+          JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
+          if (pDetails != null && pDetails.has("audio_tokens")) {
+            builder.promptTokensDetails(
+                ImmutableList.of(
+                    ModalityTokenCount.builder()
+                        .modality(MediaModality.Known.AUDIO)
+                        .tokenCount(pDetails.getInt("audio_tokens"))
+                        .build()));
+          }
+        }
+        if (usage.has("completion_tokens_details")) {
+          JSONObject cDetails = usage.optJSONObject("completion_tokens_details");
+          if (cDetails != null && cDetails.has("audio_tokens")) {
+            builder.candidatesTokensDetails(
+                ImmutableList.of(
+                    ModalityTokenCount.builder()
+                        .modality(MediaModality.Known.AUDIO)
+                        .tokenCount(cDetails.getInt("audio_tokens"))
+                        .build()));
+          }
+        }
+        return builder.build();
       }
     } catch (Exception e) {
       logger.warn("Failed to parse token usage from Sarvam response", e);
@@ -670,14 +717,32 @@ public class SarvamBaseLM extends BaseLlm {
   }
 
   private GenerateContentResponseUsageMetadata buildUsageMetadata(
-      int promptTokens, int completionTokens) {
+      int promptTokens, int completionTokens, int promptAudioTokens, int completionAudioTokens) {
     int totalTokens = promptTokens + completionTokens;
     if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
-      return GenerateContentResponseUsageMetadata.builder()
-          .promptTokenCount(promptTokens)
-          .candidatesTokenCount(completionTokens)
-          .totalTokenCount(totalTokens)
-          .build();
+      GenerateContentResponseUsageMetadata.Builder builder =
+          GenerateContentResponseUsageMetadata.builder()
+              .promptTokenCount(promptTokens)
+              .candidatesTokenCount(completionTokens)
+              .totalTokenCount(totalTokens);
+
+      if (promptAudioTokens > 0) {
+        builder.promptTokensDetails(
+            ImmutableList.of(
+                ModalityTokenCount.builder()
+                    .modality(MediaModality.Known.AUDIO)
+                    .tokenCount(promptAudioTokens)
+                    .build()));
+      }
+      if (completionAudioTokens > 0) {
+        builder.candidatesTokensDetails(
+            ImmutableList.of(
+                ModalityTokenCount.builder()
+                    .modality(MediaModality.Known.AUDIO)
+                    .tokenCount(completionAudioTokens)
+                    .build()));
+      }
+      return builder.build();
     }
     return null;
   }

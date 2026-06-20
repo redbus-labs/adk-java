@@ -19,6 +19,8 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
+import com.google.genai.types.MediaModality;
+import com.google.genai.types.ModalityTokenCount;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
@@ -626,6 +628,8 @@ public class BedrockBaseLM extends BaseLlm {
     final AtomicInteger inputTokens = new AtomicInteger(0);
     final AtomicInteger outputTokens = new AtomicInteger(0);
     final AtomicInteger totalTokens = new AtomicInteger(0);
+    final AtomicInteger promptAudioTokens = new AtomicInteger(0);
+    final AtomicInteger completionAudioTokens = new AtomicInteger(0);
 
     return Flowable.generate(
         () -> callLLMChatStream(modelId, messages, functions),
@@ -642,7 +646,12 @@ public class BedrockBaseLM extends BaseLlm {
               if (accumulatedText.length() > 0) {
                 // Create usage metadata from accumulated token counts
                 GenerateContentResponseUsageMetadata usageMetadata =
-                    getUsageMetadata(inputTokens.get(), outputTokens.get(), totalTokens.get());
+                    getUsageMetadata(
+                        inputTokens.get(),
+                        outputTokens.get(),
+                        totalTokens.get(),
+                        promptAudioTokens.get(),
+                        completionAudioTokens.get());
 
                 LlmResponse.Builder finalResponseBuilder =
                     LlmResponse.builder()
@@ -692,6 +701,18 @@ public class BedrockBaseLM extends BaseLlm {
               if (usage.has("totalTokens")) {
                 int total = usage.getInt("totalTokens");
                 totalTokens.set(total);
+              }
+              if (usage.has("prompt_tokens_details")) {
+                JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
+                if (pDetails != null && pDetails.has("audio_tokens")) {
+                  promptAudioTokens.set(pDetails.getInt("audio_tokens"));
+                }
+              }
+              if (usage.has("completion_tokens_details")) {
+                JSONObject cDetails = usage.optJSONObject("completion_tokens_details");
+                if (cDetails != null && cDetails.has("audio_tokens")) {
+                  completionAudioTokens.set(cDetails.getInt("audio_tokens"));
+                }
               }
             }
 
@@ -792,7 +813,12 @@ public class BedrockBaseLM extends BaseLlm {
 
               // Create usage metadata from accumulated token counts
               GenerateContentResponseUsageMetadata usageMetadata =
-                  getUsageMetadata(inputTokens.get(), outputTokens.get(), totalTokens.get());
+                  getUsageMetadata(
+                      inputTokens.get(),
+                      outputTokens.get(),
+                      totalTokens.get(),
+                      promptAudioTokens.get(),
+                      completionAudioTokens.get());
 
               // Handle function call completion
               if (inFunctionCall.get() && functionCallName.length() > 0) {
@@ -1284,18 +1310,41 @@ public class BedrockBaseLM extends BaseLlm {
 
   // Add overloaded method for streaming token usage
   private GenerateContentResponseUsageMetadata getUsageMetadata(
-      int promptTokens, int completionTokens, int totalTokens) {
+      int promptTokens,
+      int completionTokens,
+      int totalTokens,
+      int promptAudioTokens,
+      int completionAudioTokens) {
     if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
       logger.info(
           "Streaming token counts: prompt={}, completion={}, total={}",
           promptTokens,
           completionTokens,
           totalTokens);
-      return GenerateContentResponseUsageMetadata.builder()
-          .promptTokenCount(promptTokens)
-          .candidatesTokenCount(completionTokens)
-          .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens)
-          .build();
+      GenerateContentResponseUsageMetadata.Builder builder =
+          GenerateContentResponseUsageMetadata.builder()
+              .promptTokenCount(promptTokens)
+              .candidatesTokenCount(completionTokens)
+              .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens);
+
+      if (promptAudioTokens > 0) {
+        builder.promptTokensDetails(
+            ImmutableList.of(
+                ModalityTokenCount.builder()
+                    .modality(MediaModality.Known.AUDIO)
+                    .tokenCount(promptAudioTokens)
+                    .build()));
+      }
+      if (completionAudioTokens > 0) {
+        builder.candidatesTokensDetails(
+            ImmutableList.of(
+                ModalityTokenCount.builder()
+                    .modality(MediaModality.Known.AUDIO)
+                    .tokenCount(completionAudioTokens)
+                    .build()));
+      }
+
+      return builder.build();
     }
     return null;
   }
@@ -1322,12 +1371,36 @@ public class BedrockBaseLM extends BaseLlm {
                         promptTokens,
                         completionTokens,
                         totalTokens);
-                    return Optional.of(
+                    GenerateContentResponseUsageMetadata.Builder builder =
                         GenerateContentResponseUsageMetadata.builder()
                             .promptTokenCount(promptTokens)
                             .candidatesTokenCount(completionTokens)
-                            .totalTokenCount(totalTokens)
-                            .build());
+                            .totalTokenCount(totalTokens);
+
+                    if (usage.has("prompt_tokens_details")) {
+                      JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
+                      if (pDetails != null && pDetails.has("audio_tokens")) {
+                        builder.promptTokensDetails(
+                            ImmutableList.of(
+                                ModalityTokenCount.builder()
+                                    .modality(MediaModality.Known.AUDIO)
+                                    .tokenCount(pDetails.getInt("audio_tokens"))
+                                    .build()));
+                      }
+                    }
+                    if (usage.has("completion_tokens_details")) {
+                      JSONObject cDetails = usage.optJSONObject("completion_tokens_details");
+                      if (cDetails != null && cDetails.has("audio_tokens")) {
+                        builder.candidatesTokensDetails(
+                            ImmutableList.of(
+                                ModalityTokenCount.builder()
+                                    .modality(MediaModality.Known.AUDIO)
+                                    .tokenCount(cDetails.getInt("audio_tokens"))
+                                    .build()));
+                      }
+                    }
+
+                    return Optional.of(builder.build());
                   }
                 }
               }
