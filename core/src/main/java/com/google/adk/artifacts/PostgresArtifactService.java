@@ -80,6 +80,8 @@ public final class PostgresArtifactService implements BaseArtifactService {
   private final boolean kafkaEnabled;
   private final @Nullable String kafkaTopic;
 
+  private final @Nullable String s3BasePath;
+
   /**
    * Creates a new PostgresArtifactService using environment variables for database connection. Uses
    * the default "artifacts" table. Per JVM, only one table is used for all artifact operations,
@@ -96,6 +98,7 @@ public final class PostgresArtifactService implements BaseArtifactService {
   public PostgresArtifactService() {
     this.dbHelper = PostgresArtifactStore.getInstance(DEFAULT_TABLE_NAME);
     this.s3Bucket = getenvOrNull("S3_BUCKET");
+    this.s3BasePath = getenvOrNull("S3_BASE_PATH");
     this.s3Client = s3Bucket != null ? buildS3Client() : null;
     this.kafkaEnabled = Boolean.parseBoolean(PropertiesHelper.getInstance().getValue("use_kafka"));
     this.kafkaTopic = PropertiesHelper.getInstance().getValue("kafka_topic");
@@ -115,6 +118,7 @@ public final class PostgresArtifactService implements BaseArtifactService {
     this.dbHelper =
         PostgresArtifactStore.createInstance(dbUrl, dbUser, dbPassword, DEFAULT_TABLE_NAME);
     this.s3Bucket = getenvOrNull("S3_BUCKET");
+    this.s3BasePath = getenvOrNull("S3_BASE_PATH");
     this.s3Client = s3Bucket != null ? buildS3Client() : null;
     this.kafkaEnabled = Boolean.parseBoolean(PropertiesHelper.getInstance().getValue("use_kafka"));
     this.kafkaTopic = PropertiesHelper.getInstance().getValue("kafka_topic");
@@ -303,7 +307,17 @@ public final class PostgresArtifactService implements BaseArtifactService {
       return;
     }
     String key = buildObjectKey(appName, userId, sessionId, filename, version);
-    String fileUri = "s3://" + s3Bucket + "/" + key;
+    
+    // Construct an HTTPS URL instead of an s3:// path
+    String region = getenvOrNull("S3_REGION");
+    String fileUri;
+    if (region != null && !region.isBlank()) {
+      fileUri = String.format("https://%s.s3.%s.amazonaws.com/%s", s3Bucket, region, key);
+    } else {
+      // Fallback to global endpoint if region is not set
+      fileUri = String.format("https://%s.s3.amazonaws.com/%s", s3Bucket, key);
+    }
+
     try {
       PutObjectRequest.Builder requestBuilder =
           PutObjectRequest.builder().bucket(s3Bucket).key(key).contentType(mimeType);
@@ -353,10 +367,20 @@ public final class PostgresArtifactService implements BaseArtifactService {
 
   private String buildObjectKey(
       String appName, String userId, String sessionId, String filename, int version) {
+    String key;
     if (filename != null && filename.startsWith("user:")) {
-      return String.format("%s/%s/user/%s/%d", appName, userId, filename, version);
+      key = String.format("%s/%s/user/%s/%d", appName, userId, filename, version);
+    } else {
+      key = String.format("%s/%s/%s/%s/%d", appName, userId, sessionId, filename, version);
     }
-    return String.format("%s/%s/%s/%s/%d", appName, userId, sessionId, filename, version);
+
+    if (s3BasePath != null && !s3BasePath.isBlank()) {
+      // Ensure the base path doesn't end with a slash to avoid double slashes
+      String cleanBasePath =
+          s3BasePath.endsWith("/") ? s3BasePath.substring(0, s3BasePath.length() - 1) : s3BasePath;
+      return cleanBasePath + "/" + key;
+    }
+    return key;
   }
 
   private static @Nullable String getenvOrNull(String key) {
