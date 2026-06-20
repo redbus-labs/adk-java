@@ -32,9 +32,9 @@ import org.slf4j.LoggerFactory;
  * such as Gemini Live audio.
  *
  * <p>Token usage for a live session arrives on dedicated {@code usageMetadata} events (separate
- * from the audio/content events) via {@link #onEventCallback}. Gemini Live reports these counts as
- * running totals for the session rather than per-event deltas, so this plugin keeps the latest
- * value seen for each field rather than summing across events. When the run completes, {@link
+ * from the audio/content events) via {@link #onEventCallback}. Gemini Live emits one such event per
+ * turn, each reporting that turn's own usage rather than a session-cumulative running total, so
+ * this plugin sums the per-turn values to obtain session totals. When the run completes, {@link
  * #afterRunCallback} logs the final totals and releases the per-invocation state.
  *
  * <p>Register it on the runner like any other plugin to get per-session token accounting for both
@@ -80,16 +80,19 @@ public final class LiveTokenTrackingPlugin extends BasePlugin {
   }
 
   /**
-   * Returns the latest token usage observed for the given invocation, or {@code null} if none has
-   * been recorded. Intended for tests and programmatic inspection before the run completes.
+   * Returns the accumulated token usage for the given invocation, or {@code null} if none has been
+   * recorded. Intended for tests and programmatic inspection before the run completes (after which
+   * {@link #afterRunCallback} releases the state).
    */
   public Usage usageFor(String invocationId) {
     return usageByInvocation.get(invocationId);
   }
 
   /**
-   * Mutable accumulator holding the latest token counts seen for a single invocation. Live sessions
-   * report cumulative totals, so each field keeps the most recent non-empty value.
+   * Mutable accumulator that sums token counts across all usageMetadata events seen for a single
+   * invocation. Gemini Live emits one usageMetadata event per turn, each reporting that turn's own
+   * usage (not a session-cumulative running total), so per-turn values are summed to obtain the
+   * session totals.
    */
   public static final class Usage {
     private Integer promptTokenCount;
@@ -101,26 +104,40 @@ public final class LiveTokenTrackingPlugin extends BasePlugin {
     private final Map<String, Integer> candidatesTokensByModality = new LinkedHashMap<>();
 
     synchronized void update(GenerateContentResponseUsageMetadata usageMetadata) {
-      usageMetadata.promptTokenCount().ifPresent(value -> promptTokenCount = value);
-      usageMetadata.candidatesTokenCount().ifPresent(value -> candidatesTokenCount = value);
-      usageMetadata.totalTokenCount().ifPresent(value -> totalTokenCount = value);
-      usageMetadata.thoughtsTokenCount().ifPresent(value -> thoughtsTokenCount = value);
-      usageMetadata.cachedContentTokenCount().ifPresent(value -> cachedContentTokenCount = value);
+      usageMetadata
+          .promptTokenCount()
+          .ifPresent(value -> promptTokenCount = sum(promptTokenCount, value));
+      usageMetadata
+          .candidatesTokenCount()
+          .ifPresent(value -> candidatesTokenCount = sum(candidatesTokenCount, value));
+      usageMetadata
+          .totalTokenCount()
+          .ifPresent(value -> totalTokenCount = sum(totalTokenCount, value));
+      usageMetadata
+          .thoughtsTokenCount()
+          .ifPresent(value -> thoughtsTokenCount = sum(thoughtsTokenCount, value));
+      usageMetadata
+          .cachedContentTokenCount()
+          .ifPresent(value -> cachedContentTokenCount = sum(cachedContentTokenCount, value));
       usageMetadata
           .promptTokensDetails()
-          .ifPresent(details -> mergeModalityTokens(promptTokensByModality, details));
+          .ifPresent(details -> addModalityTokens(promptTokensByModality, details));
       usageMetadata
           .candidatesTokensDetails()
-          .ifPresent(details -> mergeModalityTokens(candidatesTokensByModality, details));
+          .ifPresent(details -> addModalityTokens(candidatesTokensByModality, details));
     }
 
-    private static void mergeModalityTokens(
+    private static Integer sum(Integer existing, int addend) {
+      return existing == null ? addend : existing + addend;
+    }
+
+    private static void addModalityTokens(
         Map<String, Integer> target, Iterable<ModalityTokenCount> details) {
       for (ModalityTokenCount detail : details) {
         if (detail.modality().isEmpty() || detail.tokenCount().isEmpty()) {
           continue;
         }
-        target.put(detail.modality().get().toString(), detail.tokenCount().get());
+        target.merge(detail.modality().get().toString(), detail.tokenCount().get(), Integer::sum);
       }
     }
 

@@ -58,15 +58,17 @@ public class LiveTokenTrackingPluginTest {
   }
 
   @Test
-  public void onEventCallback_keepsLatestCumulativeTotals() {
+  public void onEventCallback_sumsPerTurnTotalsAcrossEvents() {
+    // Mirrors observed Gemini Live behavior: one usageMetadata event per turn, each reporting that
+    // turn's own usage. Session totals are the sum of the per-turn values.
     plugin
         .onEventCallback(
             mockInvocationContext,
             eventWithUsage(
                 GenerateContentResponseUsageMetadata.builder()
-                    .promptTokenCount(10)
-                    .candidatesTokenCount(5)
-                    .totalTokenCount(15)
+                    .promptTokenCount(185)
+                    .candidatesTokenCount(653)
+                    .totalTokenCount(838)
                     .build()))
         .blockingGet();
     plugin
@@ -74,39 +76,51 @@ public class LiveTokenTrackingPluginTest {
             mockInvocationContext,
             eventWithUsage(
                 GenerateContentResponseUsageMetadata.builder()
-                    .promptTokenCount(10)
-                    .candidatesTokenCount(20)
-                    .totalTokenCount(30)
+                    .promptTokenCount(942)
+                    .candidatesTokenCount(241)
+                    .totalTokenCount(1183)
                     .build()))
         .blockingGet();
 
     LiveTokenTrackingPlugin.Usage usage = plugin.usageFor(INVOCATION_ID);
     assertThat(usage).isNotNull();
-    // Live reports running totals, so the latest values win rather than summing.
-    assertThat(usage.promptTokenCount()).isEqualTo(10);
-    assertThat(usage.candidatesTokenCount()).isEqualTo(20);
-    assertThat(usage.totalTokenCount()).isEqualTo(30);
+    assertThat(usage.promptTokenCount()).isEqualTo(185 + 942);
+    assertThat(usage.candidatesTokenCount()).isEqualTo(653 + 241);
+    assertThat(usage.totalTokenCount()).isEqualTo(838 + 1183);
   }
 
   @Test
-  public void onEventCallback_capturesAudioModalityBreakdown() {
+  public void onEventCallback_sumsAudioModalityBreakdownAcrossEvents() {
     plugin
         .onEventCallback(
             mockInvocationContext,
             eventWithUsage(
                 GenerateContentResponseUsageMetadata.builder()
-                    .promptTokensDetails(
+                    .candidatesTokensDetails(
                         ImmutableList.of(
                             ModalityTokenCount.builder()
                                 .modality(new MediaModality(MediaModality.Known.AUDIO))
-                                .tokenCount(42)
+                                .tokenCount(653)
+                                .build()))
+                    .build()))
+        .blockingGet();
+    plugin
+        .onEventCallback(
+            mockInvocationContext,
+            eventWithUsage(
+                GenerateContentResponseUsageMetadata.builder()
+                    .candidatesTokensDetails(
+                        ImmutableList.of(
+                            ModalityTokenCount.builder()
+                                .modality(new MediaModality(MediaModality.Known.AUDIO))
+                                .tokenCount(241)
                                 .build()))
                     .build()))
         .blockingGet();
 
     LiveTokenTrackingPlugin.Usage usage = plugin.usageFor(INVOCATION_ID);
     assertThat(usage).isNotNull();
-    assertThat(usage.promptTokensByModality()).containsEntry("AUDIO", 42);
+    assertThat(usage.candidatesTokensByModality()).containsEntry("AUDIO", 653 + 241);
   }
 
   @Test
