@@ -74,31 +74,57 @@ public class LiveTokenPluginHarness {
             .responseModalities(ImmutableList.of(new Modality(Modality.Known.AUDIO)))
             .build();
 
+    String prompt =
+        System.getProperty(
+            "prompt", "Count slowly from one to twenty out loud, saying each number on its own.");
     Content userMessage =
-        Content.builder()
-            .role("user")
-            .parts(ImmutableList.of(Part.fromText("Please introduce yourself in one sentence.")))
-            .build();
+        Content.builder().role("user").parts(ImmutableList.of(Part.fromText(prompt))).build();
 
     LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
     liveRequestQueue.content(userMessage);
 
     System.out.println("Model: " + model);
-    System.out.println("Starting live BIDI session...");
+    System.out.println("Prompt (turn 1): " + prompt);
+    System.out.println("Starting live BIDI session (2 turns)...");
 
+    java.util.concurrent.atomic.AtomicInteger usageSeq =
+        new java.util.concurrent.atomic.AtomicInteger();
+    java.util.concurrent.atomic.AtomicInteger turn =
+        new java.util.concurrent.atomic.AtomicInteger(1);
     runner
         .runLive("user1", "session1", liveRequestQueue, runConfig)
         .doOnNext(
             event -> {
-              if (event.usageMetadata().isPresent()) {
-                System.out.println("Event carried usageMetadata: " + event.usageMetadata().get());
-              }
+              event
+                  .usageMetadata()
+                  .ifPresent(
+                      u ->
+                          System.out.printf(
+                              "usageMetadata #%d (turn %d)  total=%s  prompt=%s  candidates=%s%n",
+                              usageSeq.incrementAndGet(),
+                              turn.get(),
+                              u.totalTokenCount().orElse(null),
+                              u.promptTokenCount().orElse(null),
+                              u.candidatesTokenCount().orElse(null)));
               if ("audio_agent".equals(event.author()) && event.turnComplete().orElse(false)) {
-                liveRequestQueue.close();
+                if (turn.get() == 1) {
+                  turn.set(2);
+                  String prompt2 = "Now say the days of the week out loud, one by one.";
+                  System.out.println("Prompt (turn 2): " + prompt2);
+                  liveRequestQueue.content(
+                      Content.builder()
+                          .role("user")
+                          .parts(ImmutableList.of(Part.fromText(prompt2)))
+                          .build());
+                } else {
+                  liveRequestQueue.close();
+                }
               }
             })
         .doOnError(Throwable::printStackTrace)
         .blockingSubscribe();
+
+    System.out.println("Total usageMetadata events seen: " + usageSeq.get());
 
     System.out.println("\n=== Plugin-captured usage (invocation lookups) ===");
     System.out.println(
