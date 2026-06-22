@@ -20,6 +20,7 @@
     <module>a2a_server</module>
     <module>configagent</module>
     <module>github/adkreleasedocs</module>
+    <module>github/adktriaging</module>
     <module>helloworld</module>
     <module>mcpfilesystem</module>
   </modules>
