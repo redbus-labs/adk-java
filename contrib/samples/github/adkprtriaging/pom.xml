@@ -25,12 +25,13 @@
     </parent>
 
     <groupId>com.google.adk.samples</groupId>
-    <artifactId>google-adk-sample-adk-triaging-agent</artifactId>
-    <name>Google ADK - Sample - ADK Issue Triaging Agent</name>
+    <artifactId>google-adk-sample-adk-pr-triaging-agent</artifactId>
+    <name>Google ADK - Sample - ADK PR Triaging Agent</name>
     <description>
-        AI-powered GitHub issue triaging agent for the adk-java repository, implemented with the
-        Google ADK for Java. Runs in both interactive mode (local CLI / adk web) and unattended
-        GitHub Actions workflow mode. Runnable via com.example.adktriaging.AdkTriagingAgentRun.
+        AI-powered GitHub pull request triaging agent for the adk-java repository, implemented with
+        the Google ADK for Java. Labels pull requests and checks them against the contribution
+        guidelines. Runs in both interactive mode (local CLI / adk web) and unattended GitHub
+        Actions workflow mode. Runnable via com.example.adkprtriaging.AdkPrTriagingAgentRun.
     </description>
     <packaging>jar</packaging>
 
@@ -38,7 +39,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>17</java.version>
         <!-- Main class for exec-maven-plugin -->
-        <exec.mainClass>com.example.adktriaging.AdkTriagingAgentRun</exec.mainClass>
+        <exec.mainClass>com.example.adkprtriaging.AdkPrTriagingAgentRun</exec.mainClass>
         <google-adk.version>${project.version}</google-adk.version>
     </properties>
 
@@ -114,7 +115,7 @@
                         <configuration>
                             <includes>
                                 <include>GitHubTools.java</include>
-                                <include>adktriaging/*.java</include>
+                                <include>adkprtriaging/*.java</include>
                             </includes>
                         </configuration>
                     </execution>
@@ -150,7 +151,7 @@
                     <excludes>
                         <exclude>**/*.jar</exclude>
                         <exclude>**/*.yml</exclude>
-                        <exclude>adkprtriaging/**</exclude>
+                        <exclude>adktriaging/**</exclude>
                         <exclude>adkreleasedocs/**</exclude>
                         <exclude>**/src/test/**</exclude>
                         <exclude>target/**</exclude>
@@ -166,7 +167,7 @@
                          on the Javadoc classpath, so the -Prelease attach-javadocs goal would
                          otherwise fail. -->
                     <sourceFileExcludes>
-                        <sourceFileExclude>adkprtriaging/**</sourceFileExclude>
+                        <sourceFileExclude>adktriaging/**</sourceFileExclude>
                         <sourceFileExclude>adkreleasedocs/**</sourceFileExclude>
                         <sourceFileExclude>**/src/test/**</sourceFileExclude>
                     </sourceFileExcludes>

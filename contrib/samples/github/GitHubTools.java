@@ -20,16 +20,21 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.kohsuke.github.GHCheckRun;
 import org.kohsuke.github.GHCommit;
+import org.kohsuke.github.GHCommitStatus;
 import org.kohsuke.github.GHCompare;
 import org.kohsuke.github.GHContent;
 import org.kohsuke.github.GHContentBuilder;
 import org.kohsuke.github.GHException;
 import org.kohsuke.github.GHFileNotFoundException;
 import org.kohsuke.github.GHIssue;
+import org.kohsuke.github.GHIssueComment;
 import org.kohsuke.github.GHIssueState;
 import org.kohsuke.github.GHLabel;
 import org.kohsuke.github.GHPullRequest;
+import org.kohsuke.github.GHPullRequestCommitDetail;
+import org.kohsuke.github.GHPullRequestFileDetail;
 import org.kohsuke.github.GHRelease;
 import org.kohsuke.github.GHRepository;
 import org.kohsuke.github.GHUser;
@@ -43,17 +48,17 @@ import org.kohsuke.github.GitHubBuilder;
  *
  * <p>The tools cover the operations needed by the ADK GitHub automation samples: reading releases,
  * diffs and file contents; searching code; listing and reading issues; creating issues and pull
- * requests; and labelling/assigning issues.
+ * requests; labelling/assigning issues; and reading, labelling and commenting on pull requests.
  *
  * <p>Defense in depth against prompt injection: the agents read untrusted GitHub content (diffs,
  * file contents, issue/PR titles) and could be steered into harmful writes. Independently of the
  * prompt, the write tools (a) only target {@link #writeRepoOwner}/{@link #writeRepoName} when set,
  * (b) restrict pull requests to Markdown files under {@code docs/}, and (c) cap how many issues and
- * pull requests a single run may <em>create</em>. The labelling/assignment tools are not separately
- * capped: unlike issue/PR creation they do not create new objects (so they carry no unbounded-spam
- * risk) and only mutate pre-existing issues in the pinned target repository from (a); the consuming
- * triaging agent additionally binds them to a fixed label allowlist and the specific issue numbers
- * the workflow authorized.
+ * pull requests a single run may <em>create</em>. The labelling/assignment/commenting tools are not
+ * separately capped: unlike issue/PR creation they do not create new objects (so they carry no
+ * unbounded-spam risk) and only mutate pre-existing issues or pull requests in the pinned target
+ * repository from (a); the consuming triaging agents additionally bind them to a fixed label
+ * allowlist and the specific issue/PR numbers the workflow authorized.
  */
 public final class GitHubTools {
 
@@ -91,6 +96,20 @@ public final class GitHubTools {
   private static final int MAX_PULL_REQUESTS_PER_RUN = 20;
   private static int issuesCreated = 0;
   private static int pullRequestsCreated = 0;
+
+  /**
+   * Caps for the {@code get_pull_request} payload. Pull requests can be large; we keep only the
+   * first N files/commits/comments and truncate the unified diff so the model context stays small
+   * (mirrors the {@code last: 50} / 10k-char limits in the Python PR triaging agent).
+   */
+  private static final int MAX_PR_DIFF_CHARS = 10_000;
+
+  private static final int MAX_PR_FILES = 50;
+  private static final int MAX_PR_COMMITS = 50;
+  private static final int MAX_PR_COMMENTS = 50;
+
+  /** Auto-generated merge commits filtered out of the PR commit list (matches the Python agent). */
+  private static final String MERGE_COMMIT_PREFIX = "Merge branch 'main' into";
 
   private GitHubTools() {}
 
@@ -614,6 +633,222 @@ public final class GitHubTools {
     } catch (IOException | GHException e) {
       return error("Failed to assign issue #" + issueNumber + ": " + e.getMessage());
     }
+  }
+
+  @Schema(
+      name = "get_pull_request",
+      description =
+          "Fetches a single pull request by number. Returns its number, title, body, state,"
+              + " author, labels, changed files, commits (merge commits filtered out), recent"
+              + " comments, status checks and a truncated unified diff.")
+  public static Map<String, Object> getPullRequest(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "pr_number", description = "The pull request number to fetch.") int prNumber) {
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      GHPullRequest pullRequest = repo.getPullRequest(prNumber);
+      return success("pull_request", formatPullRequest(repo, pullRequest));
+    } catch (GHFileNotFoundException e) {
+      return error("Pull request #" + prNumber + " was not found.");
+    } catch (IOException | GHException e) {
+      return error("Failed to get pull request #" + prNumber + ": " + e.getMessage());
+    }
+  }
+
+  @Schema(
+      name = "add_label_to_pull_request",
+      description =
+          "Adds a single label to a pull request, preserving any labels already present. (A pull"
+              + " request is a special kind of issue, so this uses the issue labels endpoint.)")
+  public static Map<String, Object> addLabelToPullRequest(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "pr_number", description = "The pull request number to label.") int prNumber,
+      @Schema(name = "label", description = "The label to add.") String label) {
+    String targetError = writeTargetError(repoOwner, repoName);
+    if (targetError != null) {
+      return error(targetError);
+    }
+    if (dryRun) {
+      return dryRunPreview(
+          "DRY RUN: no label was added. Set DRY_RUN=0 to label pull requests for real.",
+          "pr_number",
+          prNumber,
+          "label",
+          label);
+    }
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      repo.getPullRequest(prNumber).addLabels(label);
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("pr_number", prNumber);
+      result.put("added_label", label);
+      return success(result);
+    } catch (IOException | GHException e) {
+      return error(
+          "Failed to add label '"
+              + label
+              + "' to pull request #"
+              + prNumber
+              + ": "
+              + e.getMessage());
+    }
+  }
+
+  @Schema(name = "add_comment_to_pull_request", description = "Posts a comment on a pull request.")
+  public static Map<String, Object> addCommentToPullRequest(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "pr_number", description = "The pull request number to comment on.")
+          int prNumber,
+      @Schema(name = "comment", description = "The comment body (Markdown).") String comment) {
+    String targetError = writeTargetError(repoOwner, repoName);
+    if (targetError != null) {
+      return error(targetError);
+    }
+    if (dryRun) {
+      return dryRunPreview(
+          "DRY RUN: no comment was posted. Set DRY_RUN=0 to comment for real.",
+          "pr_number",
+          prNumber,
+          "comment",
+          comment);
+    }
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      repo.getPullRequest(prNumber).comment(comment);
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("pr_number", prNumber);
+      result.put("added_comment", comment);
+      return success(result);
+    } catch (IOException | GHException e) {
+      return error("Failed to comment on pull request #" + prNumber + ": " + e.getMessage());
+    }
+  }
+
+  /**
+   * Formats a pull request into the compact map consumed by the PR triaging agent. Capped per the
+   * {@code MAX_PR_*} constants so the model context stays small.
+   */
+  private static Map<String, Object> formatPullRequest(GHRepository repo, GHPullRequest pullRequest)
+      throws IOException {
+    Map<String, Object> info = new LinkedHashMap<>();
+    info.put("number", pullRequest.getNumber());
+    info.put("title", pullRequest.getTitle() == null ? "" : pullRequest.getTitle());
+    info.put("body", pullRequest.getBody() == null ? "" : pullRequest.getBody());
+    info.put("state", String.valueOf(pullRequest.getState()));
+    info.put(
+        "html_url", pullRequest.getHtmlUrl() == null ? "" : pullRequest.getHtmlUrl().toString());
+    GHUser author = pullRequest.getUser();
+    info.put("author", author == null ? "" : author.getLogin());
+
+    List<String> labels = new ArrayList<>();
+    for (GHLabel label : pullRequest.getLabels()) {
+      labels.add(label.getName());
+    }
+    info.put("labels", labels);
+
+    // Changed files + a truncated unified diff built from each file's patch.
+    List<String> changedFiles = new ArrayList<>();
+    StringBuilder diff = new StringBuilder();
+    int fileCount = 0;
+    for (GHPullRequestFileDetail file : pullRequest.listFiles()) {
+      if (fileCount++ >= MAX_PR_FILES) {
+        break;
+      }
+      changedFiles.add(file.getFilename());
+      if (diff.length() < MAX_PR_DIFF_CHARS) {
+        diff.append("diff --git a/")
+            .append(file.getFilename())
+            .append(" b/")
+            .append(file.getFilename())
+            .append("\n");
+        if (file.getPatch() != null) {
+          diff.append(file.getPatch()).append("\n");
+        }
+      }
+    }
+    info.put("changed_files", changedFiles);
+    String diffString = diff.toString();
+    if (diffString.length() > MAX_PR_DIFF_CHARS) {
+      diffString = diffString.substring(0, MAX_PR_DIFF_CHARS);
+    }
+    info.put("diff", diffString);
+
+    // Commits, with auto-generated merge commits filtered out (matches the Python agent).
+    List<String> commits = new ArrayList<>();
+    int commitCount = 0;
+    for (GHPullRequestCommitDetail commit : pullRequest.listCommits()) {
+      if (commitCount++ >= MAX_PR_COMMITS) {
+        break;
+      }
+      String message =
+          (commit.getCommit() == null || commit.getCommit().getMessage() == null)
+              ? ""
+              : commit.getCommit().getMessage();
+      if (message.startsWith(MERGE_COMMIT_PREFIX)) {
+        continue;
+      }
+      commits.add(message);
+    }
+    info.put("commits", commits);
+    info.put("commit_count", commits.size());
+
+    // Recent comments (author + body), so the agent can avoid posting duplicate comments.
+    List<Map<String, Object>> comments = new ArrayList<>();
+    int commentCount = 0;
+    for (GHIssueComment comment : pullRequest.getComments()) {
+      if (commentCount++ >= MAX_PR_COMMENTS) {
+        break;
+      }
+      Map<String, Object> formatted = new LinkedHashMap<>();
+      formatted.put("author", comment.getUserName() == null ? "" : comment.getUserName());
+      formatted.put("body", comment.getBody() == null ? "" : comment.getBody());
+      comments.add(formatted);
+    }
+    info.put("comments", comments);
+
+    info.put("status_checks", collectStatusChecks(repo, pullRequest));
+    return info;
+  }
+
+  /**
+   * Collects the PR head commit's check runs and commit statuses (best-effort). Helps the agent
+   * verify contribution-guideline checks such as CLA compliance. Any failure to read checks yields
+   * an empty list rather than failing the whole {@code get_pull_request} call.
+   */
+  private static List<Map<String, Object>> collectStatusChecks(
+      GHRepository repo, GHPullRequest pullRequest) {
+    List<Map<String, Object>> checks = new ArrayList<>();
+    String headSha = pullRequest.getHead() == null ? null : pullRequest.getHead().getSha();
+    if (headSha == null) {
+      return checks;
+    }
+    try {
+      for (GHCheckRun run : repo.getCheckRuns(headSha)) {
+        Map<String, Object> check = new LinkedHashMap<>();
+        check.put("name", run.getName() == null ? "" : run.getName());
+        check.put("status", run.getStatus() == null ? "" : String.valueOf(run.getStatus()));
+        check.put(
+            "conclusion", run.getConclusion() == null ? "" : String.valueOf(run.getConclusion()));
+        checks.add(check);
+      }
+    } catch (IOException | GHException e) {
+      // Best effort: leave check runs out if they cannot be read.
+    }
+    try {
+      for (GHCommitStatus status : repo.listCommitStatuses(headSha)) {
+        Map<String, Object> check = new LinkedHashMap<>();
+        check.put("context", status.getContext() == null ? "" : status.getContext());
+        check.put("state", status.getState() == null ? "" : String.valueOf(status.getState()));
+        check.put("description", status.getDescription() == null ? "" : status.getDescription());
+        checks.add(check);
+      }
+    } catch (IOException | GHException e) {
+      // Best effort: leave commit statuses out if they cannot be read.
+    }
+    return checks;
   }
 
   /** Formats an issue into the compact map (number, title, body, html_url, labels, assignees). */
