@@ -32,18 +32,28 @@ import org.kohsuke.github.GHLabel;
 import org.kohsuke.github.GHPullRequest;
 import org.kohsuke.github.GHRelease;
 import org.kohsuke.github.GHRepository;
+import org.kohsuke.github.GHUser;
 import org.kohsuke.github.GitHub;
 import org.kohsuke.github.GitHubBuilder;
 
 /**
  * Reusable GitHub function tools backed by the {@code org.kohsuke:github-api} client. Each returns
- * a {@code Map} with a {@code "status"} of {@code "success"} or {@code "error"}. Reads {@code
- * GITHUB_TOKEN} from the environment; callers set {@link #dryRun} to gate writes.
+ * a {@code Map} with a {@code "status"} of {@code "success"}, {@code "error"} or {@code "dry_run"}.
+ * Reads {@code GITHUB_TOKEN} from the environment; callers set {@link #dryRun} to gate writes.
  *
- * <p>Defense in depth against prompt injection: the agent reads untrusted GitHub content (diffs,
+ * <p>The tools cover the operations needed by the ADK GitHub automation samples: reading releases,
+ * diffs and file contents; searching code; listing and reading issues; creating issues and pull
+ * requests; and labelling/assigning issues.
+ *
+ * <p>Defense in depth against prompt injection: the agents read untrusted GitHub content (diffs,
  * file contents, issue/PR titles) and could be steered into harmful writes. Independently of the
  * prompt, the write tools (a) only target {@link #writeRepoOwner}/{@link #writeRepoName} when set,
- * (b) only modify Markdown files under {@code docs/}, and (c) are capped per run.
+ * (b) restrict pull requests to Markdown files under {@code docs/}, and (c) cap how many issues and
+ * pull requests a single run may <em>create</em>. The labelling/assignment tools are not separately
+ * capped: unlike issue/PR creation they do not create new objects (so they carry no unbounded-spam
+ * risk) and only mutate pre-existing issues in the pinned target repository from (a); the consuming
+ * triaging agent additionally binds them to a fixed label allowlist and the specific issue numbers
+ * the workflow authorized.
  */
 public final class GitHubTools {
 
@@ -63,6 +73,7 @@ public final class GitHubTools {
   public static String writeRepoName = null;
 
   private static final int MAX_SEARCH_RESULTS = 50;
+  private static final int MAX_ISSUES_LISTED = 100;
   private static final String DOCS_UPDATES_LABEL = "docs updates";
   private static final String STATUS_KEY = "status";
   private static final String STATUS_SUCCESS = "success";
@@ -427,6 +438,204 @@ public final class GitHubTools {
     }
   }
 
+  @Schema(
+      name = "list_open_issues",
+      description =
+          "Lists OPEN issues (excluding pull requests) for a repository. Each entry has the issue's"
+              + " number, title, body, html_url, labels and assignees.")
+  public static Map<String, Object> listOpenIssues(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(
+              name = "max_results",
+              description = "Maximum number of issues to return (capped at 100).",
+              optional = true)
+          Integer maxResults) {
+    int limit =
+        (maxResults == null || maxResults <= 0)
+            ? MAX_ISSUES_LISTED
+            : Math.min(maxResults, MAX_ISSUES_LISTED);
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      List<Map<String, Object>> issues = new ArrayList<>();
+      for (GHIssue issue : repo.getIssues(GHIssueState.OPEN)) {
+        if (issue.isPullRequest()) {
+          continue;
+        }
+        issues.add(formatIssue(issue));
+        if (issues.size() >= limit) {
+          break;
+        }
+      }
+      return success("issues", issues);
+    } catch (IOException | GHException e) {
+      return error("Failed to list issues: " + e.getMessage());
+    }
+  }
+
+  @Schema(
+      name = "get_issue",
+      description =
+          "Fetches a single OPEN or closed issue by number, returning its number, title, body,"
+              + " html_url, labels and assignees.")
+  public static Map<String, Object> getIssue(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "issue_number", description = "The issue number to fetch.") int issueNumber) {
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      GHIssue issue = repo.getIssue(issueNumber);
+      if (issue.isPullRequest()) {
+        return error("#" + issueNumber + " is a pull request, not an issue.");
+      }
+      return success("issue", formatIssue(issue));
+    } catch (GHFileNotFoundException e) {
+      return error("Issue #" + issueNumber + " was not found.");
+    } catch (IOException | GHException e) {
+      return error("Failed to get issue #" + issueNumber + ": " + e.getMessage());
+    }
+  }
+
+  @Schema(
+      name = "add_label_to_issue",
+      description = "Adds a single label to an issue, preserving any labels already present.")
+  public static Map<String, Object> addLabelToIssue(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "issue_number", description = "The issue number to label.") int issueNumber,
+      @Schema(name = "label", description = "The label to add.") String label) {
+    String targetError = writeTargetError(repoOwner, repoName);
+    if (targetError != null) {
+      return error(targetError);
+    }
+    if (dryRun) {
+      return dryRunPreview(
+          "DRY RUN: no label was added. Set DRY_RUN=0 to label issues for real.",
+          "issue_number",
+          issueNumber,
+          "label",
+          label);
+    }
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      repo.getIssue(issueNumber).addLabels(label);
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("issue_number", issueNumber);
+      result.put("added_label", label);
+      return success(result);
+    } catch (IOException | GHException e) {
+      return error(
+          "Failed to add label '" + label + "' to issue #" + issueNumber + ": " + e.getMessage());
+    }
+  }
+
+  @Schema(
+      name = "remove_label_from_issue",
+      description =
+          "Removes a single label from an issue. Succeeds as a no-op if the label is not present.")
+  public static Map<String, Object> removeLabelFromIssue(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "issue_number", description = "The issue number to unlabel.") int issueNumber,
+      @Schema(name = "label", description = "The label to remove.") String label) {
+    String targetError = writeTargetError(repoOwner, repoName);
+    if (targetError != null) {
+      return error(targetError);
+    }
+    if (dryRun) {
+      return dryRunPreview(
+          "DRY RUN: no label was removed. Set DRY_RUN=0 to modify issues for real.",
+          "issue_number",
+          issueNumber,
+          "label",
+          label);
+    }
+    try {
+      GHRepository repo = connect().getRepository(repoOwner + "/" + repoName);
+      repo.getIssue(issueNumber).removeLabel(label);
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("issue_number", issueNumber);
+      result.put("removed_label", label);
+      return success(result);
+    } catch (GHFileNotFoundException e) {
+      // The label (or label-on-issue) was not present; removing it is a no-op success.
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("issue_number", issueNumber);
+      result.put("removed_label", label);
+      result.put("note", "label was not present");
+      return success(result);
+    } catch (IOException | GHException e) {
+      return error(
+          "Failed to remove label '"
+              + label
+              + "' from issue #"
+              + issueNumber
+              + ": "
+              + e.getMessage());
+    }
+  }
+
+  @Schema(
+      name = "assign_issue",
+      description = "Adds one or more assignees (by GitHub handle) to an issue.")
+  public static Map<String, Object> assignIssue(
+      @Schema(name = "repo_owner", description = "The repository owner.") String repoOwner,
+      @Schema(name = "repo_name", description = "The repository name.") String repoName,
+      @Schema(name = "issue_number", description = "The issue number to assign.") int issueNumber,
+      @Schema(name = "assignees", description = "GitHub handles to assign.")
+          List<String> assignees) {
+    if (assignees == null || assignees.isEmpty()) {
+      return error("assignees must be non-empty.");
+    }
+    String targetError = writeTargetError(repoOwner, repoName);
+    if (targetError != null) {
+      return error(targetError);
+    }
+    if (dryRun) {
+      return dryRunPreview(
+          "DRY RUN: no assignee was added. Set DRY_RUN=0 to assign issues for real.",
+          "issue_number",
+          issueNumber,
+          "assignees",
+          assignees);
+    }
+    try {
+      GitHub github = connect();
+      GHRepository repo = github.getRepository(repoOwner + "/" + repoName);
+      List<GHUser> users = new ArrayList<>();
+      for (String assignee : assignees) {
+        users.add(github.getUser(assignee));
+      }
+      repo.getIssue(issueNumber).addAssignees(users);
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("issue_number", issueNumber);
+      result.put("assignees", assignees);
+      return success(result);
+    } catch (IOException | GHException e) {
+      return error("Failed to assign issue #" + issueNumber + ": " + e.getMessage());
+    }
+  }
+
+  /** Formats an issue into the compact map (number, title, body, html_url, labels, assignees). */
+  private static Map<String, Object> formatIssue(GHIssue issue) {
+    Map<String, Object> info = new LinkedHashMap<>();
+    info.put("number", issue.getNumber());
+    info.put("title", issue.getTitle());
+    info.put("body", issue.getBody() == null ? "" : issue.getBody());
+    info.put("html_url", issue.getHtmlUrl() == null ? "" : issue.getHtmlUrl().toString());
+    List<String> labels = new ArrayList<>();
+    for (GHLabel label : issue.getLabels()) {
+      labels.add(label.getName());
+    }
+    info.put("labels", labels);
+    List<String> assignees = new ArrayList<>();
+    for (GHUser user : issue.getAssignees()) {
+      assignees.add(user.getLogin());
+    }
+    info.put("assignees", assignees);
+    return info;
+  }
+
   private static boolean hasDocsLabel(GHIssue issue) {
     for (GHLabel label : issue.getLabels()) {
       if (label.getName().equals(DOCS_UPDATES_LABEL)) {
@@ -514,5 +723,19 @@ public final class GitHubTools {
     response.put(STATUS_KEY, STATUS_ERROR);
     response.put("error_message", message);
     return response;
+  }
+
+  /**
+   * Builds a {@code dry_run} preview envelope from {@code message} and an even number of key/value
+   * pairs describing the write that would have happened.
+   */
+  private static Map<String, Object> dryRunPreview(String message, Object... keyValuePairs) {
+    Map<String, Object> preview = new LinkedHashMap<>();
+    preview.put(STATUS_KEY, STATUS_DRY_RUN);
+    preview.put("message", message);
+    for (int i = 0; i + 1 < keyValuePairs.length; i += 2) {
+      preview.put(String.valueOf(keyValuePairs[i]), keyValuePairs[i + 1]);
+    }
+    return preview;
   }
 }
