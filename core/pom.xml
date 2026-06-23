@@ -217,6 +217,16 @@
         <artifactId>arrow-memory-netty</artifactId>
         <version>17.0.0</version>
     </dependency>
+    <dependency>
+      <groupId>org.json</groupId>
+      <artifactId>json</artifactId>
+      <version>20180813</version>
+    </dependency>
+    <dependency>
+      <groupId>org.mapdb</groupId>
+      <artifactId>mapdb</artifactId>
+      <version>3.0.8</version>
+    </dependency>
   </dependencies>
   <build>
     <resources>
