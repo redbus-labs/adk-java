@@ -123,6 +123,7 @@
                          out of this module's -Prelease sources jar. -->
                     <excludes>
                         <exclude>**/*.jar</exclude>
+                        <exclude>adkprtriaging/**</exclude>
                         <exclude>adktriaging/**</exclude>
                         <exclude>target/**</exclude>
                     </excludes>
@@ -137,6 +138,7 @@
                          on this module's Javadoc classpath, so the -Prelease attach-javadocs goal
                          would otherwise fail. -->
                     <sourceFileExcludes>
+                        <sourceFileExclude>adkprtriaging/**</sourceFileExclude>
                         <sourceFileExclude>adktriaging/**</sourceFileExclude>
                     </sourceFileExcludes>
                 </configuration>
