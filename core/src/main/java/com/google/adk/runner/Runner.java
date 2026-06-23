@@ -749,7 +749,24 @@ public class Runner {
                       updatedInvocationContext
                           .agent()
                           .runLive(updatedInvocationContext)
-                          .doOnNext(event -> this.sessionService.appendEvent(session, event)))
+                          .doOnNext(event -> this.sessionService.appendEvent(session, event))
+                          // Run onEventCallback for each live event so plugins can observe or
+                          // replace it (e.g. token-usage tracking). Mirrors the non-live runImpl
+                          // path; the persisted event above is unaffected by the callback result.
+                          .concatMapSingle(
+                              event ->
+                                  updatedInvocationContext
+                                      .pluginManager()
+                                      .onEventCallback(updatedInvocationContext, event)
+                                      .defaultIfEmpty(event))
+                          // Run afterRunCallback once the live run completes so plugins can flush
+                          // or log aggregates (e.g. total token usage for the session).
+                          .concatWith(
+                              Completable.defer(
+                                  () ->
+                                      updatedInvocationContext
+                                          .pluginManager()
+                                          .afterRunCallback(updatedInvocationContext))))
               .doOnError(
                   throwable -> {
                     Span span = Span.current();
