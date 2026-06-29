@@ -4,13 +4,13 @@
  */
 package com.google.adk.models;
 
-import static com.google.adk.models.RedbusADG.callLLMChat;
 import static com.google.adk.models.RedbusADG.cleanForIdentifierPattern;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.google.adk.models.failover.LlmHttpException;
 import com.google.adk.tools.BaseTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -22,6 +22,7 @@ import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -101,6 +102,168 @@ public class BedrockBaseLM extends BaseLlm {
     return base + "/model/" + model + "/converse";
   }
 
+  private static JSONArray buildSystemArray(String systemText) {
+    JSONArray system = new JSONArray();
+    if (systemText != null && !systemText.isEmpty()) {
+      system.put(new JSONObject().put("text", systemText));
+    }
+    return system;
+  }
+
+  private static String mapBedrockRole(String adkRole) {
+    if ("model".equals(adkRole) || "assistant".equals(adkRole)) {
+      return "assistant";
+    }
+    return "user";
+  }
+
+  private static String toolUseIdForName(String name) {
+    return "tooluse_" + cleanForIdentifierPattern(name == null ? "tool" : name);
+  }
+
+  private static String resolveToolUseIdForFunctionResponse(
+      List<Content> contents, int responseMessageIndex, String toolName) {
+    for (int i = responseMessageIndex - 1; i >= 0; i--) {
+      Content c = contents.get(i);
+      String role = c.role().orElse("user");
+      if (!"model".equals(role) && !"assistant".equals(role)) {
+        continue;
+      }
+      for (Part p : c.parts().orElse(ImmutableList.of())) {
+        if (p.functionCall().isPresent()) {
+          FunctionCall fc = p.functionCall().get();
+          if (toolName.equals(fc.name().orElse(""))) {
+            return fc.id().orElse(toolUseIdForName(toolName));
+          }
+        }
+      }
+    }
+    return toolUseIdForName(toolName);
+  }
+
+  /** Converts ADK Content to a Bedrock Converse message with proper toolUse/toolResult blocks. */
+  private static JSONObject contentToBedrockMessage(
+      Content item, List<Content> allContents, int messageIndex) {
+    JSONObject messageQuantum = new JSONObject();
+    messageQuantum.put("role", mapBedrockRole(item.role().orElse("user")));
+    JSONArray contentArray = new JSONArray();
+
+    for (Part part : item.parts().orElse(ImmutableList.of())) {
+      if (part.functionResponse().isPresent()) {
+        var fr = part.functionResponse().get();
+        String name = fr.name().orElse("tool");
+        JSONObject toolResult = new JSONObject();
+        toolResult.put(
+            "toolUseId", resolveToolUseIdForFunctionResponse(allContents, messageIndex, name));
+        toolResult.put("status", "success");
+        JSONArray resultContent = new JSONArray();
+        resultContent.put(
+            new JSONObject().put("json", new JSONObject(fr.response().orElse(Map.of()))));
+        toolResult.put("content", resultContent);
+        contentArray.put(new JSONObject().put("toolResult", toolResult));
+      } else if (part.functionCall().isPresent()) {
+        var fc = part.functionCall().get();
+        String name = fc.name().orElse("tool");
+        JSONObject toolUse = new JSONObject();
+        toolUse.put("toolUseId", fc.id().orElse(toolUseIdForName(name)));
+        toolUse.put("name", name);
+        toolUse.put("input", new JSONObject(fc.args().orElse(Map.of())));
+        contentArray.put(new JSONObject().put("toolUse", toolUse));
+      } else if (part.text().isPresent() && !part.text().get().isEmpty()) {
+        contentArray.put(new JSONObject().put("text", part.text().get()));
+      }
+    }
+
+    if (contentArray.length() == 0) {
+      contentArray.put(new JSONObject().put("text", item.text() == null ? "" : item.text()));
+    }
+    messageQuantum.put("content", contentArray);
+    return messageQuantum;
+  }
+
+  private static JSONArray buildMessagesFromContents(List<Content> contents) {
+    JSONArray messages = new JSONArray();
+    for (int i = 0; i < contents.size(); i++) {
+      messages.put(contentToBedrockMessage(contents.get(i), contents, i));
+    }
+    return messages;
+  }
+
+  private static JSONArray buildToolsFromRequest(LlmRequest llmRequest) {
+    JSONArray functions = new JSONArray();
+    llmRequest
+        .tools()
+        .entrySet()
+        .forEach(
+            tooldetail -> {
+              BaseTool baseTool = tooldetail.getValue();
+              Optional<FunctionDeclaration> declarationOptional = baseTool.declaration();
+              if (!declarationOptional.isPresent()) {
+                System.err.println(
+                    "Skipping tool '" + baseTool.name() + "' with missing declaration.");
+                return;
+              }
+              FunctionDeclaration functionDeclaration = declarationOptional.get();
+              Map<String, Object> toolMap = new HashMap<>();
+              toolMap.put("name", cleanForIdentifierPattern(functionDeclaration.name().get()));
+              toolMap.put(
+                  "description",
+                  cleanForIdentifierPattern(functionDeclaration.description().orElse("")));
+              Optional<Schema> parametersOptional = functionDeclaration.parameters();
+              if (parametersOptional.isPresent()) {
+                Schema parametersSchema = parametersOptional.get();
+                Map<String, Object> parametersMap = new HashMap<>();
+                parametersMap.put("type", "object");
+                Optional<Map<String, Schema>> propertiesOptional = parametersSchema.properties();
+                if (propertiesOptional.isPresent()) {
+                  Map<String, Object> propertiesMap = new HashMap<>();
+                  ObjectMapper objectMapper = new ObjectMapper();
+                  objectMapper.registerModule(new Jdk8Module());
+                  propertiesOptional
+                      .get()
+                      .forEach(
+                          (key, schema) -> {
+                            Map<String, Object> schemaMap =
+                                objectMapper.convertValue(
+                                    schema, new TypeReference<Map<String, Object>>() {});
+                            updateTypeString(schemaMap);
+                            propertiesMap.put(key, schemaMap);
+                          });
+                  parametersMap.put("properties", propertiesMap);
+                }
+                parametersSchema
+                    .required()
+                    .ifPresent(requiredList -> parametersMap.put("required", requiredList));
+                JSONObject inputSchema = new JSONObject();
+                inputSchema.put("json", parametersMap);
+                toolMap.put("inputSchema", inputSchema);
+              }
+              JSONObject jsonToolW = new JSONObject();
+              jsonToolW.put("toolSpec", new JSONObject(toolMap));
+              functions.put(jsonToolW);
+            });
+    return functions;
+  }
+
+  private static void putToolConfig(JSONObject payload, JSONArray tools) {
+    if (tools != null && tools.length() > 0) {
+      JSONObject toolConfig = new JSONObject();
+      toolConfig.put("tools", tools);
+      payload.put("toolConfig", toolConfig);
+    }
+  }
+
+  private static JSONObject buildConversePayload(
+      JSONArray system, JSONArray messages, JSONArray tools) {
+    JSONObject payload = new JSONObject();
+    if (system != null && system.length() > 0) {
+      payload.put("system", system);
+    }
+    payload.put("messages", messages);
+    putToolConfig(payload, tools);
+    return payload;
+  }
+
   // Corrected the logger name to use OllamaBaseLM.class
   private static final Logger logger = LoggerFactory.getLogger(BedrockBaseLM.class);
 
@@ -126,9 +289,15 @@ public class BedrockBaseLM extends BaseLlm {
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
     if (stream) {
-      return generateContentStream(llmRequest);
+      return generateContentStream(llmRequest).subscribeOn(Schedulers.io());
     }
+    // Defer the blocking HTTP call until subscription so it is cancellable and bounded by any
+    // downstream timeout, enabling latency-based failover in FailoverLlm.
+    return Flowable.defer(() -> generateContentSyncInternal(llmRequest))
+        .subscribeOn(Schedulers.io());
+  }
 
+  private Flowable<LlmResponse> generateContentSyncInternal(LlmRequest llmRequest) {
     List<Content> contents = llmRequest.contents();
     // Last content must be from the user, otherwise the model won't respond.
     if (contents.isEmpty() || !Iterables.getLast(contents).role().orElse("").equals("user")) {
@@ -153,201 +322,33 @@ public class BedrockBaseLM extends BaseLlm {
       }
     }
 
-    /** "messages": [ { "role": "user", "content": [{"text": "Hello"}] } ], */
-    JSONArray messages = new JSONArray();
+    JSONArray system = buildSystemArray(systemText);
+    JSONArray messages = buildMessagesFromContents(contents);
 
-    JSONObject llmMessageJson1 = new JSONObject();
-    llmMessageJson1.put("role", "assistant");
-    JSONObject txtMsg = new JSONObject();
-    txtMsg.put("text", systemText);
-    JSONArray contentArray = new JSONArray();
-    contentArray.put(txtMsg);
-    llmMessageJson1.put("content", contentArray);
-    messages.put(llmMessageJson1); // Agent system prompt is always added
-
-    llmRequest.contents().stream()
-        .forEach(
-            item -> {
-              JSONObject messageQuantum = new JSONObject();
-              messageQuantum.put(
-                  "role",
-                  item.role().get().equals("model") || item.role().get().equals("assistant")
-                      ? "assistant"
-                      : "user");
-
-              if (item.parts().get().get(0).functionResponse().isPresent()) {
-                JSONObject txtMsg3 = new JSONObject();
-                txtMsg3.put(
-                    "text",
-                    item.parts().get().get(0).functionResponse().get().name().get()
-                        + " responded with these values, "
-                        + new JSONObject(
-                                item.parts().get().get(0).functionResponse().get().response().get())
-                            .toString());
-                JSONArray contentArray2 = new JSONArray();
-                contentArray2.put(txtMsg3);
-                messageQuantum.put("content", contentArray2);
-              } else if (item.parts().get().get(0).functionCall().isPresent()) {
-                JSONObject txtMsg3 = new JSONObject();
-                txtMsg3.put(
-                    "text",
-                    item.parts().get().get(0).functionCall().get().name().get()
-                        + " is to be called with these arguments, "
-                        + new JSONObject(
-                                item.parts().get().get(0).functionCall().get().args().get())
-                            .toString());
-                JSONArray contentArray2 = new JSONArray();
-                contentArray2.put(txtMsg3);
-                messageQuantum.put("content", contentArray2);
-              } else {
-                JSONObject txtMsg3 = new JSONObject();
-                txtMsg3.put("text", item.text());
-                JSONArray contentArray2 = new JSONArray();
-                contentArray2.put(txtMsg3);
-                messageQuantum.put("content", contentArray2);
-              }
-              messages.put(messageQuantum);
-            });
-
-    // Tools
-    // Define the required pattern for the name
-    JSONArray functions = new JSONArray();
-    llmRequest
-        .tools()
-        .entrySet()
-        .forEach(
-            tooldetail -> {
-              BaseTool baseTool = tooldetail.getValue();
-
-              // Get the function declaration from the base tool
-              Optional<FunctionDeclaration> declarationOptional = baseTool.declaration();
-
-              // Skip this tool if there is no function declaration
-              if (!declarationOptional.isPresent()) {
-                // Log a warning or handle appropriately
-                System.err.println(
-                    "Skipping tool '" + baseTool.name() + "' with missing declaration.");
-                // continue; // If inside a loop
-                return; // If processing a single tool outside a loop
-              }
-
-              FunctionDeclaration functionDeclaration = declarationOptional.get();
-
-              // Build the top-level map representing the tool JSON structure
-              Map<String, Object> toolMap = new HashMap<>();
-
-              // Add the tool's name and description from the function declaration
-              toolMap.put("name", cleanForIdentifierPattern(functionDeclaration.name().get()));
-              toolMap.put(
-                  "description",
-                  cleanForIdentifierPattern(
-                      functionDeclaration
-                          .description()
-                          .orElse(""))); // Use description from declaration, handle Optional
-
-              // Build the 'parameters' object if parameters are defined
-              Optional<Schema> parametersOptional = functionDeclaration.parameters();
-              if (parametersOptional.isPresent()) {
-                Schema parametersSchema = parametersOptional.get();
-
-                Map<String, Object> parametersMap = new HashMap<>();
-                parametersMap.put(
-                    "type", "object"); // Function parameters schema type is typically "object"
-
-                // Build the 'properties' map within 'parameters'
-                Optional<Map<String, Schema>> propertiesOptional = parametersSchema.properties();
-                if (propertiesOptional.isPresent()) {
-                  Map<String, Object> propertiesMap = new HashMap<>();
-                  // Create ObjectMapper instance once for the loop
-                  ObjectMapper objectMapper = new ObjectMapper();
-                  objectMapper.registerModule(
-                      new Jdk8Module()); // Register module for Java 8 Optionals, etc.
-
-                  propertiesOptional
-                      .get()
-                      .forEach(
-                          (key, schema) -> {
-                            // Convert the library's Schema object for a parameter to a generic Map
-                            Map<String, Object> schemaMap =
-                                objectMapper.convertValue(
-                                    schema, new TypeReference<Map<String, Object>>() {});
-
-                            // Apply your custom logic to update the type string
-                            // !!! This function updateTypeString(schemaMap) is required and not
-                            // provided !!!
-                            updateTypeString(
-                                schemaMap); // Ensure this modifies schemaMap in place or returns
-                            // the modified map
-
-                            propertiesMap.put(key, schemaMap);
-                          });
-                  parametersMap.put("properties", propertiesMap);
-                }
-
-                // Add the 'required' list within 'parameters' if present
-                parametersSchema
-                    .required()
-                    .ifPresent(
-                        requiredList ->
-                            parametersMap.put(
-                                "required", requiredList)); // Assuming required() returns
-                // Optional<List<String>>
-
-                // Add the completed 'parameters' map to the main tool map
-                JSONObject inputSchema = new JSONObject();
-                inputSchema.put("json", parametersMap);
-                toolMap.put("inputSchema", inputSchema);
-              }
-
-              // Convert the complete tool map into an org.json.JSONObject
-              JSONObject jsonToolW = new JSONObject();
-
-              JSONObject jsonTool = new JSONObject(toolMap);
-
-              jsonToolW.put("toolSpec", jsonTool);
-
-              // Add the generated tool JSON object to your functions list/array
-              functions.put(jsonToolW);
-            });
-
-    // Check if the tool is executed, then parse and response.
-
+    JSONArray functions = buildToolsFromRequest(llmRequest);
     logger.debug("functions: {}", functions.toString(1));
 
-    String modelId =
-        this.model(); // "devstral";//"llama3.2:3b-instruct-q2_K";//"llama3.2"; // The 1b doesn't
-    // support tool
+    String modelId = this.model();
 
-    // If last user response has the function reponse, then function calla is not needed.
-    boolean LAST_RESP_TOOl_EXECUTED =
-        Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
-
+    // toolConfig is required whenever messages contain toolUse/toolResult blocks (incl. post-tool
+    // turns).
     JSONObject agentresponse =
-        callLLMChat(
-            modelId,
-            messages,
-            LAST_RESP_TOOl_EXECUTED
-                ? null
-                : (functions.length() > 0
-                    ? functions
-                    : null)); // Tools/functions can not be of 0 length
+        callLLMChat(modelId, system, messages, functions.length() > 0 ? functions : null);
 
-    // Attempt usage metadata extraction & logging
+    GenerateContentResponseUsageMetadata usageMetadata = null;
     try {
-      GenerateContentResponseUsageMetadata usage = getUsageMetadata(agentresponse);
-      if (usage != null) {
+      usageMetadata = getUsageMetadata(agentresponse);
+      if (usageMetadata != null) {
         logger.info(
             "Non-streaming token counts: prompt={}, completion={}, total={}",
-            usage.promptTokenCount().orElse(0),
-            usage.candidatesTokenCount().orElse(0),
-            usage.totalTokenCount().orElse(0));
+            usageMetadata.promptTokenCount().orElse(0),
+            usageMetadata.candidatesTokenCount().orElse(0),
+            usageMetadata.totalTokenCount().orElse(0));
       }
     } catch (Exception e) {
       logger.debug("Usage metadata parsing failed (non-critical)", e);
     }
 
-    // Bedrock Converse API: output.message, or message/Message at top level.
-    // Message (capital M) can be a String in error responses (e.g. "Authentication failed").
     JSONObject responseQuantum = extractMessageObject(agentresponse);
     if (responseQuantum == null) {
       String detail = "Response keys: " + agentresponse.keySet();
@@ -371,33 +372,34 @@ public class BedrockBaseLM extends BaseLlm {
               + detail);
     }
 
-    // Check if tool call is required
-    // Tools call
     LlmResponse.Builder responseBuilder = LlmResponse.builder();
-    List<Part> parts = new ArrayList<>();
-    Part part = ollamaContentBlockToPart(responseQuantum);
-    parts.add(part);
+    List<Part> parts = ollamaContentBlockToParts(responseQuantum);
 
-    // Call tool
-    if (!part.functionCall().isEmpty()
-        && part.functionResponse().isEmpty()
-        && !LAST_RESP_TOOl_EXECUTED) {
+    responseBuilder.content(
+        Content.builder().role("assistant").parts(ImmutableList.copyOf(parts)).build());
 
-      responseBuilder.content(
-          Content.builder()
-              .role("assistant")
-              .parts(
-                  ImmutableList.of(Part.builder().functionCall(part.functionCall().get()).build()))
-              .build());
-
-      //  responseBuilder.partial(false).turnComplete(false);
-
-    } else {
-      responseBuilder.content(
-          Content.builder().role("assistant").parts(ImmutableList.copyOf(parts)).build());
+    if (usageMetadata != null) {
+      responseBuilder.usageMetadata(usageMetadata);
     }
 
     return Flowable.just(responseBuilder.build());
+  }
+
+  /** Best-effort extraction of a human readable error message from a Bedrock error body. */
+  private static String extractBedrockErrorMessage(String body) {
+    if (body == null || body.isEmpty()) {
+      return null;
+    }
+    try {
+      JSONObject json = new JSONObject(body);
+      Object message = getKeyIgnoreCase(json, "message", "Message", "errorMessage", "__type");
+      if (message != null) {
+        return message.toString();
+      }
+    } catch (org.json.JSONException ignored) {
+      // Not JSON; fall through to raw body.
+    }
+    return body;
   }
 
   /** Gets a value from JSONObject using case-insensitive key match. */
@@ -478,136 +480,15 @@ public class BedrockBaseLM extends BaseLlm {
       }
     }
 
-    // Messages
-    JSONArray messages = new JSONArray();
+    JSONArray system = buildSystemArray(systemText);
+    JSONArray messages = buildMessagesFromContents(contents);
 
-    JSONObject llmMessageJson1 = new JSONObject();
-    llmMessageJson1.put("role", "assistant");
-    JSONArray sysContentArray = new JSONArray();
-    sysContentArray.put(new JSONObject().put("text", systemText));
-    llmMessageJson1.put("content", sysContentArray);
-    messages.put(llmMessageJson1); // Agent system prompt is always added
-
-    final List<Content> finalContents = contents;
-    finalContents.stream()
-        .forEach(
-            item -> {
-              JSONObject messageQuantum = new JSONObject();
-              messageQuantum.put(
-                  "role",
-                  item.role().get().equals("model") || item.role().get().equals("assistant")
-                      ? "assistant"
-                      : "user");
-
-              // Additinal override work to add function response
-              if (item.parts().get().get(0).functionResponse().isPresent()) {
-                JSONObject txtMsg3 = new JSONObject();
-                txtMsg3.put(
-                    "text",
-                    item.parts().get().get(0).functionResponse().get().name().get()
-                        + " responded with these values, "
-                        + new JSONObject(
-                                item.parts().get().get(0).functionResponse().get().response().get())
-                            .toString());
-
-                JSONArray contentArray2 = new JSONArray();
-                contentArray2.put(txtMsg3);
-
-                messageQuantum.put("content", contentArray2);
-              } else if (item.parts().get().get(0).functionCall().isPresent()) {
-                JSONObject txtMsg3 = new JSONObject();
-                txtMsg3.put(
-                    "text",
-                    item.parts().get().get(0).functionCall().get().name().get()
-                        + " is to be called with these arguments, "
-                        + new JSONObject(
-                                item.parts().get().get(0).functionCall().get().args().get())
-                            .toString());
-
-                JSONArray contentArray2 = new JSONArray();
-                contentArray2.put(txtMsg3);
-
-                messageQuantum.put("content", contentArray2);
-              } else {
-
-                JSONObject txtMsg3 = new JSONObject();
-                txtMsg3.put("text", item.text());
-                JSONArray contentArray2 = new JSONArray();
-                contentArray2.put(txtMsg3);
-                messageQuantum.put("content", contentArray2);
-              }
-              messages.put(messageQuantum);
-            });
-
-    // Tools
-    JSONArray functions = new JSONArray();
-    llmRequest
-        .tools()
-        .entrySet()
-        .forEach(
-            tooldetail -> {
-              BaseTool baseTool = tooldetail.getValue();
-              Optional<FunctionDeclaration> declarationOptional = baseTool.declaration();
-              if (!declarationOptional.isPresent()) {
-                System.err.println(
-                    "Skipping tool '" + baseTool.name() + "' with missing declaration.");
-                return;
-              }
-              FunctionDeclaration functionDeclaration = declarationOptional.get();
-              Map<String, Object> toolMap = new HashMap<>();
-              toolMap.put("name", cleanForIdentifierPattern(functionDeclaration.name().get()));
-              toolMap.put(
-                  "description",
-                  cleanForIdentifierPattern(functionDeclaration.description().orElse("")));
-              Optional<Schema> parametersOptional = functionDeclaration.parameters();
-              if (parametersOptional.isPresent()) {
-                Schema parametersSchema = parametersOptional.get();
-                Map<String, Object> parametersMap = new HashMap<>();
-                parametersMap.put("type", "object");
-                Optional<Map<String, Schema>> propertiesOptional = parametersSchema.properties();
-                if (propertiesOptional.isPresent()) {
-                  Map<String, Object> propertiesMap = new HashMap<>();
-                  ObjectMapper objectMapper = new ObjectMapper();
-                  objectMapper.registerModule(new Jdk8Module());
-                  propertiesOptional
-                      .get()
-                      .forEach(
-                          (key, schema) -> {
-                            Map<String, Object> schemaMap =
-                                objectMapper.convertValue(
-                                    schema, new TypeReference<Map<String, Object>>() {});
-                            updateTypeString(schemaMap);
-                            propertiesMap.put(key, schemaMap);
-                          });
-                  parametersMap.put("properties", propertiesMap);
-                }
-                parametersSchema
-                    .required()
-                    .ifPresent(requiredList -> parametersMap.put("required", requiredList));
-                toolMap.put("parameters", parametersMap);
-              }
-              // Convert the complete tool map into an org.json.JSONObject
-              JSONObject jsonToolW = new JSONObject();
-              jsonToolW.put("type", "function");
-
-              JSONObject jsonTool = new JSONObject(toolMap);
-              jsonToolW.put("function", jsonTool);
-
-              // Add the generated tool JSON object to your functions list/array
-              functions.put(jsonToolW);
-            });
+    JSONArray functions = buildToolsFromRequest(llmRequest);
 
     String modelId = this.model();
 
-    boolean LAST_RESP_TOOl_EXECUTED =
-        Iterables.getLast(Iterables.getLast(finalContents).parts().get())
-            .functionResponse()
-            .isPresent();
-
     return createRobustStreamingResponse(
-        modelId,
-        messages,
-        LAST_RESP_TOOl_EXECUTED ? null : (functions.length() > 0 ? functions : null));
+        modelId, system, messages, functions.length() > 0 ? functions : null);
   }
 
   /**
@@ -615,10 +496,11 @@ public class BedrockBaseLM extends BaseLlm {
    * the "onNext already called in this generate turn" error.
    */
   private Flowable<LlmResponse> createRobustStreamingResponse(
-      String modelId, JSONArray messages, JSONArray functions) {
+      String modelId, JSONArray system, JSONArray messages, JSONArray functions) {
     final StringBuilder accumulatedText = new StringBuilder();
     final StringBuilder functionCallName = new StringBuilder();
     final StringBuilder functionCallArgs = new StringBuilder();
+    final StringBuilder functionCallToolUseId = new StringBuilder();
     final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
     final AtomicBoolean streamCompleted = new AtomicBoolean(false);
 
@@ -628,7 +510,7 @@ public class BedrockBaseLM extends BaseLlm {
     final AtomicInteger totalTokens = new AtomicInteger(0);
 
     return Flowable.generate(
-        () -> callLLMChatStream(modelId, messages, functions),
+        () -> callLLMChatStream(modelId, system, messages, functions),
         (reader, emitter) -> {
           try {
             if (reader == null || streamCompleted.get()) {
@@ -748,6 +630,22 @@ public class BedrockBaseLM extends BaseLlm {
                       hasContent = true;
                     }
                   }
+                  if (c.has("toolUse")) {
+                    inFunctionCall.set(true);
+                    JSONObject toolUse = c.getJSONObject("toolUse");
+                    if (toolUse.has("name")) {
+                      functionCallName.setLength(0);
+                      functionCallName.append(toolUse.getString("name"));
+                    }
+                    if (toolUse.has("toolUseId")) {
+                      functionCallToolUseId.setLength(0);
+                      functionCallToolUseId.append(toolUse.getString("toolUseId"));
+                    }
+                    if (toolUse.has("input")) {
+                      functionCallArgs.setLength(0);
+                      functionCallArgs.append(toolUse.getJSONObject("input").toString());
+                    }
+                  }
                 }
               }
 
@@ -782,7 +680,8 @@ public class BedrockBaseLM extends BaseLlm {
                   "end_turn".equals(stopReason)
                       || "stop_sequence".equals(stopReason)
                       || "max_tokens".equals(stopReason)
-                      || "content_filtered".equals(stopReason);
+                      || "content_filtered".equals(stopReason)
+                      || "tool_use".equals(stopReason);
             } else if (responseJson.optBoolean("done", false)) {
               isDone = true;
             }
@@ -798,16 +697,23 @@ public class BedrockBaseLM extends BaseLlm {
               if (inFunctionCall.get() && functionCallName.length() > 0) {
                 try {
                   Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
-                  FunctionCall fc =
-                      FunctionCall.builder().name(functionCallName.toString()).args(args).build();
-                  Part part = Part.builder().functionCall(fc).build();
+                  FunctionCall.Builder fcBuilder =
+                      FunctionCall.builder().name(functionCallName.toString()).args(args);
+                  if (functionCallToolUseId.length() > 0) {
+                    fcBuilder.id(functionCallToolUseId.toString());
+                  }
+                  List<Part> responseParts = new ArrayList<>();
+                  if (accumulatedText.length() > 0) {
+                    responseParts.add(Part.fromText(accumulatedText.toString()));
+                  }
+                  responseParts.add(Part.builder().functionCall(fcBuilder.build()).build());
 
                   LlmResponse.Builder functionResponseBuilder =
                       LlmResponse.builder()
                           .content(
                               Content.builder()
                                   .role("model")
-                                  .parts(ImmutableList.of(part))
+                                  .parts(ImmutableList.copyOf(responseParts))
                                   .build());
 
                   if (usageMetadata != null) {
@@ -891,7 +797,8 @@ public class BedrockBaseLM extends BaseLlm {
         .build();
   }
 
-  public BufferedReader callLLMChatStream(String model, JSONArray messages, JSONArray tools) {
+  public BufferedReader callLLMChatStream(
+      String model, JSONArray system, JSONArray messages, JSONArray tools) {
     try {
       String bearerToken = getBearerToken();
       if (bearerToken == null || bearerToken.isBlank()) {
@@ -900,15 +807,9 @@ public class BedrockBaseLM extends BaseLlm {
                 + "BEDROCK_BEARER_TOKEN, BEDROCK_API_KEY, BEDROCK_TOKEN (e.g. in .bashrc)");
       }
       String baseUrl = getBedrockBaseUrl(D_URL);
-      String apiUrl = buildConverseUrl(baseUrl, model);
+      String apiUrl = buildConverseUrl(baseUrl, model).replace("/converse", "/converse-stream");
       System.out.println("Using Bedrock URL: " + apiUrl);
-      JSONObject payload = new JSONObject();
-      // Model already encoded in path; omit 'model' field to avoid Unexpected field type errors
-      payload.put("stream", true);
-      payload.put("messages", messages);
-      if (tools != null) {
-        payload.put("tools", tools);
-      }
+      JSONObject payload = buildConversePayload(system, messages, tools);
 
       String jsonString = payload.toString();
 
@@ -946,11 +847,15 @@ public class BedrockBaseLM extends BaseLlm {
         logger.error(
             "Bedrock streaming request failed: status={} body={}", responseCode, errorResponse);
         connection.disconnect();
-        return null;
+        throw new LlmHttpException(
+            responseCode,
+            extractBedrockErrorMessage(errorResponse.toString()),
+            errorResponse.toString());
       }
     } catch (IOException ex) {
       logger.error("Error in callLLMChatStream", ex);
-      return null;
+      throw new LlmHttpException(
+          -1, "Bedrock streaming request failed: " + ex.getMessage(), null, ex);
     }
   }
 
@@ -964,7 +869,7 @@ public class BedrockBaseLM extends BaseLlm {
    * schemas, which is not directly related to sending chat messages to Ollama. You might consider
    * removing it if it's no longer needed.
    */
-  private void updateTypeString(Map<String, Object> valueDict) {
+  private static void updateTypeString(Map<String, Object> valueDict) {
     if (valueDict == null) {
       return;
     }
@@ -989,42 +894,54 @@ public class BedrockBaseLM extends BaseLlm {
   }
 
   public static Part ollamaContentBlockToPart(JSONObject blockJson) {
+    List<Part> parts = ollamaContentBlockToParts(blockJson);
+    return parts.get(0);
+  }
+
+  /** Parses all text and toolUse blocks from a Bedrock Converse message object. */
+  public static List<Part> ollamaContentBlockToParts(JSONObject blockJson) {
+    List<Part> parts = new ArrayList<>();
     if (blockJson.has("content")) {
       JSONArray contentArray = blockJson.getJSONArray("content");
       for (int i = 0; i < contentArray.length(); i++) {
         JSONObject tempObj = contentArray.getJSONObject(i);
         if (tempObj.has("text")) {
-          return Part.builder().text(tempObj.getString("text")).build();
-        }
-        if (tempObj.has("toolUse")) {
+          String text = tempObj.getString("text");
+          if (text != null && !text.isEmpty()) {
+            parts.add(Part.builder().text(text).build());
+          }
+        } else if (tempObj.has("toolUse")) {
           JSONObject toolUse = tempObj.getJSONObject("toolUse");
-          if (toolUse != null) {
-            if (toolUse.has("name")) {
-              JSONObject input = toolUse.optJSONObject("input");
-              Map<String, Object> args = input.toMap();
-              FunctionCall functionCall =
-                  FunctionCall.builder().name(toolUse.getString("name")).args(args).build();
-              return Part.builder().functionCall(functionCall).build();
+          if (toolUse != null && toolUse.has("name")) {
+            JSONObject input = toolUse.optJSONObject("input");
+            Map<String, Object> args = input != null ? input.toMap() : new HashMap<>();
+            FunctionCall.Builder fcBuilder =
+                FunctionCall.builder().name(toolUse.getString("name")).args(args);
+            if (toolUse.has("toolUseId")) {
+              fcBuilder.id(toolUse.getString("toolUseId"));
             }
+            parts.add(Part.builder().functionCall(fcBuilder.build()).build());
           }
         }
       }
     }
-    throw new UnsupportedOperationException(
-        "Unsupported content block format or missing required fields: " + blockJson.toString());
+    if (parts.isEmpty()) {
+      throw new UnsupportedOperationException(
+          "Unsupported content block format or missing required fields: " + blockJson.toString());
+    }
+    return parts;
   }
 
   /**
-   * Makes a POST request to a specified URL with a dynamic JSON body. Fetches username and password
-   * from environment variables.
+   * POST to the Bedrock Converse API.
    *
-   * @param model
-   * @param messages The list of messages for the "request.messages" field.
-   * @param tools
-   * @return The response body as a String.
-   * @throws RuntimeException If environment variables are not set or JSON creation fails.
+   * @param model deployment / model id
+   * @param system system prompt blocks
+   * @param messages conversation messages
+   * @param tools tool specs (toolConfig.tools)
    */
-  public JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+  public JSONObject callLLMChat(
+      String model, JSONArray system, JSONArray messages, JSONArray tools) {
     try {
       String bearerToken = getBearerToken();
       if (bearerToken == null || bearerToken.isBlank()) {
@@ -1033,15 +950,8 @@ public class BedrockBaseLM extends BaseLlm {
                 + "BEDROCK_BEARER_TOKEN, BEDROCK_API_KEY, BEDROCK_TOKEN (e.g. in .bashrc)");
       }
       String baseUrl = getBedrockBaseUrl(D_URL);
-      JSONObject responseJ = new JSONObject();
       String apiUrl = buildConverseUrl(baseUrl, model);
-      JSONObject payload = new JSONObject();
-      // Model already in path; omit from payload to avoid "Unexpected field type" errors
-      payload.put("stream", false);
-      payload.put("messages", messages);
-      if (tools != null) {
-        payload.put("tools", tools);
-      }
+      JSONObject payload = buildConversePayload(system, messages, tools);
 
       String jsonString = payload.toString();
       URL url = new URL(apiUrl);
@@ -1057,8 +967,6 @@ public class BedrockBaseLM extends BaseLlm {
         writer.write(jsonString);
         System.out.println("Bedrock Base LM => " + jsonString);
         writer.flush();
-      } catch (IOException ex) {
-        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
       }
 
       int responseCode = connection.getResponseCode();
@@ -1066,6 +974,7 @@ public class BedrockBaseLM extends BaseLlm {
 
       InputStream inputStream =
           (responseCode < 400) ? connection.getInputStream() : connection.getErrorStream();
+      String raw = "";
       try (BufferedReader reader =
           new BufferedReader(new InputStreamReader(inputStream, "UTF-8"))) {
         StringBuilder response = new StringBuilder();
@@ -1073,21 +982,41 @@ public class BedrockBaseLM extends BaseLlm {
         while ((line = reader.readLine()) != null) {
           response.append(line);
         }
-        responseJ = new JSONObject(response.toString());
-      } catch (IOException ex) {
-        java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+        raw = response.toString();
       }
       connection.disconnect();
-      return responseJ;
 
-    } catch (MalformedURLException ex) {
-      java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
-    } catch (ProtocolException ex) {
-      java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+      if (responseCode >= 400) {
+        throw new LlmHttpException(responseCode, extractBedrockErrorMessage(raw), raw);
+      }
+      try {
+        return new JSONObject(raw);
+      } catch (org.json.JSONException ex) {
+        throw new LlmHttpException(responseCode, "Bedrock returned a non-JSON response", raw);
+      }
+
+    } catch (LlmHttpException e) {
+      throw e;
+    } catch (MalformedURLException | ProtocolException ex) {
+      throw new LlmHttpException(-1, ex.getMessage(), null, ex);
     } catch (IOException ex) {
-      java.util.logging.Logger.getLogger(RedbusADG.class.getName()).log(Level.SEVERE, null, ex);
+      throw new LlmHttpException(-1, "Bedrock request failed: " + ex.getMessage(), null, ex);
     }
-    return new JSONObject();
+  }
+
+  /**
+   * Makes a POST request to a specified URL with a dynamic JSON body. Fetches username and password
+   * from environment variables.
+   *
+   * @param model
+   * @param messages The list of messages for the "request.messages" field.
+   * @param tools
+   * @return The response body as a String.
+   * @throws RuntimeException If environment variables are not set or JSON creation fails.
+   */
+  @Deprecated
+  public JSONObject callLLMChat(String model, JSONArray messages, JSONArray tools) {
+    return callLLMChat(model, buildSystemArray(""), messages, tools);
   }
 
   /**
@@ -1337,33 +1266,18 @@ public class BedrockBaseLM extends BaseLlm {
   }
 
   public static void main(String[] args) {
-    // --- Create the 'messages' part of the JSON using org.json ---
-    String messagesJsonString =
-        """
-    [
-        {
-            "role": "assistant",
-            "content": [ { "text": "You are a helpful assistant." } ]
-        },
-        {
-            "role": "user",
-            "content": [ { "text": "Write a story about a curious cat named Tommy who explores a mysterious garden. Make the story at least 10 lines long, with each line describing a new discovery or adventure Tommy has in the garden. End with Tommy finding a new friend." } ]
-        }
-    ]
-    """;
-
-    JSONArray messagesArray;
-    try {
-      messagesArray = new JSONArray(messagesJsonString);
-    } catch (Exception e) {
-      System.err.println("Failed to parse JSON string into JSONArray: " + e.getMessage());
-      return;
-    }
-
-    String modelId = "openai.gpt-oss-120b-1:0"; // Example model ID for Bedrock
-    String bedrockBaseUrl =
-        "https://bedrock-runtime.us-west-2.amazonaws.com/model"; // Base URL only
+    String modelId = "openai.gpt-oss-120b-1:0";
+    String bedrockBaseUrl = "https://bedrock-runtime.us-west-2.amazonaws.com/model";
     BedrockBaseLM ollamaLlm = new BedrockBaseLM(modelId, bedrockBaseUrl);
+
+    JSONArray systemArray = buildSystemArray("You are a helpful assistant.");
+    JSONArray userOnlyMessages = new JSONArray();
+    userOnlyMessages.put(
+        new JSONObject()
+            .put("role", "user")
+            .put(
+                "content",
+                new JSONArray().put(new JSONObject().put("text", "Say hello in one word."))));
 
     // --- Test Streaming Call ---
     System.out.println("--- Testing Streaming API Call ---");
@@ -1372,7 +1286,8 @@ public class BedrockBaseLM extends BaseLlm {
       System.out.println("Using model ID: " + modelId);
       System.out.println("Fetching Ollama endpoint from environment variable: " + BEDROCK_ENV_VAR);
 
-      BufferedReader responseReader = ollamaLlm.callLLMChatStream(modelId, messagesArray, null);
+      BufferedReader responseReader =
+          ollamaLlm.callLLMChatStream(modelId, systemArray, userOnlyMessages, null);
 
       if (responseReader != null) {
         System.out.println("\nAPI Call Successful! Streaming response:");
@@ -1438,7 +1353,7 @@ public class BedrockBaseLM extends BaseLlm {
       System.out.println("Attempting to call Ollama API (Non-Streaming)...");
       System.out.println("Using model ID: " + modelId);
 
-      JSONObject responseJson = ollamaLlm.callLLMChat(modelId, messagesArray, null);
+      JSONObject responseJson = ollamaLlm.callLLMChat(modelId, systemArray, userOnlyMessages, null);
 
       if (responseJson != null && !responseJson.isEmpty()) {
         System.out.println("\nAPI Call Successful! Non-Streaming response:");
