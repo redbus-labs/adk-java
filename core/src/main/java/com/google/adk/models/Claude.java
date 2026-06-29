@@ -40,6 +40,7 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -132,11 +133,17 @@ public class Claude extends BaseLlm {
       paramsBuilder.toolChoice(toolChoice);
     }
 
-    var message = this.anthropicClient.messages().create(paramsBuilder.build());
+    MessageCreateParams params = paramsBuilder.build();
 
-    logger.debug("Claude response: {}", message);
-
-    return Flowable.just(convertAnthropicResponseToLlmResponse(message));
+    // Defer the blocking Anthropic SDK call until subscription so it is cancellable and bounded by
+    // any downstream timeout, enabling latency-based failover in FailoverLlm.
+    return Flowable.defer(
+            () -> {
+              var message = this.anthropicClient.messages().create(params);
+              logger.debug("Claude response: {}", message);
+              return Flowable.just(convertAnthropicResponseToLlmResponse(message));
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   private Role toClaudeRole(String role) {

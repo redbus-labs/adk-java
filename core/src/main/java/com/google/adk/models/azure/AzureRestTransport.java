@@ -7,6 +7,7 @@ import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.GenericLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.failover.LlmHttpException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.genai.types.Content;
@@ -15,6 +16,7 @@ import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -95,49 +97,61 @@ public final class AzureRestTransport implements AzureTransport {
   // ==================== Non-streaming ====================
 
   private Flowable<LlmResponse> generateContentSync(LlmRequest llmRequest, AzureConfig config) {
-    List<Content> contents = ensureLastContentIsUser(llmRequest.contents());
-    String instructions = AzureRequestConverter.extractInstructions(llmRequest);
-    JSONArray inputItems = buildInputItems(contents);
-    JSONArray tools = AzureRequestConverter.buildTools(llmRequest);
+    // Defer the blocking HTTP call until subscription so it is cancellable and can be bounded by a
+    // downstream timeout (enabling latency-based failover in FailoverLlm).
+    return Flowable.defer(
+            () -> {
+              List<Content> contents = ensureLastContentIsUser(llmRequest.contents());
+              String instructions = AzureRequestConverter.extractInstructions(llmRequest);
+              JSONArray inputItems = buildInputItems(contents);
+              JSONArray tools = AzureRequestConverter.buildTools(llmRequest);
 
-    boolean lastRespToolExecuted =
-        Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
+              boolean lastRespToolExecuted =
+                  Iterables.getLast(Iterables.getLast(contents).parts().get())
+                      .functionResponse()
+                      .isPresent();
 
-    Optional<Float> temperature = llmRequest.config().flatMap(GenerateContentConfig::temperature);
-    Optional<Integer> maxTokens =
-        llmRequest.config().flatMap(GenerateContentConfig::maxOutputTokens);
+              Optional<Float> temperature =
+                  llmRequest.config().flatMap(GenerateContentConfig::temperature);
+              Optional<Integer> maxTokens =
+                  llmRequest.config().flatMap(GenerateContentConfig::maxOutputTokens);
 
-    JSONObject payload = new JSONObject();
-    payload.put("model", config.modelName());
-    payload.put("input", inputItems);
-    if (!instructions.isEmpty()) {
-      payload.put("instructions", instructions);
-    }
-    temperature.ifPresent(t -> payload.put("temperature", t));
-    payload.put("stream", false);
-    payload.put("store", false);
-    payload.put("reasoning", new JSONObject().put("summary", "auto"));
-    if (maxTokens.isPresent() && maxTokens.get() > 0) {
-      payload.put("max_output_tokens", maxTokens.get());
-    }
-    if (!lastRespToolExecuted && tools.length() > 0) {
-      payload.put("tools", tools);
-    }
+              JSONObject payload = new JSONObject();
+              payload.put("model", config.modelName());
+              payload.put("input", inputItems);
+              if (!instructions.isEmpty()) {
+                payload.put("instructions", instructions);
+              }
+              temperature.ifPresent(t -> payload.put("temperature", t));
+              payload.put("stream", false);
+              payload.put("store", false);
+              payload.put("reasoning", new JSONObject().put("summary", "auto"));
+              if (maxTokens.isPresent() && maxTokens.get() > 0) {
+                payload.put("max_output_tokens", maxTokens.get());
+              }
+              if (!lastRespToolExecuted && tools.length() > 0) {
+                payload.put("tools", tools);
+              }
 
-    logger.debug("Azure Responses API request payload size: {} bytes", payload.toString().length());
+              logger.debug(
+                  "Azure Responses API request payload size: {} bytes",
+                  payload.toString().length());
 
-    JSONObject response = callApi(payload, config);
+              JSONObject response = callApi(payload, config);
 
-    if (response.has("error") && !response.isNull("error")) {
-      JSONObject error = response.getJSONObject("error");
-      String message = error.optString("message", response.toString());
-      logger.error("Azure Responses API error: {}", response);
-      return Flowable.error(new IllegalStateException("Azure Responses API error: " + message));
-    }
+              if (response.has("error") && !response.isNull("error")) {
+                JSONObject error = response.getJSONObject("error");
+                String message = error.optString("message", response.toString());
+                logger.error("Azure Responses API error: {}", response);
+                return Flowable.error(
+                    new IllegalStateException("Azure Responses API error: " + message));
+              }
 
-    GenerateContentResponseUsageMetadata usageMetadata = extractUsageMetadata(response);
-    LlmResponse llmResponse = parseOutputToLlmResponse(response, usageMetadata);
-    return Flowable.just(llmResponse);
+              GenerateContentResponseUsageMetadata usageMetadata = extractUsageMetadata(response);
+              LlmResponse llmResponse = parseOutputToLlmResponse(response, usageMetadata);
+              return Flowable.just(llmResponse);
+            })
+        .subscribeOn(Schedulers.io());
   }
 
   // ==================== Streaming ====================
@@ -185,304 +199,313 @@ public final class AzureRestTransport implements AzureTransport {
     logger.debug("Starting streaming request for model: {}", config.modelName());
     logger.debug("Streaming payload size: {} bytes", payload.toString().length());
 
-    return Flowable.create(
-        emitter -> {
-          BufferedReader reader = null;
-          try {
-            logger.debug("Opening SSE connection...");
-            reader = callApiStream(payload, config);
-            if (reader == null) {
-              logger.warn("Azure SSE reader is null — stream failed to open.");
-              emitter.onComplete();
-              return;
-            }
-            logger.debug("SSE connection opened successfully.");
-            long streamStartMs = System.currentTimeMillis();
-            int chunkCount = 0;
-
-            String lastEventName = null;
-            String line;
-            while ((line = reader.readLine()) != null) {
-              if (emitter.isCancelled()) {
-                logger.debug("Emitter cancelled, breaking out of read loop.");
-                break;
-              }
-
-              logger.debug(
-                  "SSE raw: {}", line.length() > 200 ? line.substring(0, 200) + "..." : line);
-
-              if (line.isEmpty()) continue;
-              if (line.startsWith("event:")) {
-                lastEventName = line.substring(6).trim();
-                continue;
-              }
-              if (!line.startsWith("data:")) continue;
-
-              String jsonStr = line.substring(5).trim();
-              if (jsonStr.equals("[DONE]")) {
-                long elapsed = System.currentTimeMillis() - streamStartMs;
-                logger.debug(
-                    "[DONE] marker received after {}ms, total chunks: {}", elapsed, chunkCount);
-                break;
-              }
-
-              chunkCount++;
-              JSONObject event;
+    return Flowable.<LlmResponse>create(
+            emitter -> {
+              BufferedReader reader = null;
               try {
-                event = new JSONObject(jsonStr);
-              } catch (JSONException e) {
-                logger.warn("Failed to parse SSE chunk #{}: {}", chunkCount, jsonStr);
-                continue;
-              }
+                logger.debug("Opening SSE connection...");
+                reader = callApiStream(payload, config);
+                if (reader == null) {
+                  logger.warn("Azure SSE reader is null — stream failed to open.");
+                  if (!emitter.isCancelled()) {
+                    emitter.onError(
+                        new LlmHttpException(-1, "Azure SSE stream failed to open", null));
+                  }
+                  return;
+                }
+                logger.debug("SSE connection opened successfully.");
+                long streamStartMs = System.currentTimeMillis();
+                int chunkCount = 0;
 
-              String eventType = event.optString("type", "");
-              if (eventType.isEmpty() && lastEventName != null) {
-                eventType = lastEventName;
-              }
-              lastEventName = null;
-
-              logger.debug(
-                  "SSE chunk #{} eventType='{}' keys={}", chunkCount, eventType, event.keySet());
-
-              switch (eventType) {
-                case "response.output_item.added":
-                  {
-                    JSONObject item = event.optJSONObject("item");
-                    if (item == null) break;
-                    String itemType = item.optString("type", "");
-                    if ("function_call".equals(itemType)) {
-                      inFunctionCall.set(true);
-                      String name = item.optString("name", "");
-                      String callId = item.optString("call_id", "");
-                      logger.debug("Function call starting: name='{}' callId='{}'", name, callId);
-                      if (!name.isEmpty()) functionCallName.append(name);
-                      if (!callId.isEmpty()) functionCallCallId.append(callId);
-                    } else if ("reasoning".equals(itemType)) {
-                      emitter.onNext(
-                          LlmResponse.builder()
-                              .content(
-                                  Content.builder()
-                                      .role("model")
-                                      .parts(Part.fromText("\ud83e\udde0 Thinking...\n"))
-                                      .build())
-                              .partial(true)
-                              .build());
-                    }
+                String lastEventName = null;
+                String line;
+                while ((line = reader.readLine()) != null) {
+                  if (emitter.isCancelled()) {
+                    logger.debug("Emitter cancelled, breaking out of read loop.");
                     break;
                   }
 
-                case "response.reasoning_summary_text.delta":
-                  {
-                    String delta = event.optString("delta", "");
-                    if (!delta.isEmpty()) {
-                      reasoningSummary.append(delta);
-                      emitter.onNext(
-                          LlmResponse.builder()
-                              .content(
-                                  Content.builder()
-                                      .role("model")
-                                      .parts(Part.fromText(delta))
-                                      .build())
-                              .partial(true)
-                              .build());
-                    }
+                  logger.debug(
+                      "SSE raw: {}", line.length() > 200 ? line.substring(0, 200) + "..." : line);
+
+                  if (line.isEmpty()) continue;
+                  if (line.startsWith("event:")) {
+                    lastEventName = line.substring(6).trim();
+                    continue;
+                  }
+                  if (!line.startsWith("data:")) continue;
+
+                  String jsonStr = line.substring(5).trim();
+                  if (jsonStr.equals("[DONE]")) {
+                    long elapsed = System.currentTimeMillis() - streamStartMs;
+                    logger.debug(
+                        "[DONE] marker received after {}ms, total chunks: {}", elapsed, chunkCount);
                     break;
                   }
 
-                case "response.reasoning_summary_text.done":
-                  {
-                    emitter.onNext(
-                        LlmResponse.builder()
-                            .content(
-                                Content.builder()
-                                    .role("model")
-                                    .parts(Part.fromText("\n\n"))
-                                    .build())
-                            .partial(true)
-                            .build());
-                    break;
+                  chunkCount++;
+                  JSONObject event;
+                  try {
+                    event = new JSONObject(jsonStr);
+                  } catch (JSONException e) {
+                    logger.warn("Failed to parse SSE chunk #{}: {}", chunkCount, jsonStr);
+                    continue;
                   }
 
-                case "response.output_text.delta":
-                  {
-                    String delta = extractTextDeltaFromStreamEvent(event);
-                    if (!delta.isEmpty()) {
-                      accumulatedText.append(delta);
-                      emitter.onNext(
-                          LlmResponse.builder()
-                              .content(
-                                  Content.builder()
-                                      .role("model")
-                                      .parts(Part.fromText(delta))
-                                      .build())
-                              .partial(true)
-                              .build());
-                    }
-                    break;
+                  String eventType = event.optString("type", "");
+                  if (eventType.isEmpty() && lastEventName != null) {
+                    eventType = lastEventName;
                   }
+                  lastEventName = null;
 
-                case "response.output_text.done":
-                  {
-                    String fullText = event.optString("text", "");
-                    if (!fullText.isEmpty()) {
-                      accumulatedText.setLength(0);
-                      accumulatedText.append(fullText);
-                      finalTextEmitted.set(true);
-                      String finalContent = fullText;
-                      if (reasoningSummary.length() > 0) {
-                        finalContent =
-                            "\ud83e\udde0 **Thinking:**\n> "
-                                + reasoningSummary.toString().replace("\n", "\n> ")
-                                + "\n\n"
-                                + fullText;
-                      }
-                      emitter.onNext(
-                          LlmResponse.builder()
-                              .content(
-                                  Content.builder()
-                                      .role("model")
-                                      .parts(Part.fromText(finalContent))
-                                      .build())
-                              .partial(false)
-                              .build());
-                    }
-                    break;
-                  }
+                  logger.debug(
+                      "SSE chunk #{} eventType='{}' keys={}",
+                      chunkCount,
+                      eventType,
+                      event.keySet());
 
-                case "response.output_item.done":
-                  {
-                    if (finalTextEmitted.get()) break;
-                    JSONObject item = event.optJSONObject("item");
-                    if (item != null && "message".equals(item.optString("type"))) {
-                      String fullText = extractTextFromOutputMessageItem(item);
-                      if (!fullText.isEmpty()) {
-                        accumulatedText.setLength(0);
-                        accumulatedText.append(fullText);
-                        finalTextEmitted.set(true);
-                        String finalContent = fullText;
-                        if (reasoningSummary.length() > 0) {
-                          finalContent =
-                              "\ud83e\udde0 **Thinking:**\n> "
-                                  + reasoningSummary.toString().replace("\n", "\n> ")
-                                  + "\n\n"
-                                  + fullText;
+                  switch (eventType) {
+                    case "response.output_item.added":
+                      {
+                        JSONObject item = event.optJSONObject("item");
+                        if (item == null) break;
+                        String itemType = item.optString("type", "");
+                        if ("function_call".equals(itemType)) {
+                          inFunctionCall.set(true);
+                          String name = item.optString("name", "");
+                          String callId = item.optString("call_id", "");
+                          logger.debug(
+                              "Function call starting: name='{}' callId='{}'", name, callId);
+                          if (!name.isEmpty()) functionCallName.append(name);
+                          if (!callId.isEmpty()) functionCallCallId.append(callId);
+                        } else if ("reasoning".equals(itemType)) {
+                          emitter.onNext(
+                              LlmResponse.builder()
+                                  .content(
+                                      Content.builder()
+                                          .role("model")
+                                          .parts(Part.fromText("\ud83e\udde0 Thinking...\n"))
+                                          .build())
+                                  .partial(true)
+                                  .build());
                         }
+                        break;
+                      }
+
+                    case "response.reasoning_summary_text.delta":
+                      {
+                        String delta = event.optString("delta", "");
+                        if (!delta.isEmpty()) {
+                          reasoningSummary.append(delta);
+                          emitter.onNext(
+                              LlmResponse.builder()
+                                  .content(
+                                      Content.builder()
+                                          .role("model")
+                                          .parts(Part.fromText(delta))
+                                          .build())
+                                  .partial(true)
+                                  .build());
+                        }
+                        break;
+                      }
+
+                    case "response.reasoning_summary_text.done":
+                      {
                         emitter.onNext(
                             LlmResponse.builder()
                                 .content(
                                     Content.builder()
                                         .role("model")
-                                        .parts(Part.fromText(finalContent))
+                                        .parts(Part.fromText("\n\n"))
                                         .build())
-                                .partial(false)
+                                .partial(true)
                                 .build());
+                        break;
                       }
-                    }
-                    break;
-                  }
 
-                case "response.function_call_arguments.delta":
-                  {
-                    String delta = extractTextDeltaFromStreamEvent(event);
-                    if (!delta.isEmpty()) {
-                      functionCallArgs.append(delta);
-                    }
-                    break;
-                  }
-
-                case "response.function_call_arguments.done":
-                  {
-                    if (functionCallName.length() > 0) {
-                      String argsStr =
-                          functionCallArgs.length() > 0 ? functionCallArgs.toString() : "{}";
-                      Map<String, Object> args;
-                      try {
-                        args = new JSONObject(argsStr).toMap();
-                      } catch (JSONException e) {
-                        logger.warn("Failed to parse function args: {}", argsStr);
-                        args = Map.of();
+                    case "response.output_text.delta":
+                      {
+                        String delta = extractTextDeltaFromStreamEvent(event);
+                        if (!delta.isEmpty()) {
+                          accumulatedText.append(delta);
+                          emitter.onNext(
+                              LlmResponse.builder()
+                                  .content(
+                                      Content.builder()
+                                          .role("model")
+                                          .parts(Part.fromText(delta))
+                                          .build())
+                                  .partial(true)
+                                  .build());
+                        }
+                        break;
                       }
-                      FunctionCall fc =
-                          FunctionCall.builder()
-                              .name(functionCallName.toString())
-                              .args(args)
-                              .build();
-                      emitter.onNext(
-                          LlmResponse.builder()
-                              .content(
-                                  Content.builder()
-                                      .role("model")
-                                      .parts(
-                                          ImmutableList.of(Part.builder().functionCall(fc).build()))
-                                      .build())
-                              .partial(false)
-                              .build());
-                    }
-                    break;
-                  }
 
-                case "response.completed":
-                  {
-                    JSONObject resp = event.optJSONObject("response");
-                    if (resp != null) {
-                      JSONObject usage = resp.optJSONObject("usage");
-                      if (usage != null) {
-                        inputTokens.set(usage.optInt("input_tokens", 0));
-                        outputTokens.set(usage.optInt("output_tokens", 0));
-                        logger.debug(
-                            "Stream token usage — input: {}, output: {}",
-                            inputTokens.get(),
-                            outputTokens.get());
+                    case "response.output_text.done":
+                      {
+                        String fullText = event.optString("text", "");
+                        if (!fullText.isEmpty()) {
+                          accumulatedText.setLength(0);
+                          accumulatedText.append(fullText);
+                          finalTextEmitted.set(true);
+                          String finalContent = fullText;
+                          if (reasoningSummary.length() > 0) {
+                            finalContent =
+                                "\ud83e\udde0 **Thinking:**\n> "
+                                    + reasoningSummary.toString().replace("\n", "\n> ")
+                                    + "\n\n"
+                                    + fullText;
+                          }
+                          emitter.onNext(
+                              LlmResponse.builder()
+                                  .content(
+                                      Content.builder()
+                                          .role("model")
+                                          .parts(Part.fromText(finalContent))
+                                          .build())
+                                  .partial(false)
+                                  .build());
+                        }
+                        break;
                       }
-                    }
-                    break;
+
+                    case "response.output_item.done":
+                      {
+                        if (finalTextEmitted.get()) break;
+                        JSONObject item = event.optJSONObject("item");
+                        if (item != null && "message".equals(item.optString("type"))) {
+                          String fullText = extractTextFromOutputMessageItem(item);
+                          if (!fullText.isEmpty()) {
+                            accumulatedText.setLength(0);
+                            accumulatedText.append(fullText);
+                            finalTextEmitted.set(true);
+                            String finalContent = fullText;
+                            if (reasoningSummary.length() > 0) {
+                              finalContent =
+                                  "\ud83e\udde0 **Thinking:**\n> "
+                                      + reasoningSummary.toString().replace("\n", "\n> ")
+                                      + "\n\n"
+                                      + fullText;
+                            }
+                            emitter.onNext(
+                                LlmResponse.builder()
+                                    .content(
+                                        Content.builder()
+                                            .role("model")
+                                            .parts(Part.fromText(finalContent))
+                                            .build())
+                                    .partial(false)
+                                    .build());
+                          }
+                        }
+                        break;
+                      }
+
+                    case "response.function_call_arguments.delta":
+                      {
+                        String delta = extractTextDeltaFromStreamEvent(event);
+                        if (!delta.isEmpty()) {
+                          functionCallArgs.append(delta);
+                        }
+                        break;
+                      }
+
+                    case "response.function_call_arguments.done":
+                      {
+                        if (functionCallName.length() > 0) {
+                          String argsStr =
+                              functionCallArgs.length() > 0 ? functionCallArgs.toString() : "{}";
+                          Map<String, Object> args;
+                          try {
+                            args = new JSONObject(argsStr).toMap();
+                          } catch (JSONException e) {
+                            logger.warn("Failed to parse function args: {}", argsStr);
+                            args = Map.of();
+                          }
+                          FunctionCall fc =
+                              FunctionCall.builder()
+                                  .name(functionCallName.toString())
+                                  .args(args)
+                                  .build();
+                          emitter.onNext(
+                              LlmResponse.builder()
+                                  .content(
+                                      Content.builder()
+                                          .role("model")
+                                          .parts(
+                                              ImmutableList.of(
+                                                  Part.builder().functionCall(fc).build()))
+                                          .build())
+                                  .partial(false)
+                                  .build());
+                        }
+                        break;
+                      }
+
+                    case "response.completed":
+                      {
+                        JSONObject resp = event.optJSONObject("response");
+                        if (resp != null) {
+                          JSONObject usage = resp.optJSONObject("usage");
+                          if (usage != null) {
+                            inputTokens.set(usage.optInt("input_tokens", 0));
+                            outputTokens.set(usage.optInt("output_tokens", 0));
+                            logger.debug(
+                                "Stream token usage — input: {}, output: {}",
+                                inputTokens.get(),
+                                outputTokens.get());
+                          }
+                        }
+                        break;
+                      }
+
+                    default:
+                      break;
                   }
+                }
 
-                default:
-                  break;
-              }
-            }
+                long totalElapsed = System.currentTimeMillis() - streamStartMs;
+                logger.debug(
+                    "Stream read loop finished — elapsed: {}ms, chunks: {}, accumulatedText: {} chars,"
+                        + " finalTextEmitted: {}, inFunctionCall: {}",
+                    totalElapsed,
+                    chunkCount,
+                    accumulatedText.length(),
+                    finalTextEmitted.get(),
+                    inFunctionCall.get());
 
-            long totalElapsed = System.currentTimeMillis() - streamStartMs;
-            logger.debug(
-                "Stream read loop finished — elapsed: {}ms, chunks: {}, accumulatedText: {} chars,"
-                    + " finalTextEmitted: {}, inFunctionCall: {}",
-                totalElapsed,
-                chunkCount,
-                accumulatedText.length(),
-                finalTextEmitted.get(),
-                inFunctionCall.get());
-
-            if (!emitter.isCancelled()) {
-              if (!finalTextEmitted.get()) {
-                emitFinalStreamResponse(
-                    emitter,
-                    accumulatedText,
-                    inFunctionCall,
-                    functionCallName,
-                    functionCallArgs,
-                    inputTokens.get(),
-                    outputTokens.get());
-              }
-              emitter.onComplete();
-            }
-          } catch (IOException e) {
-            logger.error("IOException in Azure stream", e);
-            if (!emitter.isCancelled()) emitter.onError(e);
-          } catch (Exception e) {
-            logger.error("Error in Azure streaming", e);
-            if (!emitter.isCancelled()) emitter.onError(e);
-          } finally {
-            if (reader != null) {
-              try {
-                reader.close();
+                if (!emitter.isCancelled()) {
+                  if (!finalTextEmitted.get()) {
+                    emitFinalStreamResponse(
+                        emitter,
+                        accumulatedText,
+                        inFunctionCall,
+                        functionCallName,
+                        functionCallArgs,
+                        inputTokens.get(),
+                        outputTokens.get());
+                  }
+                  emitter.onComplete();
+                }
               } catch (IOException e) {
-                logger.error("Error closing stream reader", e);
+                logger.error("IOException in Azure stream", e);
+                if (!emitter.isCancelled()) emitter.onError(e);
+              } catch (Exception e) {
+                logger.error("Error in Azure streaming", e);
+                if (!emitter.isCancelled()) emitter.onError(e);
+              } finally {
+                if (reader != null) {
+                  try {
+                    reader.close();
+                  } catch (IOException e) {
+                    logger.error("Error closing stream reader", e);
+                  }
+                }
               }
-            }
-          }
-        },
-        io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER);
+            },
+            io.reactivex.rxjava3.core.BackpressureStrategy.BUFFER)
+        .subscribeOn(Schedulers.io());
   }
 
   // ==================== Helpers ====================
@@ -628,20 +651,39 @@ public final class AzureRestTransport implements AzureTransport {
         return new JSONObject(response.body());
       } else {
         logger.error("Azure API error: status={} body={}", statusCode, response.body());
-        try {
-          return new JSONObject(response.body());
-        } catch (JSONException e) {
-          return new JSONObject().put("error", response.body());
-        }
+        // Surface the status code as a typed exception so FailoverLlm can classify and fail over
+        // instead of silently returning an error body.
+        throw new LlmHttpException(
+            statusCode, extractAzureErrorMessage(response.body()), response.body());
       }
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
       logger.error("HTTP request interrupted for Azure Responses API", ex);
-      return new JSONObject().put("error", ex.getMessage());
+      throw new LlmHttpException(-1, "Azure Responses API request interrupted", null, ex);
     } catch (IOException ex) {
       logger.error("HTTP request failed for Azure Responses API", ex);
-      return new JSONObject().put("error", ex.getMessage());
+      throw new LlmHttpException(
+          -1, "Azure Responses API request failed: " + ex.getMessage(), null, ex);
     }
+  }
+
+  private static String extractAzureErrorMessage(String body) {
+    if (body == null || body.isEmpty()) {
+      return null;
+    }
+    try {
+      JSONObject json = new JSONObject(body);
+      if (json.has("error") && !json.isNull("error")) {
+        Object error = json.get("error");
+        if (error instanceof JSONObject) {
+          return ((JSONObject) error).optString("message", body);
+        }
+        return error.toString();
+      }
+    } catch (JSONException ignored) {
+      // Not JSON; fall through to raw body.
+    }
+    return body;
   }
 
   private BufferedReader callApiStream(JSONObject payload, AzureConfig config) {
@@ -668,24 +710,27 @@ public final class AzureRestTransport implements AzureTransport {
       if (statusCode >= 200 && statusCode < 300) {
         return new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8));
       } else {
+        StringBuilder errorBody = new StringBuilder();
         try (BufferedReader errorReader =
             new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
-          StringBuilder errorBody = new StringBuilder();
           String errorLine;
           while ((errorLine = errorReader.readLine()) != null) {
             errorBody.append(errorLine);
           }
           logger.error("Azure streaming failed: status={} body={}", statusCode, errorBody);
         }
-        return null;
+        // Surface the status so FailoverLlm can classify and fail over rather than complete empty.
+        throw new LlmHttpException(
+            statusCode, extractAzureErrorMessage(errorBody.toString()), errorBody.toString());
       }
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
       logger.error("HTTP request interrupted for Azure streaming", ex);
-      return null;
+      throw new LlmHttpException(-1, "Azure streaming request interrupted", null, ex);
     } catch (IOException ex) {
       logger.error("HTTP request failed for Azure streaming", ex);
-      return null;
+      throw new LlmHttpException(
+          -1, "Azure streaming request failed: " + ex.getMessage(), null, ex);
     }
   }
 
