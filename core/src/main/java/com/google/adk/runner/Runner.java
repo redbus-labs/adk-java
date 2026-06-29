@@ -749,11 +749,7 @@ public class Runner {
                       updatedInvocationContext
                           .agent()
                           .runLive(updatedInvocationContext)
-                          // .doOnNext(event -> this.sessionService.appendEvent(session, event)) //
-                          // Commented out to prevent storing live events in DB
-                          // Run onEventCallback for each live event so plugins can observe or
-                          // replace it (e.g. token-usage tracking). Mirrors the non-live runImpl
-                          // path; the persisted event above is unaffected by the callback result.
+                          .doOnNext(event -> this.sessionService.appendEvent(session, event)) 
                           .concatMapSingle(
                               event -> {
                                 return updatedInvocationContext
