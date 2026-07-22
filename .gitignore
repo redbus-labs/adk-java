@@ -40,3 +40,6 @@ contrib/samples/**/bin/
 mkpro_logs.db
 
 
+
+# flatten-maven-plugin
+.flattened-pom.xml
