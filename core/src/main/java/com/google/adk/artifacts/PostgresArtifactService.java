@@ -307,7 +307,7 @@ public final class PostgresArtifactService implements BaseArtifactService {
       return;
     }
     String key = buildObjectKey(appName, userId, sessionId, filename, version);
-    
+
     // Construct an HTTPS URL instead of an s3:// path
     String region = getenvOrNull("S3_REGION");
     String fileUri;
