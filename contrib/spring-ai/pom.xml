@@ -191,6 +191,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <excludes>
+                        <!-- Integration tests require live API keys and are run via failsafe in the integration-tests profile -->
+                        <exclude>**/integrations/*IntegrationTest.java</exclude>
+                    </excludes>
                     <systemPropertyVariables>
                         <!-- Environment variables for integration tests -->
                         <OPENAI_API_KEY>${env.OPENAI_API_KEY}</OPENAI_API_KEY>
@@ -221,6 +225,9 @@
                             </execution>
                         </executions>
                         <configuration>
+                            <includes>
+                                <include>**/integrations/*IntegrationTest.java</include>
+                            </includes>
                             <systemPropertyVariables>
                                 <OPENAI_API_KEY>${env.OPENAI_API_KEY}</OPENAI_API_KEY>
                                 <ANTHROPIC_API_KEY>${env.ANTHROPIC_API_KEY}</ANTHROPIC_API_KEY>
