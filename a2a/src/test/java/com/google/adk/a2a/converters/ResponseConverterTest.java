@@ -47,6 +47,7 @@ import io.a2a.spec.TaskStatus;
 import io.a2a.spec.TaskStatusUpdateEvent;
 import io.a2a.spec.TextPart;
 import io.reactivex.rxjava3.core.Flowable;
+import java.util.List;
 import java.util.Optional;
 import org.junit.Before;
 import org.junit.Test;
@@ -270,6 +271,79 @@ public final class ResponseConverterTest {
     Event event = ResponseConverter.taskToEvent(task, invocationContext);
     assertThat(event).isNotNull();
     assertThat(event.longRunningToolIds().get()).containsExactly("call_123", "msg_123");
+  }
+
+  @Test
+  public void taskToEvent_withDataPartWithoutMetadata_doesNotThrow() {
+    DataPart dataPart =
+        new DataPart(
+            ImmutableMap.of("name", "myTool", "id", "call_123", "args", ImmutableMap.of()));
+    DataPart statusDataPart =
+        new DataPart(
+            ImmutableMap.of("name", "messageTool", "id", "msg_123", "args", ImmutableMap.of()));
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(statusDataPart))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.INPUT_REQUIRED, statusMessage, null);
+    Artifact artifact =
+        new Artifact.Builder().artifactId("artifact-1").parts(ImmutableList.of(dataPart)).build();
+    Task task = testTask().status(status).artifacts(ImmutableList.of(artifact)).build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+
+    assertThat(event.longRunningToolIds().get()).isEmpty();
+    List<com.google.genai.types.Part> parts = event.content().get().parts().get();
+    assertThat(parts).hasSize(2);
+    assertThat(parts.get(0).functionCall().get().id()).hasValue("call_123");
+    assertThat(parts.get(1).functionCall().get().id()).hasValue("msg_123");
+  }
+
+  @Test
+  public void artifactToEvent_withDataPartWithoutMetadata_doesNotThrow() {
+    DataPart dataPart =
+        new DataPart(
+            ImmutableMap.of("name", "myTool", "id", "call_123", "args", ImmutableMap.of()));
+    Artifact artifact =
+        new Artifact.Builder().artifactId("artifact-1").parts(ImmutableList.of(dataPart)).build();
+
+    Event event = ResponseConverter.artifactToEvent(artifact, invocationContext);
+
+    assertThat(event.longRunningToolIds().get()).isEmpty();
+    List<com.google.genai.types.Part> parts = event.content().get().parts().get();
+    assertThat(parts).hasSize(1);
+    assertThat(parts.get(0).functionCall().get().id()).hasValue("call_123");
+  }
+
+  @Test
+  public void taskToEvent_withMixedMetadataParts_keepsLongRunningId() {
+    DataPart noMetadataPart =
+        new DataPart(
+            ImmutableMap.of("name", "plainTool", "id", "call_plain", "args", ImmutableMap.of()));
+    DataPart longRunningPart =
+        new DataPart(
+            ImmutableMap.of("name", "lrTool", "id", "call_lr", "args", ImmutableMap.of()),
+            ImmutableMap.of(
+                A2AMetadataKey.TYPE.getType(),
+                "function_call",
+                A2AMetadataKey.IS_LONG_RUNNING.getType(),
+                true));
+    Artifact artifact =
+        new Artifact.Builder()
+            .artifactId("artifact-1")
+            .parts(ImmutableList.of(noMetadataPart, longRunningPart))
+            .build();
+    Task task =
+        testTask()
+            .status(new TaskStatus(TaskState.INPUT_REQUIRED, null, null))
+            .artifacts(ImmutableList.of(artifact))
+            .build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+
+    assertThat(event.longRunningToolIds().get()).containsExactly("call_lr");
+    assertThat(event.content().get().parts().get()).hasSize(2);
   }
 
   @Test

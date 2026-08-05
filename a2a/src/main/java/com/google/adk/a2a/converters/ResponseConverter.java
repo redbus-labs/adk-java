@@ -91,6 +91,11 @@ public final class ResponseConverter {
     return Objects.equals(metadata.getOrDefault(A2AMetadataKey.PARTIAL.getType(), false), true);
   }
 
+  private static boolean isLongRunning(@Nullable Map<String, Object> metadata) {
+    return metadata != null
+        && Objects.equals(metadata.get(A2AMetadataKey.IS_LONG_RUNNING.getType()), true);
+  }
+
   /**
    * Converts a A2A {@link TaskUpdateEvent} to an ADK {@link Event}, if applicable. Returns null if
    * the event is not a final update for TaskArtifactUpdateEvent or if the message is empty for
@@ -266,9 +271,8 @@ public final class ResponseConverter {
               if (!(part instanceof DataPart dataPart)) {
                 return Optional.<String>empty();
               }
-              Object isLongRunning =
-                  dataPart.getMetadata().get(A2AMetadataKey.IS_LONG_RUNNING.getType());
-              if (!Objects.equals(isLongRunning, true)) {
+              // A2A peers may omit metadata entirely, which deserializes to null.
+              if (!isLongRunning(dataPart.getMetadata())) {
                 return Optional.<String>empty();
               }
               if (convertedPart.functionCall().isEmpty()) {
