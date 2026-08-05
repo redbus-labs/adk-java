@@ -17,6 +17,7 @@
 package com.google.adk.a2a.converters;
 
 import static com.google.common.truth.Truth.assertThat;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
 import static org.junit.Assert.assertThrows;
 
@@ -274,7 +275,7 @@ public final class ResponseConverterTest {
   }
 
   @Test
-  public void taskToEvent_withDataPartWithoutMetadata_doesNotThrow() {
+  public void taskToEvent_withDataPartWithoutMetadata_fallsBackToInlineJson() {
     DataPart dataPart =
         new DataPart(
             ImmutableMap.of("name", "myTool", "id", "call_123", "args", ImmutableMap.of()));
@@ -296,12 +297,14 @@ public final class ResponseConverterTest {
     assertThat(event.longRunningToolIds().get()).isEmpty();
     List<com.google.genai.types.Part> parts = event.content().get().parts().get();
     assertThat(parts).hasSize(2);
-    assertThat(parts.get(0).functionCall().get().id()).hasValue("call_123");
-    assertThat(parts.get(1).functionCall().get().id()).hasValue("msg_123");
+    assertThat(parts.get(0).functionCall()).isEmpty();
+    assertThat(inlineJson(parts.get(0))).contains("call_123");
+    assertThat(parts.get(1).functionCall()).isEmpty();
+    assertThat(inlineJson(parts.get(1))).contains("msg_123");
   }
 
   @Test
-  public void artifactToEvent_withDataPartWithoutMetadata_doesNotThrow() {
+  public void artifactToEvent_withDataPartWithoutMetadata_fallsBackToInlineJson() {
     DataPart dataPart =
         new DataPart(
             ImmutableMap.of("name", "myTool", "id", "call_123", "args", ImmutableMap.of()));
@@ -313,7 +316,21 @@ public final class ResponseConverterTest {
     assertThat(event.longRunningToolIds().get()).isEmpty();
     List<com.google.genai.types.Part> parts = event.content().get().parts().get();
     assertThat(parts).hasSize(1);
-    assertThat(parts.get(0).functionCall().get().id()).hasValue("call_123");
+    assertThat(parts.get(0).functionCall()).isEmpty();
+    assertThat(inlineJson(parts.get(0))).contains("call_123");
+  }
+
+  /**
+   * {@return the wrapped JSON payload of a part that {@link PartConverter} carried through as
+   * generic data}
+   *
+   * <p>A DataPart with no {@code adk_type} metadata is not converted into a function call, even
+   * when its data is shaped like one; it is serialized into an inline JSON blob instead.
+   */
+  private static String inlineJson(com.google.genai.types.Part part) {
+    assertThat(part.inlineData()).isPresent();
+    assertThat(part.inlineData().get().mimeType()).hasValue("text/plain");
+    return new String(part.inlineData().get().data().get(), UTF_8);
   }
 
   @Test
