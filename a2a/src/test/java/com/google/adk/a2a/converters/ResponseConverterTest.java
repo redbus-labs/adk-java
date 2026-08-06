@@ -19,7 +19,6 @@ package com.google.adk.a2a.converters;
 import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.stream.Collectors.joining;
-import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.InvocationContext;
@@ -212,6 +211,92 @@ public final class ResponseConverterTest {
             CustomMetadata.builder().key("a2a:context_id").stringValue("context-1").build(),
             CustomMetadata.builder().key("test-key").stringValue("test-value").build())
         .inOrder();
+  }
+
+  @Test
+  public void taskToEvent_withMalformedMetadata_dropsFieldsAndConverts() {
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(new TextPart("Status message")))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.WORKING, statusMessage, null);
+    Task task =
+        testTask()
+            .status(status)
+            .artifacts(null)
+            .metadata(
+                ImmutableMap.of(
+                    A2AMetadataKey.GROUNDING_METADATA.getType(), "not-valid-json",
+                    A2AMetadataKey.USAGE_METADATA.getType(), "not-valid-json",
+                    A2AMetadataKey.CUSTOM_METADATA.getType(), "not-valid-json",
+                    A2AMetadataKey.ERROR_CODE.getType(), "not-valid-json"))
+            .build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+
+    assertThat(event.content().get().parts().get().get(0).text()).hasValue("Status message");
+    assertThat(event.groundingMetadata()).isEmpty();
+    assertThat(event.usageMetadata()).isEmpty();
+    assertThat(event.errorCode()).isEmpty();
+    assertThat(event.customMetadata().get())
+        .containsExactly(
+            CustomMetadata.builder().key("a2a:task_id").stringValue("task-1").build(),
+            CustomMetadata.builder().key("a2a:context_id").stringValue("context-1").build());
+  }
+
+  @Test
+  public void taskToEvent_withUnrecognizedMetadataField_dropsField() {
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(new TextPart("Status message")))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.WORKING, statusMessage, null);
+    Task task =
+        testTask()
+            .status(status)
+            .artifacts(null)
+            .metadata(
+                ImmutableMap.of(
+                    // A nested object takes the convertValue branch rather than readValue. The
+                    // genai builders reject unknown fields, so snake_case fails to convert.
+                    A2AMetadataKey.GROUNDING_METADATA.getType(),
+                    ImmutableMap.of("web_search_queries", ImmutableList.of("test-query"))))
+            .build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+
+    assertThat(event.groundingMetadata()).isEmpty();
+    assertThat(event.content().get().parts().get().get(0).text()).hasValue("Status message");
+  }
+
+  @Test
+  public void taskToEvent_withOneMalformedMetadataField_keepsTheValidFields() {
+    GroundingMetadata groundingMetadata =
+        GroundingMetadata.builder().webSearchQueries("test-query").build();
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(new TextPart("Status message")))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.WORKING, statusMessage, null);
+    Task task =
+        testTask()
+            .status(status)
+            .artifacts(null)
+            .metadata(
+                ImmutableMap.of(
+                    A2AMetadataKey.GROUNDING_METADATA.getType(),
+                    groundingMetadata.toJson(),
+                    A2AMetadataKey.USAGE_METADATA.getType(),
+                    "not-valid-json"))
+            .build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+
+    assertThat(event.groundingMetadata()).hasValue(groundingMetadata);
+    assertThat(event.usageMetadata()).isEmpty();
   }
 
   @Test
@@ -543,7 +628,7 @@ public final class ResponseConverterTest {
   }
 
   @Test
-  public void taskToEvent_withInvalidMetadata_throwsException() {
+  public void taskToEvent_withInvalidMetadata_dropsFieldInsteadOfThrowing() {
     Message statusMessage =
         new Message.Builder()
             .role(Message.Role.AGENT)
@@ -558,12 +643,10 @@ public final class ResponseConverterTest {
                 ImmutableMap.of(A2AMetadataKey.GROUNDING_METADATA.getType(), "{ invalid json ]"))
             .build();
 
-    IllegalArgumentException exception =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> ResponseConverter.taskToEvent(task, invocationContext));
-    assertThat(exception).hasMessageThat().contains("Failed to parse metadata");
-    assertThat(exception).hasMessageThat().contains("GroundingMetadata");
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+
+    assertThat(event.groundingMetadata()).isEmpty();
+    assertThat(event.content().get().parts().get().get(0).text()).hasValue("Status message");
   }
 
   @Test
