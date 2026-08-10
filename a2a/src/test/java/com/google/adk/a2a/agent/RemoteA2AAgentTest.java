@@ -18,6 +18,7 @@ package com.google.adk.a2a.agent;
 
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.adk.a2a.common.A2AClientError;
 import com.google.adk.a2a.common.A2AMetadata;
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.CallbackContext;
@@ -51,6 +53,7 @@ import io.a2a.spec.AgentCard;
 import io.a2a.spec.Artifact;
 import io.a2a.spec.DataPart;
 import io.a2a.spec.FilePart;
+import io.a2a.spec.FileWithBytes;
 import io.a2a.spec.FileWithUri;
 import io.a2a.spec.Message;
 import io.a2a.spec.Task;
@@ -61,11 +64,17 @@ import io.a2a.spec.TaskStatusUpdateEvent;
 import io.a2a.spec.TextPart;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
+import io.reactivex.rxjava3.plugins.RxJavaPlugins;
+import io.reactivex.rxjava3.subscribers.TestSubscriber;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import org.junit.Before;
@@ -298,6 +307,125 @@ public final class RemoteA2AAgentTest {
     assertText(events.get(0), 1, "world");
     assertRequestMetadata(events.get(0));
     assertResponseMetadata(events.get(0));
+  }
+
+  @Test
+  public void runAsync_whenConversionThrowsOnCallingThread_reportsError() {
+    RemoteA2AAgent agent = createAgent();
+    mockStreamResponse(consumer -> consumer.accept(unconvertibleEvent(), agentCard));
+
+    agent
+        .runAsync(invocationContext)
+        .test()
+        .awaitDone(5, SECONDS)
+        .assertError(A2AClientError.class)
+        .assertError(e -> e.getCause() instanceof IllegalArgumentException);
+  }
+
+  @Test
+  public void runAsync_whenConversionThrowsOnCallingThread_doesNotSignalTwice() {
+    List<Throwable> undeliverable = Collections.synchronizedList(new ArrayList<>());
+    io.reactivex.rxjava3.functions.Consumer<? super Throwable> previousHandler =
+        RxJavaPlugins.getErrorHandler();
+    RxJavaPlugins.setErrorHandler(undeliverable::add);
+    try {
+      RemoteA2AAgent agent = createAgent();
+      mockStreamResponse(consumer -> consumer.accept(unconvertibleEvent(), agentCard));
+
+      agent
+          .runAsync(invocationContext)
+          .test()
+          .awaitDone(5, SECONDS)
+          .assertError(A2AClientError.class);
+    } finally {
+      // Process-global; reset before asserting so a failure cannot leak it into the rest of the
+      // suite.
+      RxJavaPlugins.setErrorHandler(previousHandler);
+    }
+    // Rethrowing on the subscribe thread would land here via FlowableCreate.
+    assertThat(undeliverable).isEmpty();
+  }
+
+  @Test
+  public void runAsync_whenConversionThrowsOnSubscribeThreadAfterSendMessage_rethrows() {
+    RemoteA2AAgent agent = createAgent();
+    AtomicReference<BiConsumer<ClientEvent, AgentCard>> captured = new AtomicReference<>();
+    mockStreamResponse(captured::set); // capture, do not invoke
+
+    TestSubscriber<Event> subscriber = agent.runAsync(invocationContext).test();
+
+    // Subscribe thread, but sendMessage has already returned: the transport still needs the throw.
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> captured.get().accept(unconvertibleEvent(), agentCard));
+    subscriber.assertError(A2AClientError.class);
+  }
+
+  @Test
+  public void runAsync_whenConversionThrowsOnTransportThreadDuringSendMessage_rethrows() {
+    RemoteA2AAgent agent = createAgent();
+    AtomicReference<Throwable> escaped = new AtomicReference<>();
+    mockStreamResponse(
+        consumer -> {
+          Thread thread = new Thread(() -> consumer.accept(unconvertibleEvent(), agentCard));
+          thread.setName("a2a-fake-transport");
+          thread.setUncaughtExceptionHandler((t, e) -> escaped.set(e));
+          thread.start();
+          try {
+            thread.join(); // deliver while sendMessage is still on the stack
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+
+    agent
+        .runAsync(invocationContext)
+        .test()
+        .awaitDone(5, SECONDS)
+        .assertError(A2AClientError.class);
+    assertThat(escaped.get()).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  public void runAsync_whenConversionThrowsOnTransportThread_failsStream()
+      throws InterruptedException {
+    RemoteA2AAgent agent = createAgent();
+    CountDownLatch delivered = new CountDownLatch(1);
+    // Released once subscribe has returned, so delivery is deterministically *after* sendMessage.
+    CountDownLatch release = new CountDownLatch(1);
+    AtomicReference<Thread> deliveryThread = new AtomicReference<>();
+    AtomicReference<Throwable> escaped = new AtomicReference<>();
+    mockStreamResponse(
+        consumer -> {
+          Thread thread =
+              new Thread(
+                  () -> {
+                    try {
+                      release.await();
+                      consumer.accept(unconvertibleEvent(), agentCard);
+                    } catch (InterruptedException e) {
+                      Thread.currentThread().interrupt();
+                    } finally {
+                      delivered.countDown();
+                    }
+                  });
+          thread.setName("a2a-fake-transport");
+          thread.setUncaughtExceptionHandler((t, e) -> escaped.set(e));
+          thread.start();
+          deliveryThread.set(thread);
+        });
+
+    TestSubscriber<Event> subscriber = agent.runAsync(invocationContext).test();
+    release.countDown();
+    assertThat(delivered.await(5, SECONDS)).isTrue();
+
+    subscriber
+        .awaitDone(5, SECONDS)
+        .assertError(A2AClientError.class)
+        .assertError(e -> e.getCause() instanceof IllegalArgumentException);
+    deliveryThread.get().join();
+    // The failure must also leave the handler, so the transport can tear the connection down.
+    assertThat(escaped.get()).isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -794,6 +922,15 @@ public final class RemoteA2AAgentTest {
 
   private RemoteA2AAgent createAgent() {
     return getAgentBuilder().streaming(true).build();
+  }
+
+  /** An event whose file part carries invalid base64, so {@code PartConverter} cannot decode it. */
+  private ClientEvent unconvertibleEvent() {
+    return createTestEvent(
+        new FilePart(new FileWithBytes("text/plain", "bad.txt", "!!!")),
+        TaskState.WORKING,
+        true,
+        false);
   }
 
   @SuppressWarnings("unchecked") // cast for Mockito
