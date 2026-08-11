@@ -336,6 +336,9 @@ public class OllamaBaseLM extends BaseLlm {
     if (usageMetadata != null) {
       responseBuilder.usageMetadata(usageMetadata);
     }
+    // Populate modelVersion so downstream token logging (e.g. rae_tokens) can resolve
+    // the model name instead of falling back to "unknown".
+    responseBuilder.modelVersion(this.model());
 
     return Flowable.just(responseBuilder.build());
   }
@@ -590,6 +593,7 @@ public class OllamaBaseLM extends BaseLlm {
                 if (usageMetadata != null) {
                   aggregatedResponseBuilder.usageMetadata(usageMetadata);
                 }
+                aggregatedResponseBuilder.modelVersion(this.model());
 
                 responsesToEmit.add(aggregatedResponseBuilder.build());
               }
@@ -612,6 +616,7 @@ public class OllamaBaseLM extends BaseLlm {
                   if (usageMetadata != null) {
                     functionResponseBuilder.usageMetadata(usageMetadata);
                   }
+                  functionResponseBuilder.modelVersion(this.model());
 
                   responsesToEmit.add(functionResponseBuilder.build());
                 } catch (Exception funcEx) {
@@ -653,6 +658,7 @@ public class OllamaBaseLM extends BaseLlm {
     return LlmResponse.builder()
         .content(Content.builder().role("model").parts(Part.fromText(text)).build())
         .partial(partial)
+        .modelVersion(this.model())
         .build();
   }
 
