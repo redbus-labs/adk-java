@@ -285,11 +285,16 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
 
   @Override
   public Completable sendRealtime(Blob blob) {
+    // Live API deprecated realtime_input.media_chunks (SDK .media()). Use audio/video/text.
+    LiveSendRealtimeInputParameters.Builder params = LiveSendRealtimeInputParameters.builder();
+    String mimeType = blob.mimeType().orElse("");
+    if (mimeType.startsWith("image/") || mimeType.startsWith("video/")) {
+      params.video(blob);
+    } else {
+      params.audio(blob);
+    }
     return Completable.fromFuture(
-        sessionFuture.thenCompose(
-            session ->
-                session.sendRealtimeInput(
-                    LiveSendRealtimeInputParameters.builder().media(blob).build())));
+        sessionFuture.thenCompose(session -> session.sendRealtimeInput(params.build())));
   }
 
   /** Helper to send client content parameters. */
