@@ -41,6 +41,7 @@ import io.reactivex.rxjava3.disposables.CompositeDisposable;
 import io.reactivex.rxjava3.processors.PublishProcessor;
 import java.net.SocketException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -287,9 +288,18 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
   public Completable sendRealtime(Blob blob) {
     return Completable.fromFuture(
         sessionFuture.thenCompose(
-            session ->
-                session.sendRealtimeInput(
-                    LiveSendRealtimeInputParameters.builder().media(blob).build())));
+            session -> session.sendRealtimeInput(buildRealtimeInputParameters(blob))));
+  }
+
+  static LiveSendRealtimeInputParameters buildRealtimeInputParameters(Blob blob) {
+    LiveSendRealtimeInputParameters.Builder builder = LiveSendRealtimeInputParameters.builder();
+    String mimeType = blob.mimeType().orElse("").toLowerCase(Locale.ROOT);
+    if (mimeType.startsWith("video/") || mimeType.startsWith("image/")) {
+      builder.video(blob);
+    } else {
+      builder.audio(blob);
+    }
+    return builder.build();
   }
 
   /** Helper to send client content parameters. */
