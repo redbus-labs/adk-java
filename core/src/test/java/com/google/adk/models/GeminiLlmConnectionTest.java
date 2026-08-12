@@ -20,9 +20,11 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.genai.types.Blob;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
+import com.google.genai.types.LiveSendRealtimeInputParameters;
 import com.google.genai.types.LiveServerContent;
 import com.google.genai.types.LiveServerMessage;
 import com.google.genai.types.LiveServerSetupComplete;
@@ -38,6 +40,30 @@ import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public final class GeminiLlmConnectionTest {
+
+  @Test
+  public void buildRealtimeInputParameters_withAudioBlob_usesAudioField() {
+    Blob blob = Blob.builder().mimeType("audio/pcm;rate=16000").data(new byte[] {1, 2}).build();
+
+    LiveSendRealtimeInputParameters parameters =
+        GeminiLlmConnection.buildRealtimeInputParameters(blob);
+
+    assertThat(parameters.audio()).hasValue(blob);
+    assertThat(parameters.video()).isEmpty();
+    assertThat(parameters.media()).isEmpty();
+  }
+
+  @Test
+  public void buildRealtimeInputParameters_withVideoBlob_usesVideoField() {
+    Blob blob = Blob.builder().mimeType("video/mp4").data(new byte[] {1, 2}).build();
+
+    LiveSendRealtimeInputParameters parameters =
+        GeminiLlmConnection.buildRealtimeInputParameters(blob);
+
+    assertThat(parameters.video()).hasValue(blob);
+    assertThat(parameters.audio()).isEmpty();
+    assertThat(parameters.media()).isEmpty();
+  }
 
   @Test
   public void convertToServerResponse_withInterruptedTrue_mapsInterruptedField() {
