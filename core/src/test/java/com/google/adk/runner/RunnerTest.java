@@ -31,6 +31,7 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -368,6 +369,33 @@ public final class RunnerTest {
         .assertError(exception);
 
     verify(plugin).afterRunCallback(any());
+  }
+
+  @Test
+  public void onRunErrorCallback_isCalled() {
+    Exception exception = new Exception("test run error");
+    TestLlm failingTestLlm = createTestLlm(Flowable.error(exception));
+    LlmAgent failingAgent = createTestAgentBuilder(failingTestLlm).build();
+
+    Runner failingRunner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name("test")
+                    .rootAgent(failingAgent)
+                    .plugins(ImmutableList.of(plugin))
+                    .build())
+            .sessionService(this.runner.sessionService())
+            .build();
+
+    when(plugin.onRunErrorCallback(any(), any())).thenReturn(Completable.complete());
+
+    failingRunner
+        .runAsync("user", session.id(), createContent("from user"))
+        .test()
+        .assertError(exception);
+
+    verify(plugin).onRunErrorCallback(any(), eq(exception));
   }
 
   @Test
