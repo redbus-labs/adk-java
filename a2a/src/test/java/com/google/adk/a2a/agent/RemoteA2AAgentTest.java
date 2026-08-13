@@ -46,6 +46,7 @@ import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.a2a.client.Client;
 import io.a2a.client.ClientEvent;
+import io.a2a.client.MessageEvent;
 import io.a2a.client.TaskEvent;
 import io.a2a.client.TaskUpdateEvent;
 import io.a2a.spec.AgentCapabilities;
@@ -889,6 +890,47 @@ public final class RemoteA2AAgentTest {
     return createTestEvent(new TextPart(text), TaskState.COMPLETED, false, false);
   }
 
+  private ClientEvent createTerminalStatusUpdateEvent(String message, TaskState state) {
+    Task task =
+        new Task.Builder()
+            .id("task-id-1")
+            .contextId("context-1")
+            .status(new TaskStatus(state))
+            .build();
+    TaskStatusUpdateEvent statusUpdate =
+        new TaskStatusUpdateEvent.Builder()
+            .taskId("task-id-1")
+            .contextId("context-1")
+            .status(
+                new TaskStatus(
+                    state,
+                    new Message.Builder()
+                        .role(Message.Role.AGENT)
+                        .parts(ImmutableList.of(new TextPart(message)))
+                        .build(),
+                    null))
+            .build();
+    return new TaskUpdateEvent(task, statusUpdate);
+  }
+
+  private ClientEvent createFailedEvent(String errorMessage) {
+    return createTerminalStatusUpdateEvent(errorMessage, TaskState.FAILED);
+  }
+
+  private ClientEvent createCanceledEvent(String message) {
+    return createTerminalStatusUpdateEvent(message, TaskState.CANCELED);
+  }
+
+  private ClientEvent createMessageEvent(String text) {
+    Message message =
+        new Message.Builder()
+            .messageId("msg-id-1")
+            .role(Message.Role.AGENT)
+            .parts(new TextPart(text))
+            .build();
+    return new MessageEvent(message);
+  }
+
   private ClientEvent createTestEvent(
       io.a2a.spec.Part<?> part, TaskState state, boolean append, boolean lastChunk) {
     Artifact artifact =
@@ -914,6 +956,100 @@ public final class RemoteA2AAgentTest {
             .taskId("task-id-1")
             .build();
     return new TaskUpdateEvent(task, updateEvent);
+  }
+
+  @Test
+  public void runAsync_terminatesOnFailureTaskState() {
+    RemoteA2AAgent agent = createAgent();
+    mockStreamResponse(
+        consumer -> {
+          consumer.accept(createPartialEvent("Processing data...", true, false), agentCard);
+          consumer.accept(createFailedEvent("Internal Server Error"), agentCard);
+        });
+
+    List<Event> events = agent.runAsync(invocationContext).toList().blockingGet();
+
+    // The stream must terminate cleanly and include the final event with error info.
+    assertThat(events).hasSize(2);
+    assertText(events.get(0), "Processing data...");
+    assertText(events.get(1), "Processing data..."); // aggregated/merged
+    assertThat(events.get(1).errorMessage().orElse(null)).isEqualTo("Internal Server Error");
+  }
+
+  @Test
+  public void runAsync_terminatesOnCanceledTaskState() {
+    RemoteA2AAgent agent = createAgent();
+    mockStreamResponse(
+        consumer -> {
+          consumer.accept(createPartialEvent("Processing data...", true, false), agentCard);
+          consumer.accept(createCanceledEvent("Execution Canceled"), agentCard);
+        });
+
+    List<Event> events = agent.runAsync(invocationContext).toList().blockingGet();
+
+    // The stream must terminate cleanly and include the final event with cancellation info.
+    assertThat(events).hasSize(3);
+    assertText(events.get(0), "Processing data...");
+    assertText(events.get(1), "Processing data..."); // aggregated
+    assertText(events.get(2), "Execution Canceled"); // terminal canceled event
+  }
+
+  @Test
+  public void runAsync_terminatesOnInputRequiredTaskState() {
+    RemoteA2AAgent agent = createAgent();
+    mockStreamResponse(
+        consumer -> {
+          consumer.accept(createPartialEvent("Processing data...", true, false), agentCard);
+          consumer.accept(
+              createTerminalStatusUpdateEvent("User Action Needed", TaskState.INPUT_REQUIRED),
+              agentCard);
+        });
+
+    List<Event> events = agent.runAsync(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(3);
+    assertText(events.get(0), "Processing data...");
+    assertText(events.get(1), "Processing data..."); // aggregated
+    assertText(events.get(2), "User Action Needed");
+  }
+
+  @Test
+  public void runAsync_terminatesOnRejectedTaskState() {
+    RemoteA2AAgent agent = createAgent();
+    mockStreamResponse(
+        consumer -> {
+          consumer.accept(createPartialEvent("Analyzing request...", true, false), agentCard);
+          consumer.accept(
+              createTerminalStatusUpdateEvent("Execution Rejected by Policy", TaskState.REJECTED),
+              agentCard);
+        });
+
+    List<Event> events = agent.runAsync(invocationContext).toList().blockingGet();
+
+    assertThat(events).hasSize(3);
+    assertText(events.get(0), "Analyzing request...");
+    assertText(events.get(1), "Analyzing request..."); // aggregated
+    assertText(events.get(2), "Execution Rejected by Policy");
+  }
+
+  @Test
+  public void runAsync_doesNotTerminateOnMessageEvent() {
+    RemoteA2AAgent agent = createAgent();
+    mockStreamResponse(
+        consumer -> {
+          consumer.accept(createPartialEvent("Processing data...", true, false), agentCard);
+          consumer.accept(createMessageEvent("Standard chat update message"), agentCard);
+          consumer.accept(createFinalEvent("Done"), agentCard);
+        });
+
+    List<Event> events = agent.runAsync(invocationContext).toList().blockingGet();
+
+    // The stream must not terminate early on MessageEvent, and run until createFinalEvent.
+    assertThat(events).hasSize(4);
+    assertText(events.get(0), "Processing data...");
+    assertText(events.get(1), "Processing data..."); // aggregated (flushed)
+    assertText(events.get(2), "Standard chat update message"); // message event
+    assertText(events.get(3), "Done"); // terminal completed event
   }
 
   private RemoteA2AAgent.Builder getAgentBuilder() {

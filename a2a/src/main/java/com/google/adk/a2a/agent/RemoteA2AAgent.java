@@ -36,6 +36,7 @@ import com.google.genai.types.CustomMetadata;
 import com.google.genai.types.Part;
 import io.a2a.client.Client;
 import io.a2a.client.ClientEvent;
+import io.a2a.client.MessageEvent;
 import io.a2a.client.TaskEvent;
 import io.a2a.client.TaskUpdateEvent;
 import io.a2a.spec.A2AClientException;
@@ -580,13 +581,15 @@ public class RemoteA2AAgent extends BaseAgent {
   }
 
   private static boolean isCompleted(ClientEvent event) {
-    TaskState executionState = TaskState.UNKNOWN;
+    TaskState state;
     if (event instanceof TaskEvent taskEvent) {
-      executionState = taskEvent.getTask().getStatus().state();
+      state = taskEvent.getTask().getStatus().state();
     } else if (event instanceof TaskUpdateEvent updateEvent) {
-      executionState = updateEvent.getTask().getStatus().state();
+      state = updateEvent.getTask().getStatus().state();
+    } else {
+      return false;
     }
-    return executionState.equals(TaskState.COMPLETED);
+    return state.isFinal() || state == TaskState.INPUT_REQUIRED || state == TaskState.AUTH_REQUIRED;
   }
 
   private static ImmutableList<Part> eventParts(Event event) {
