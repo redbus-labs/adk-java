@@ -150,7 +150,9 @@ public final class ResponseConverter {
                     return messageToEvent(value, context, PENDING_STATES.contains(taskState));
                   });
 
-      if (statusEvent.isFinal()) {
+      if (statusEvent.isFinal()
+          || taskState == TaskState.INPUT_REQUIRED
+          || taskState == TaskState.AUTH_REQUIRED) {
         messageEvent =
             messageEvent
                 .map(Event::toBuilder)
@@ -256,7 +258,9 @@ public final class ResponseConverter {
 
     ImmutableList<Part> finalParts = genaiParts.build();
     boolean isFinal =
-        task.getStatus().state().isFinal() || task.getStatus().state() == TaskState.INPUT_REQUIRED;
+        task.getStatus().state().isFinal()
+            || task.getStatus().state() == TaskState.INPUT_REQUIRED
+            || task.getStatus().state() == TaskState.AUTH_REQUIRED;
 
     if (finalParts.isEmpty() && !isFinal) {
       return emptyEvent(invocationContext);
@@ -264,7 +268,8 @@ public final class ResponseConverter {
     if (!finalParts.isEmpty()) {
       eventBuilder.content(fromModelParts(finalParts));
     }
-    if (task.getStatus().state() == TaskState.INPUT_REQUIRED) {
+    if (task.getStatus().state() == TaskState.INPUT_REQUIRED
+        || task.getStatus().state() == TaskState.AUTH_REQUIRED) {
       eventBuilder.longRunningToolIds(longRunningToolIds.build());
     }
     eventBuilder.turnComplete(isFinal);
