@@ -360,6 +360,43 @@ public final class ResponseConverterTest {
   }
 
   @Test
+  public void taskToEvent_withAuthRequired_parsesLongRunningToolIds() {
+    ImmutableMap<String, Object> data =
+        ImmutableMap.of("name", "myTool", "id", "call_123", "args", ImmutableMap.of());
+    ImmutableMap<String, Object> metadata =
+        ImmutableMap.of(
+            A2AMetadataKey.TYPE.getType(),
+            "function_call",
+            A2AMetadataKey.IS_LONG_RUNNING.getType(),
+            true);
+    DataPart dataPart = new DataPart(data, metadata);
+    ImmutableMap<String, Object> statusData =
+        ImmutableMap.of("name", "messageTools", "id", "msg_123", "args", ImmutableMap.of());
+    ImmutableMap<String, Object> statusMetadata =
+        ImmutableMap.of(
+            A2AMetadataKey.TYPE.getType(),
+            "function_call",
+            A2AMetadataKey.IS_LONG_RUNNING.getType(),
+            true);
+    DataPart statusDataPart = new DataPart(statusData, statusMetadata);
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(statusDataPart))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.AUTH_REQUIRED, statusMessage, null);
+
+    Artifact artifact =
+        new Artifact.Builder().artifactId("artifact-1").parts(ImmutableList.of(dataPart)).build();
+    Task task = testTask().status(status).artifacts(ImmutableList.of(artifact)).build();
+
+    Event event = ResponseConverter.taskToEvent(task, invocationContext);
+    assertThat(event).isNotNull();
+    assertThat(event.longRunningToolIds().get()).containsExactly("call_123", "msg_123");
+    assertThat(event.turnComplete()).hasValue(true);
+  }
+
+  @Test
   public void taskToEvent_withDataPartWithoutMetadata_fallsBackToInlineJson() {
     DataPart dataPart =
         new DataPart(
@@ -594,6 +631,52 @@ public final class ResponseConverterTest {
     Optional<Event> optionalEvent = ResponseConverter.clientEventToEvent(event, invocationContext);
     assertThat(optionalEvent).isPresent();
     Event resultEvent = optionalEvent.get();
+    assertThat(resultEvent.turnComplete()).hasValue(true);
+  }
+
+  @Test
+  public void
+      clientEventToEvent_withAuthRequiredTaskStatusUpdateEvent_evenIfNonFinal_returnsTurnComplete() {
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(new TextPart("Auth required message")))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.AUTH_REQUIRED, statusMessage, null);
+    TaskStatusUpdateEvent updateEvent =
+        testTaskStatusUpdateEvent().isFinal(false).status(status).build();
+
+    TaskUpdateEvent event = new TaskUpdateEvent(testTask().status(status).build(), updateEvent);
+
+    Optional<Event> optionalEvent = ResponseConverter.clientEventToEvent(event, invocationContext);
+    assertThat(optionalEvent).isPresent();
+    Event resultEvent = optionalEvent.get();
+    assertThat(resultEvent.content().get().parts().get().get(0).text())
+        .hasValue("Auth required message");
+    assertThat(resultEvent.partial().orElse(false)).isFalse();
+    assertThat(resultEvent.turnComplete()).hasValue(true);
+  }
+
+  @Test
+  public void
+      clientEventToEvent_withInputRequiredTaskStatusUpdateEvent_evenIfNonFinal_returnsTurnComplete() {
+    Message statusMessage =
+        new Message.Builder()
+            .role(Message.Role.AGENT)
+            .parts(ImmutableList.of(new TextPart("Input required message")))
+            .build();
+    TaskStatus status = new TaskStatus(TaskState.INPUT_REQUIRED, statusMessage, null);
+    TaskStatusUpdateEvent updateEvent =
+        testTaskStatusUpdateEvent().isFinal(false).status(status).build();
+
+    TaskUpdateEvent event = new TaskUpdateEvent(testTask().status(status).build(), updateEvent);
+
+    Optional<Event> optionalEvent = ResponseConverter.clientEventToEvent(event, invocationContext);
+    assertThat(optionalEvent).isPresent();
+    Event resultEvent = optionalEvent.get();
+    assertThat(resultEvent.content().get().parts().get().get(0).text())
+        .hasValue("Input required message");
+    assertThat(resultEvent.partial().orElse(false)).isFalse();
     assertThat(resultEvent.turnComplete()).hasValue(true);
   }
 

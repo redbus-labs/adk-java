@@ -557,7 +557,13 @@ public class Runner {
                   .flatMapPublisher(
                       event ->
                           runAgentWithUpdatedSession(initialContext, session, event, rootAgent)
-                              .compose(Tracing.<Event>withContext(capturedContext)));
+                              .compose(Tracing.<Event>withContext(capturedContext)))
+                  .doOnError(
+                      throwable ->
+                          this.pluginManager
+                              .runOnRunErrorCallback(initialContext, throwable)
+                              .onErrorComplete()
+                              .subscribe());
             })
         .doOnError(
             throwable -> {
@@ -819,6 +825,10 @@ public class Runner {
                     Span span = Span.current();
                     span.setStatus(StatusCode.ERROR, "Error in runLive Flowable execution");
                     span.recordException(throwable);
+                    this.pluginManager
+                        .runOnRunErrorCallback(invocationContext, throwable)
+                        .onErrorComplete()
+                        .subscribe();
                   })
               .compose(Tracing.<Event>withContext(capturedContext));
         });
