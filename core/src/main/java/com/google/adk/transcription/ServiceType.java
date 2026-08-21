@@ -36,7 +36,10 @@ public enum ServiceType {
   AWS_TRANSCRIBE("aws_transcribe"),
 
   /** Sarvam AI transcription. */
-  SARVAM("sarvam");
+  SARVAM("sarvam"),
+
+  /** Ollama/Whisper-compatible STT (OpenAI-compatible /v1/audio/transcriptions endpoint). */
+  OLLAMA_WHISPER("ollama_whisper");
 
   private final String value;
 

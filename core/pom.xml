@@ -307,8 +307,7 @@
     </dependency>
     <dependency>
       <groupId>com.squareup.okhttp3</groupId>
-      <artifactId>mockwebserver</artifactId>
-      <version>4.12.0</version>
+      <artifactId>mockwebserver3-junit5</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
