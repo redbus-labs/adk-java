@@ -66,7 +66,7 @@ public class OllamaBaseLM extends BaseLlm {
   public String D_URL = null;
 
   private int numCtx = 32768;
-  private boolean think = false;
+  private boolean think = true;
 
   // Corrected the logger name to use OllamaBaseLM.class
   private static final Logger logger = LoggerFactory.getLogger(OllamaBaseLM.class);
@@ -80,10 +80,23 @@ public class OllamaBaseLM extends BaseLlm {
     super(model);
   }
 
+  public OllamaBaseLM(String model, boolean think) {
+
+    super(model);
+    this.think = think;
+  }
+
   public OllamaBaseLM(String model, String OLLAMA_EP) {
 
     super(model);
     this.D_URL = OLLAMA_EP;
+  }
+
+  public OllamaBaseLM(String model, String OLLAMA_EP, boolean think) {
+
+    super(model);
+    this.D_URL = OLLAMA_EP;
+    this.think = think;
   }
 
   public int getNumCtx() {
@@ -100,6 +113,11 @@ public class OllamaBaseLM extends BaseLlm {
 
   public void setThink(boolean think) {
     this.think = think;
+  }
+
+  public OllamaBaseLM withThink(boolean think) {
+    this.think = think;
+    return this;
   }
 
   @Override
@@ -893,6 +911,10 @@ public class OllamaBaseLM extends BaseLlm {
           }
         }
       }
+    }
+
+    if (blockJson.has("thinking") && !blockJson.optString("thinking").isEmpty()) {
+      return Part.builder().thought(true).text(blockJson.getString("thinking")).build();
     }
 
     // If no valid tool_calls were processed, check for text content
