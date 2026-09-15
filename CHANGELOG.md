@@ -1,5 +1,66 @@
 # Changelog
 
+## [1.8.0](https://github.com/google/adk-java/compare/v1.7.1...v1.8.0) (2026-08-13)
+
+
+### Features
+
+* Add onRunErrorCallback to ADK Plugin and Runner ([3e6b915](https://github.com/google/adk-java/commit/3e6b9154e089f24daf43c9ded7e4e40483fb7995))
+
+
+### Bug Fixes
+
+* **a2a:** drop unparseable A2A metadata instead of aborting conversion ([b75c916](https://github.com/google/adk-java/commit/b75c9169c630ab0450d16aa74898da6b953d0e78))
+* **a2a:** fail the A2A stream in the handler, not via the transport ([faa3482](https://github.com/google/adk-java/commit/faa3482fa70a5f750e4db04335ca5a5091be471e))
+* **a2a:** guard null DataPart metadata in ResponseConverter ([fcfd9bd](https://github.com/google/adk-java/commit/fcfd9bd8b1b5516932b9c5d72a62a191aea88e13))
+* **a2a:** require explicit adk_type metadata to convert A2A DataParts ([b704c5f](https://github.com/google/adk-java/commit/b704c5fc963d315c624b06d97a6a00d963e54cc0))
+* **core:** only resume tool confirmations for calls this agent emitted ([e5aba3a](https://github.com/google/adk-java/commit/e5aba3aa08c5b85a892e0c9164fa0ab8513786fa))
+* keep thought signature and tool call parts through streaming and history ([d7355a7](https://github.com/google/adk-java/commit/d7355a712345864682134762df890bf7b713b8c4))
+* **runner:** build a new message when saving input blobs, instead of writing into the caller's Content ([80c1a21](https://github.com/google/adk-java/commit/80c1a21da378f121fef3af065eb65dce0e0080c9))
+* stop returning exception text to remote A2A peers ([a3df463](https://github.com/google/adk-java/commit/a3df4632c19d857552af3d2c38373aabea9069de))
+* Update default BigQueryLoggerConfig table name and remove default dataset ID ([723a2ef](https://github.com/google/adk-java/commit/723a2ef0c4929879a6bd831287c34002ef02ef00))
+* update stream completion check in A2A SDK to handle all terminal and interrupted task states ([2b87d65](https://github.com/google/adk-java/commit/2b87d65d9704a61ff4668b8c9482a79fef9fe0d4))
+
+## [1.7.1](https://github.com/google/adk-java/compare/v1.7.0...v1.7.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **codeexecutors:** add opt-in strict sandbox to ContainerCodeExecutor ([8049f7e](https://github.com/google/adk-java/commit/8049f7e5362ca654bf3706ea465f8d1021ee0346))
+* **core:** fallback to name when Agent description is missing ([233b83b](https://github.com/google/adk-java/commit/233b83bcacc39f7b6a1204a7644a1a5f13557a20))
+* **events:** accumulate endOfAgent in EventActions.merge to preserve parallel stop requests ([03b04fa](https://github.com/google/adk-java/commit/03b04fa2b17b8b9fc508add4d1013e83a4975cfe))
+* **mcp:** honor stdioServerParams in McpToolset.fromConfig ([cf71d7b](https://github.com/google/adk-java/commit/cf71d7bb07398d6fabd3a3ade24f31db98f9f36e))
+* preserve all parallel function calls on the live (BIDI) connection ([edc330d](https://github.com/google/adk-java/commit/edc330d760d8194058610907e717f13425717d8b))
+* **sessions:** apply afterTimestamp and numRecentEvents together in VertexAiSessionService ([24a4588](https://github.com/google/adk-java/commit/24a4588004228d6117d9ab4a45ce93be4c952d3c))
+* **sessions:** apply numRecentEvents and afterTimestamp together in InMemorySessionService ([4d19f7d](https://github.com/google/adk-java/commit/4d19f7d92becff955de12e2a58bc6bb23f14492d))
+
+## [1.7.0](https://github.com/google/adk-java/compare/v1.6.0...v1.7.0) (2026-07-17)
+
+
+### Features
+
+* BQAA Java preview-readiness fixes (redaction, table bootstrap, drop stats) ([c685ece](https://github.com/google/adk-java/commit/c685ece46bffd44adbf228e86a946e3a73d2a624))
+* **flows:** enable forced FC reordering based on gemini-3 model name ([fc95ce7](https://github.com/google/adk-java/commit/fc95ce77507fb83ecb02be17d4692d6305722f28))
+* Propagate A2A metadata to RunConfig for request-scoped access ([285547b](https://github.com/google/adk-java/commit/285547bc91c5f92975eb4ffe7e610a9ff4b4fd07))
+* share a single OkHttpClient with injectable daemon threads across the ADK ([2394a95](https://github.com/google/adk-java/commit/2394a9501a15470eba5a164dadf76fa28aeb649b))
+* Update 'gen_ai.usage.input_tokens' to include tool used tokens to match python ADK ([ba23601](https://github.com/google/adk-java/commit/ba23601c09927c4827f3a62d5df8e637e2df33d6))
+
+
+### Bug Fixes
+
+* **agents:** warn when AgentTool config_path escapes agent base directory ([7a4113e](https://github.com/google/adk-java/commit/7a4113e02d04aa17d62aaf3785b00306bb9eb815))
+* Allow -latest model aliases in GoogleSearchTool ([9181ea6](https://github.com/google/adk-java/commit/9181ea6a5e04b195b69e8577c225f7d456cb4164))
+* avoid StackOverflowError in PersistBarrier.awaitPersisted for large steps ([a38b824](https://github.com/google/adk-java/commit/a38b824dba1800e9c58ec8ba74e2b65fb205faf1))
+* **bigquery:** BQAA Java P1 preview-readiness fixes (tracing, lifecycle, redaction, HITL) ([2027a4b](https://github.com/google/adk-java/commit/2027a4b53dba2c660ee20ff0bf87dc1a1e936e43))
+* confine config-driven dynamic class loading to intended types ([3967cfa](https://github.com/google/adk-java/commit/3967cfa6297530e8274fad4ab0ec833525c2db69))
+* correctly reassemble streamed function-call arguments in Gemini streaming ([6bae658](https://github.com/google/adk-java/commit/6bae658b0592aa936e1b48e96ff9f995593ba086))
+* fix Claude MCP tool `inputSchema` by falling back to `parametersJsonSchema` ([760c8da](https://github.com/google/adk-java/commit/760c8da2119103bcad57cbbebdff10619c976eb0))
+* **mcp:** guard empty tool parameters in `adkToMcpToolType` ([66fa921](https://github.com/google/adk-java/commit/66fa921e5af2054b9274100039f4a2cefef7964a))
+* preserve non-client function call IDs in GeminiUtil ([971abb4](https://github.com/google/adk-java/commit/971abb4d8f33df58ac42ac83b3d3f8fc8efba871))
+* preserve provider ChatOptions type to prevent ClassCastException ([5c3d328](https://github.com/google/adk-java/commit/5c3d328cb07eb371cbf809e3263e08fdc5c4c8e5))
+* prevent dropping grounding-only responses in BaseLlmFlow ([4de0d8c](https://github.com/google/adk-java/commit/4de0d8c590a96d218985c4b6bad806021390b4f2))
+* propagate A2A request metadata into the run config in `AgentExecutor` ([410ff81](https://github.com/google/adk-java/commit/410ff810a7126c4ba1abdb5435b1a0c4a9c2fd95))
+
 ## [1.6.0](https://github.com/google/adk-java/compare/v1.5.0...v1.6.0) (2026-07-06)
 
 

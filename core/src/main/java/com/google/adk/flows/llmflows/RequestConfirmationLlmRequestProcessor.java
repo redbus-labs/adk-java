@@ -43,6 +43,7 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -75,12 +76,41 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
     int finalConfirmationEventIndex = confirmationResult.get().eventIndex();
     ImmutableMap<String, ToolConfirmation> requestConfirmationFunctionResponses =
         confirmationResult.get().responses();
+    String agentName = invocationContext.agent().name();
+    ImmutableMap<String, AuthoredFunctionCall> functionCallsById =
+        functionCallsById(events, agentName);
+    ImmutableSet<String> confirmationRequestedIds = confirmationRequestedIds(events);
+    // A tool has been confirmed, but it might already have been executed by a subsequent processor
+    // or in a subsequent turn: such calls have a function response after the user confirmation
+    // event. This is applied before the resumability check rather than after, because
+    // findMostRecentConfirmations re-matches the same stale user event on every later LLM call, so
+    // a settled confirmation would otherwise be re-examined - and re-logged - for the rest of the
+    // session.
+    //
+    // Only responses this agent produced count. A peer event landing after the approval that
+    // reuses the pending call's ID would otherwise convince this scan the tool had already run,
+    // silently dropping the approval - and it short-circuits before the resumability check, so
+    // that would not even leave a log line.
+    ImmutableSet<String> alreadyResumedIds =
+        events.subList(finalConfirmationEventIndex + 1, events.size()).stream()
+            .filter(event -> Objects.equals(event.author(), agentName))
+            .flatMap(event -> event.functionResponses().stream())
+            .map(FunctionResponse::id)
+            .flatMap(Optional::stream)
+            .collect(toImmutableSet());
 
     // Search backwards from the event before confirmation for the corresponding
     // request_confirmation function calls emitted by the model.
     for (int i = finalConfirmationEventIndex - 1; i >= 0; i--) {
       Event event = events.get(i);
       if (event.functionCalls().isEmpty()) {
+        continue;
+      }
+      // Only this agent can ask this agent's user for confirmation. Function call parts also reach
+      // the session from an A2A peer response - ResponseConverter turns one into a model-role event
+      // authored by the local RemoteA2AAgent - and honouring a confirmation call from there would
+      // let the peer choose which local tool runs.
+      if (!Objects.equals(event.author(), agentName)) {
         continue;
       }
 
@@ -95,6 +125,11 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
           .forEach(
               fc ->
                   getOriginalFunctionCall(fc)
+                      .filter(ofc -> !alreadyResumedIds.contains(ofc.id().get()))
+                      .filter(
+                          ofc ->
+                              isResumableFunctionCall(
+                                  ofc, functionCallsById, confirmationRequestedIds, agentName))
                       .ifPresent(
                           ofc -> {
                             toolsToResumeWithConfirmation.put(
@@ -102,23 +137,6 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
                                 requestConfirmationFunctionResponses.get(fc.id().get()));
                             toolsToResumeWithArgs.put(ofc.id().get(), ofc);
                           }));
-
-      if (toolsToResumeWithConfirmation.isEmpty()) {
-        continue;
-      }
-
-      // If a tool has been confirmed, it might have been executed by a subsequent
-      // processor, or in a subsequent turn. We identify tools that have already been
-      // executed by checking for function responses with matching IDs in events that
-      // occurred *after* the user confirmation event.
-      ImmutableSet<String> alreadyConfirmedIds =
-          events.subList(finalConfirmationEventIndex + 1, events.size()).stream()
-              .flatMap(e -> e.functionResponses().stream())
-              .map(FunctionResponse::id)
-              .flatMap(Optional::stream)
-              .collect(toImmutableSet());
-      toolsToResumeWithConfirmation.keySet().removeAll(alreadyConfirmedIds);
-      toolsToResumeWithArgs.keySet().removeAll(alreadyConfirmedIds);
 
       // If all confirmed tools in this event have already been processed, continue
       // searching in older events.
@@ -171,6 +189,126 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
       }
     }
     return Optional.empty();
+  }
+
+  /**
+   * Indexes the tool function calls in session history by ID, keeping the most recent one per ID.
+   *
+   * <p>Confirmation calls are excluded: a confirmation resumes a real tool call, never another
+   * confirmation.
+   *
+   * <p>Collisions resolve last-wins, so a re-issue of an ID by {@code agentName} supersedes an
+   * earlier one - except that a foreign author may never displace a call {@code agentName} emitted.
+   * IDs are not globally unique and anyone can put an event in the session, so without that
+   * precedence a peer could reuse the ID of a call this agent is waiting on, shadow it, and have
+   * the author check in {@code isResumableFunctionCall} reject the <em>legitimate</em> confirmation
+   * - turning that check into a way for a peer to veto any pending tool call.
+   */
+  private static ImmutableMap<String, AuthoredFunctionCall> functionCallsById(
+      ImmutableList<Event> events, String agentName) {
+    Map<String, AuthoredFunctionCall> byId = new LinkedHashMap<>();
+    for (Event event : events) {
+      for (FunctionCall functionCall : event.functionCalls()) {
+        if (functionCall.id().isEmpty()
+            || Objects.equals(
+                functionCall.name().orElse(null), REQUEST_CONFIRMATION_FUNCTION_CALL_NAME)) {
+          continue;
+        }
+        String id = functionCall.id().get();
+        AuthoredFunctionCall existing = byId.get(id);
+        if (existing == null
+            || Objects.equals(event.author(), agentName)
+            || !Objects.equals(existing.author(), agentName)) {
+          byId.put(id, new AuthoredFunctionCall(event.author(), functionCall));
+        }
+      }
+    }
+    return ImmutableMap.copyOf(byId);
+  }
+
+  /**
+   * Collects the IDs of function calls that a tool actually asked the user to confirm.
+   *
+   * <p>Covers both ways a confirmation is requested: a tool calling {@link
+   * com.google.adk.tools.ToolContext#requestConfirmation}, and a {@link
+   * com.google.adk.tools.FunctionTool} created with {@code requireConfirmation}, which routes
+   * through the same call. Accumulates over all events rather than keeping one event per ID:
+   * re-executing a confirmed tool emits a second function response with the same ID and no
+   * requested confirmations, which would otherwise shadow the original request.
+   */
+  private static ImmutableSet<String> confirmationRequestedIds(ImmutableList<Event> events) {
+    ImmutableSet.Builder<String> ids = ImmutableSet.builder();
+    for (Event event : events) {
+      Map<String, ToolConfirmation> requested = event.actions().requestedToolConfirmations();
+      if (requested.isEmpty()) {
+        continue;
+      }
+      for (FunctionResponse functionResponse : event.functionResponses()) {
+        functionResponse.id().filter(requested::containsKey).ifPresent(ids::add);
+      }
+    }
+    return ids.build();
+  }
+
+  /**
+   * Returns whether {@code originalFunctionCall} faithfully reproduces a tool call {@code
+   * agentName} emitted and was genuinely awaiting confirmation.
+   *
+   * <p>The resumed call is read out of the {@code originalFunctionCall} argument of an {@code
+   * adk_request_confirmation} call found in session history, and function call parts reach the
+   * session from places other than the local model - notably an A2A peer response, which {@code
+   * ResponseConverter} turns into a model-role event. Resuming such a call unchecked would let
+   * whoever authored that event pick both the tool and its arguments, so only resume a call that
+   * matches one this agent emitted, by ID, author, name and arguments, and that a tool actually
+   * asked to have confirmed.
+   */
+  private static boolean isResumableFunctionCall(
+      FunctionCall originalFunctionCall,
+      ImmutableMap<String, AuthoredFunctionCall> functionCallsById,
+      ImmutableSet<String> confirmationRequestedIds,
+      String agentName) {
+    String id = originalFunctionCall.id().get();
+    AuthoredFunctionCall emitted = functionCallsById.get(id);
+    if (emitted == null) {
+      logger.warn(
+          "Ignoring tool confirmation for function call ID {}: no such function call in the session"
+              + " history.",
+          id);
+      return false;
+    }
+    if (!Objects.equals(emitted.author(), agentName)) {
+      // Another agent emitted the call; leave it for that agent's own processor.
+      logger.debug(
+          "Skipping tool confirmation for function call ID {}: emitted by {}, not by {}.",
+          id,
+          emitted.author(),
+          agentName);
+      return false;
+    }
+    if (!Objects.equals(emitted.functionCall().name(), originalFunctionCall.name())) {
+      logger.warn(
+          "Ignoring tool confirmation for function call ID {}: tool name does not match the"
+              + " function call this agent emitted.",
+          id);
+      return false;
+    }
+    if (!Objects.equals(
+        emitted.functionCall().args().orElse(ImmutableMap.of()),
+        originalFunctionCall.args().orElse(ImmutableMap.of()))) {
+      logger.warn(
+          "Ignoring tool confirmation for function call ID {}: arguments do not match the function"
+              + " call this agent emitted.",
+          id);
+      return false;
+    }
+    if (!confirmationRequestedIds.contains(id)) {
+      logger.warn(
+          "Ignoring tool confirmation for function call ID {}: no tool requested confirmation for"
+              + " it.",
+          id);
+      return false;
+    }
+    return true;
   }
 
   private Optional<FunctionCall> getOriginalFunctionCall(FunctionCall functionCall) {
@@ -252,4 +390,7 @@ public class RequestConfirmationLlmRequestProcessor implements RequestProcessor 
 
   private record ConfirmationResult(
       ImmutableMap<String, ToolConfirmation> responses, int eventIndex) {}
+
+  /** A tool function call from session history, together with the author of its event. */
+  private record AuthoredFunctionCall(String author, FunctionCall functionCall) {}
 }

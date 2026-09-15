@@ -1,3 +1,19 @@
+/*
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.google.adk.sessions;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -279,6 +295,34 @@ public class VertexAiSessionServiceTest {
     assertThat(sessionsList).hasSize(2);
     ImmutableList<String> ids = sessionsList.stream().map(Session::id).collect(toImmutableList());
     assertThat(ids).containsExactly("1", "2");
+    ImmutableList<String> userIds =
+        sessionsList.stream().map(Session::userId).collect(toImmutableList());
+    assertThat(userIds).containsExactly("user", "user");
+  }
+
+  @Test
+  public void listSessions_usesResponseUserId() throws Exception {
+    when(mockApiClient.request(
+            "GET", "reasoningEngines/123/sessions?filter=user_id%3D%22user1%22", ""))
+        .thenAnswer(
+            new MockApiAnswer(
+                """
+                {
+                  "sessions": [
+                    {
+                      "name": "projects/test-project/locations/test-location/reasoningEngines/123/sessions/3",
+                      "userId": "user2",
+                      "updateTime": "2024-12-14T12:12:12.123456Z"
+                    }
+                  ]
+                }\
+                """));
+
+    ListSessionsResponse sessions =
+        vertexAiSessionService.listSessions("123", "user1").blockingGet();
+
+    assertThat(sessions.sessions()).hasSize(1);
+    assertThat(sessions.sessions().get(0).userId()).isEqualTo("user2");
   }
 
   @Test
@@ -569,6 +613,52 @@ public class VertexAiSessionServiceTest {
         vertexAiSessionService.getSession("123", "user", "7", Optional.of(config)).blockingGet();
 
     assertThat(session.events().stream().map(Event::id)).containsExactly("e2", "e3").inOrder();
+  }
+
+  @Test
+  public void getSession_afterTimestampNarrowerThanNumRecentEvents_appliesBothFilters() {
+    sessionMap.put("10", mockSessionJson("10", "2024-12-12T12:00:30.000000Z"));
+    eventMap.put(
+        "10",
+        mockEventsJson(
+            mockEventJson("e1", "2024-12-12T12:00:05.000000Z"),
+            mockEventJson("e2", "2024-12-12T12:00:10.000000Z"),
+            mockEventJson("e3", "2024-12-12T12:00:15.000000Z"),
+            mockEventJson("e4", "2024-12-12T12:00:20.000000Z")));
+    GetSessionConfig config =
+        GetSessionConfig.builder()
+            .afterTimestamp(Instant.parse("2024-12-12T12:00:15.000000Z"))
+            .numRecentEvents(3)
+            .build();
+
+    Session session =
+        vertexAiSessionService.getSession("123", "user", "10", Optional.of(config)).blockingGet();
+
+    // afterTimestamp must be applied: without it, numRecentEvents(3) would keep e2, e3, e4.
+    assertThat(session.events().stream().map(Event::id)).containsExactly("e3", "e4").inOrder();
+  }
+
+  @Test
+  public void getSession_numRecentEventsNarrowerThanAfterTimestamp_appliesBothFilters() {
+    sessionMap.put("11", mockSessionJson("11", "2024-12-12T12:00:30.000000Z"));
+    eventMap.put(
+        "11",
+        mockEventsJson(
+            mockEventJson("e1", "2024-12-12T12:00:05.000000Z"),
+            mockEventJson("e2", "2024-12-12T12:00:10.000000Z"),
+            mockEventJson("e3", "2024-12-12T12:00:15.000000Z"),
+            mockEventJson("e4", "2024-12-12T12:00:20.000000Z")));
+    GetSessionConfig config =
+        GetSessionConfig.builder()
+            .afterTimestamp(Instant.parse("2024-12-12T12:00:10.000000Z"))
+            .numRecentEvents(2)
+            .build();
+
+    Session session =
+        vertexAiSessionService.getSession("123", "user", "11", Optional.of(config)).blockingGet();
+
+    // afterTimestamp keeps e2, e3, e4; numRecentEvents must then trim to the 2 most recent.
+    assertThat(session.events().stream().map(Event::id)).containsExactly("e3", "e4").inOrder();
   }
 
   private static String mockSessionJson(String sessionId, String updateTime) {
