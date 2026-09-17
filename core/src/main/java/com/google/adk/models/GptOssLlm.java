@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +52,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>This class provides methods for interacting with the GPT OSS model, including standard
  * request-response generation and establishing persistent bidirectional connections.
+ *
+ * @author Sandeep Belgavi
+ * @since September 17, 2026
  */
 public class GptOssLlm extends BaseLlm {
 
@@ -351,6 +355,11 @@ public class GptOssLlm extends BaseLlm {
     logger.debug("Connecting to model {}", effectiveModelName);
     logger.trace("Connection Config: {}", liveConnectConfig);
 
-    return new GeminiLlmConnection(apiClient, effectiveModelName, liveConnectConfig);
+    return new GeminiLlmConnection(connectLiveTransport(effectiveModelName, liveConnectConfig));
+  }
+
+  protected CompletableFuture<GeminiLiveTransport> connectLiveTransport(
+      String modelName, LiveConnectConfig config) {
+    return apiClient.async.live.connect(modelName, config).thenApply(GenAiLiveTransport::new);
   }
 }

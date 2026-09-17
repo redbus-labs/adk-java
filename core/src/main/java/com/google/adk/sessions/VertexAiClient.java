@@ -64,19 +64,30 @@ final class VertexAiClient {
     this.apiClient = new HttpApiClient(project, location, credentials, httpOptions);
   }
 
+  /**
+   * Creates a session, optionally under a caller-chosen {@code sessionId}. The backend mints an id
+   * when none is supplied.
+   */
   Maybe<JsonNode> createSession(
-      String reasoningEngineId, String userId, Map<String, Object> state) {
+      String reasoningEngineId,
+      String userId,
+      @Nullable Map<String, Object> state,
+      @Nullable String sessionId) {
     Map<String, Object> sessionJsonMap = new HashMap<>();
     sessionJsonMap.put("userId", userId);
     if (state != null) {
       sessionJsonMap.put("sessionState", state);
     }
+    String createPath =
+        "reasoningEngines/"
+            + reasoningEngineId
+            + "/sessions"
+            + (sessionId == null
+                ? ""
+                : "?sessionId=" + UrlEscapers.urlFormParameterEscaper().escape(sessionId));
 
     return Single.fromCallable(() -> objectMapper.writeValueAsString(sessionJsonMap))
-        .flatMap(
-            sessionJson ->
-                performApiRequest(
-                    "POST", "reasoningEngines/" + reasoningEngineId + "/sessions", sessionJson))
+        .flatMap(sessionJson -> performApiRequest("POST", createPath, sessionJson))
         .flatMapMaybe(
             apiResponse -> {
               logger.debug("Create Session response {}", apiResponse.getResponseBody());
@@ -86,6 +97,7 @@ final class VertexAiClient {
             jsonResponse -> {
               String sessionName = jsonResponse.get("name").asText();
               List<String> parts = Splitter.on('/').splitToList(sessionName);
+              // The backend is authoritative and mints its own id when none was supplied.
               String sessId = parts.get(parts.size() - 3);
               String operationId = Iterables.getLast(parts);
 
@@ -206,16 +218,29 @@ final class VertexAiClient {
    */
   @Nullable
   private static Maybe<JsonNode> getJsonResponse(ApiResponse apiResponse) {
+    if (apiResponse == null) {
+      return Maybe.empty();
+    }
     try {
-      if (apiResponse == null || apiResponse.getResponseBody() == null) {
+      int statusCode = apiResponse.getStatusCode();
+      String responseString;
+      try {
+        ResponseBody responseBody = apiResponse.getResponseBody();
+        responseString = responseBody == null ? "" : responseBody.string();
+      } catch (IOException e) {
+        return Maybe.error(new UncheckedIOException(e));
+      }
+
+      if (statusCode == 404) {
+        return Maybe.empty();
+      }
+      if (statusCode < 200 || statusCode >= 300) {
+        return Maybe.error(new VertexAiApiException(statusCode, responseString));
+      }
+      if (responseString.isEmpty()) {
         return Maybe.empty();
       }
       try {
-        ResponseBody responseBody = apiResponse.getResponseBody();
-        String responseString = responseBody.string(); // Read body here
-        if (responseString.isEmpty()) {
-          return Maybe.empty();
-        }
         return Maybe.just(objectMapper.readTree(responseString));
       } catch (IOException e) {
         return Maybe.error(new UncheckedIOException(e));
