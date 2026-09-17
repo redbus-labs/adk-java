@@ -23,6 +23,11 @@ public abstract class ApiResponse implements AutoCloseable {
   /** Gets the HttpEntity. */
   public abstract ResponseBody getResponseBody();
 
+  /** Gets the HTTP status code of the response. */
+  public int getStatusCode() {
+    throw new UnsupportedOperationException("getStatusCode() is not implemented.");
+  }
+
   @Override
   public abstract void close();
 }
