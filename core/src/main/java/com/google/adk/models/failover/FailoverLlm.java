@@ -117,7 +117,8 @@ public class FailoverLlm extends BaseLlm {
     final String attemptModel = safeModelName(attemptIndex);
 
     // 1) Convert in-band error responses (errorCode set) into exceptions so they share the failover
-    // path with thrown errors.
+    // path with thrown errors. Also stamp modelVersion when the provider omits it (Azure/Bedrock)
+    // so downstream token logging (rae_tokens) records the model that actually ran.
     flow =
         flow.map(
             response -> {
@@ -127,6 +128,9 @@ public class FailoverLlm extends BaseLlm {
                       error -> {
                         throw new InBandFailureException(error);
                       });
+              if (response.modelVersion().map(String::isBlank).orElse(true)) {
+                return response.toBuilder().modelVersion(attemptModel).build();
+              }
               return response;
             });
 
