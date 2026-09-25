@@ -80,7 +80,6 @@ public class SequentialAgent extends BaseAgent {
 
     @Override
     public SequentialAgent build() {
-      // TODO(b/410859954): Add validation for required fields like name.
       return new SequentialAgent(
           name, description, subAgents, beforeAgentCallback, afterAgentCallback);
     }

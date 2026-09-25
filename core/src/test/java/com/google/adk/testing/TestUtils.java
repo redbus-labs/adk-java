@@ -248,12 +248,10 @@ public final class TestUtils {
     return new TestBaseAgent(name, eventSupplier, /* subAgents= */ ImmutableList.of());
   }
 
-  // TODO: b/414071046 Deprecate.
   public static LlmAgent createTestAgent(BaseLlm llm) {
     return createTestAgentBuilder(llm).build();
   }
 
-  // TODO: b/414071046 Make this return TestAgent. It can be used with toBuilder().
   public static LlmAgent.Builder createTestAgentBuilder(BaseLlm llm) {
     return LlmAgent.builder().name("test agent").description("test agent description").model(llm);
   }

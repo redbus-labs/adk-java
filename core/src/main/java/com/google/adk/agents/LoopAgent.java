@@ -99,7 +99,6 @@ public class LoopAgent extends BaseAgent {
 
     @Override
     public LoopAgent build() {
-      // TODO(b/410859954): Add validation for required fields like name.
       return new LoopAgent(
           name, description, subAgents, maxIterations, beforeAgentCallback, afterAgentCallback);
     }

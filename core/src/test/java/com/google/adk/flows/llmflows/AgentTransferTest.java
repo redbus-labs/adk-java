@@ -161,19 +161,6 @@ public final class AgentTransferTest {
   }
 
   @Test
-  public void exitLoopTool_exitsLoop() {
-    Content generatedContent =
-        Content.fromParts(
-            Part.fromText("Mock LLM Response:I will call the exit_loop tool."),
-            Part.fromFunctionCall("exit_loop", ImmutableMap.of()));
-
-    TestLlm unusedTestLlm = createTestLlm(createLlmResponse(generatedContent));
-    // InvocationContext unusedInvocationContext =
-    // createInvocationContext(createTestAgent(testLlm));
-    // TODO: b/413488103 - complete when LoopAgent is implemented.
-  }
-
-  @Test
   public void runLive_transferToAgent_closesConnection() throws Exception {
     // Arrange
     Content transferCallContent = Content.fromParts(createTransferCallPart("sub_agent_1"));

@@ -282,7 +282,7 @@ public class LlmAgent extends BaseAgent {
       return this;
     }
 
-    // (b/476510024): Temporary workaround for ces
+    /** Removes any before-model callbacks set on this builder. */
     @CanIgnoreReturnValue
     public Builder clearBeforeModelCallbacks() {
       this.beforeModelCallback = null;

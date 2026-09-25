@@ -130,8 +130,6 @@ public final class Functions {
     }
   }
 
-  // TODO - b/413761119 add the remaining methods for function call id.
-
   /** Handles standard, non-streaming function calls. */
   public static Maybe<Event> handleFunctionCalls(
       InvocationContext invocationContext, Event functionCallEvent, Map<String, BaseTool> tools) {

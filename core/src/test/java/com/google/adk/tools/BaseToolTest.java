@@ -45,7 +45,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-// TODO(b/410859954): Cover more of the behavior of the default processLlmRequest
 @RunWith(JUnit4.class)
 public final class BaseToolTest {
 
