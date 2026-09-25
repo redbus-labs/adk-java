@@ -43,8 +43,9 @@ public final class BackendUrl {
   }
 
   /**
-   * Parses {@code configured}. If the URL cannot be used by the dev UI, logs a warning, retains the
-   * trimmed value for {@code runtime-config.json}, and sets {@link #pathPrefix()} to empty.
+   * Parses {@code configured}. A URL the dev UI cannot use is ignored entirely, with a warning: it
+   * is neither served nor used as a prefix, so the bundled {@code backendUrl} stands. Serving it
+   * would publish whatever it contains, credentials included, to every browser.
    */
   public static BackendUrl from(@Nullable String configured) {
     String trimmed = Strings.nullToEmpty(configured).trim();
@@ -58,21 +59,18 @@ public final class BackendUrl {
     if (fault == null) {
       return new BackendUrl(normalized, pathPrefixOf(uri));
     }
-    log.warn(
-        "adk.web.backend-url \"{}\" is not usable ({}), so the dev UI's redirect carries no"
-            + " prefix.",
-        withoutCredentials(trimmed),
-        fault);
-    return new BackendUrl(trimmed, "");
+    // The value is not echoed: it can carry credentials, and the operator set it themselves.
+    log.warn("adk.web.backend-url is ignored because {}.", fault);
+    return UNSET;
   }
 
-  /** Returns the URL string to report in {@code runtime-config.json}, or empty when unset. */
+  /** Returns the URL to report in {@code runtime-config.json}, or empty when unset or ignored. */
   public String value() {
     return value;
   }
 
   /**
-   * Returns the URL path prefix to prepend to the entry redirect, or empty if unset or unusable.
+   * Returns the URL path prefix to prepend to the entry redirect, or empty if unset or ignored.
    * Preserves raw percent-encoding for use in a {@code Location} header.
    */
   public String pathPrefix() {
@@ -116,9 +114,5 @@ public final class BackendUrl {
     }
     // Collapse leading slashes so "//segment" cannot be interpreted as a protocol-relative host.
     return CharMatcher.is('/').trimTrailingFrom(raw.replaceAll("^/+", "/"));
-  }
-
-  private static String withoutCredentials(String value) {
-    return value.replaceFirst("(?<=//)[^/@]*@", "***@");
   }
 }

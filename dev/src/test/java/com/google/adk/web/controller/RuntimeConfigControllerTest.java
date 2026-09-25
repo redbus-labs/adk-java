@@ -16,6 +16,8 @@
 
 package com.google.adk.web.controller;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -69,6 +71,23 @@ public class RuntimeConfigControllerTest {
                   .header("X-Forwarded-Proto", "https"))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.backendUrl").value("https://gw.example.com/my-app"));
+    }
+  }
+
+  @Nested
+  @SpringBootTest(properties = "adk.web.backend-url=https://user:hunter2@gw.example.com/my-app")
+  @AutoConfigureMockMvc
+  class ConfiguredWithCredentials {
+
+    @Test
+    public void runtimeConfig_shouldNotServeTheCredentials(@Autowired MockMvc mockMvc)
+        throws Exception {
+      // This document goes to every browser that loads the UI.
+      mockMvc
+          .perform(get(CONFIG))
+          .andExpect(status().isOk())
+          .andExpect(content().string(not(containsString("hunter2"))))
+          .andExpect(jsonPath("$.backendUrl").value(""));
     }
   }
 

@@ -102,32 +102,47 @@ public class BackendUrlTest {
   }
 
   @Test
-  public void credentials_areNotLogged() {
-    String warning = warningsFor("https://user:pass@gw.example.com/my-app").get(0);
+  public void theValueIsNeverLogged() {
+    // Redacting userinfo was not enough: a query, or a "@" in the password, survived the mask.
+    for (String in :
+        new String[] {
+          "https://user:pass@gw.example.com/my-app",
+          "https://user:p@ss/word@gw.example.com/my-app",
+          "https://gw.example.com/my-app?token=sekrit"
+        }) {
+      assertThat(warningsFor(in)).hasSize(1);
+      String warning = warningsFor(in).get(0);
 
-    assertThat(warning).doesNotContain("pass");
-    assertThat(warning).contains("***@gw.example.com");
+      assertThat(warning).doesNotContain("pass");
+      assertThat(warning).doesNotContain("sekrit");
+      assertThat(warning).doesNotContain(in);
+      // The old mask kept the host, so without this two of these three inputs pinned nothing.
+      assertThat(warning).doesNotContain("gw.example.com");
+    }
   }
 
   @Test
-  public void unusableValue_isStillServedButWarns() {
-    // Never silently discarded, because it is an explicit setting.
-    assertThat(BackendUrl.from("/my-app").value()).isEqualTo("/my-app");
-    assertThat(BackendUrl.from("HTTPS://gw.example.com/x").value())
-        .isEqualTo("HTTPS://gw.example.com/x");
-    assertThat(BackendUrl.from("http://").value()).isEqualTo("http://");
+  public void credentials_areNeverServed() {
+    // Served, this would put the password in runtime-config.json for every browser.
+    BackendUrl url = BackendUrl.from("https://user:pass@gw.example.com/my-app");
 
-    assertThat(warningsFor("/my-app")).hasSize(1);
-    assertThat(warningsFor("/my-app").get(0)).contains("/my-app");
-    assertThat(warningsFor("HTTPS://gw.example.com/x")).hasSize(1);
-    assertThat(warningsFor("http://")).hasSize(1);
+    assertThat(url.value()).isEmpty();
+    assertThat(url.pathPrefix()).isEmpty();
   }
 
   @Test
-  public void slashOnly_isNotEmptiedByTheSlashTrim() {
-    // Emptying this would make the served value fall back to whatever the bundled config says,
-    // silently losing an explicit setting.
-    assertThat(BackendUrl.from("/").value()).isEqualTo("/");
+  public void unusableValue_isIgnoredEntirelyButWarns() {
+    // Not served and not prefixed, so the bundled backendUrl stands.
+    for (String in : new String[] {"/my-app", "HTTPS://gw.example.com/x", "http://"}) {
+      assertThat(BackendUrl.from(in).value()).isEmpty();
+      assertThat(warningsFor(in)).hasSize(1);
+    }
+  }
+
+  @Test
+  public void slashOnly_isIgnored() {
+    // "/" trims to empty, and is not a usable backend URL either way.
+    assertThat(BackendUrl.from("/").value()).isEmpty();
     assertThat(BackendUrl.from("/").pathPrefix()).isEmpty();
   }
 
@@ -153,10 +168,10 @@ public class BackendUrlTest {
   }
 
   @Test
-  public void unparseableValue_yieldsNoPrefixAndWarns() {
+  public void unparseableValue_isIgnoredAndWarns() {
     String malformed = "https://gw.example.com/my app";
 
-    assertThat(BackendUrl.from(malformed).value()).isEqualTo(malformed);
+    assertThat(BackendUrl.from(malformed).value()).isEmpty();
     assertThat(BackendUrl.from(malformed).pathPrefix()).isEmpty();
     assertThat(warningsFor(malformed)).hasSize(1);
     assertThat(warningsFor(malformed).get(0)).contains("not a valid URI");

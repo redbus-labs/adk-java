@@ -17,7 +17,7 @@ example, forwarding `https://gateway.example.com/my-app/` to `/`), set
 adk.web.backend-url=https://gateway.example.com/my-app
 ```
 
-Setting `adk.web.backend-url`:
+Setting a usable `adk.web.backend-url`:
 
 -   Sets `backendUrl` in `/dev-ui/assets/config/runtime-config.json` so the UI
     sends API and WebSocket requests through the proxy URL.
@@ -25,12 +25,14 @@ Setting `adk.web.backend-url`:
     (`/my-app/dev-ui/`).
 
 The value must be an absolute `http://` or `https://` URL without credentials,
-query parameters, or a fragment. The UI parses values without an `http://` or
-`https://` scheme as a WebSocket host, so a relative path like `/my-app` cannot
-be used. If the application also sets `server.servlet.context-path`, include it
-in `adk.web.backend-url`; when `adk.web.backend-url` has a path prefix, the
-redirect uses that path directly instead of prepending the context path or
-`X-Forwarded-Prefix`.
+query parameters, or a fragment. A value that does not meet those constraints is
+ignored with a warning: it is neither served nor used as a redirect prefix, so
+the bundled `backendUrl` stands exactly as when the property is unset. The UI
+parses values without an `http://` or `https://` scheme as a WebSocket host, so
+a relative path like `/my-app` cannot be used. If the application also sets
+`server.servlet.context-path`, include it in `adk.web.backend-url`; when
+`adk.web.backend-url` has a path prefix, the redirect uses that path directly
+instead of prepending the context path or `X-Forwarded-Prefix`.
 
 When `adk.web.backend-url` is unset, `/` and `/dev-ui` redirect to `/dev-ui/`
 and the bundled `backendUrl` value is preserved. If you instead enable

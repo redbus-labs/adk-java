@@ -136,10 +136,10 @@ public class AdkWebServer implements WebMvcConfigurer {
 
   /**
    * Configures simple automated controllers: "/" and "/dev-ui" both redirect to the UI, at {@code
-   * adk.web.backend-url}'s path when that is set, and it forwards to index.html. The trailing slash
-   * is required: index.html declares a {@code <base href="./">}, so served from "/dev-ui" the app
-   * resolves its own router path to "dev-ui" and matches none of its routes. The query string is
-   * carried across because the UI selects its agent from {@code ?app=}.
+   * adk.web.backend-url}'s path when a usable value is set, and it forwards to index.html. The
+   * trailing slash is required: index.html declares a {@code <base href="./">}, so served from
+   * "/dev-ui" the app resolves its own router path to "dev-ui" and matches none of its routes. The
+   * query string is carried across because the UI selects its agent from {@code ?app=}.
    */
   @Override
   public void addViewControllers(ViewControllerRegistry registry) {
