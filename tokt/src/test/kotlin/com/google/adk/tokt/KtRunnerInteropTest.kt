@@ -922,6 +922,42 @@ class KtRunnerInteropTest {
     }
 
   @Test
+  fun ktRunner_rewindThroughAnAdaptedJavaSessionService_dropsTheRewoundTurnFromTheNextPrompt() =
+    runBlocking {
+      // Without the marker surviving the Java store, the engine keeps sending the rewound turn.
+      val javaSessions = JavaInMemorySessionService()
+      val model = SequentialJavaModel(listOf(modelText("ok")))
+      val runner =
+        KtInMemoryRunner(
+          app =
+            KtApp(
+              appName = "app",
+              rootAgent = KtLlmAgent(name = "a", model = JavaAdkToKt.asKtModel(model)),
+            ),
+          sessionService = JavaAdkToKt.asKtSessionService(javaSessions),
+        )
+      runner.turn("keep me")
+      val rewound = assertNotNull(runner.turn("forget me").first().invocationId)
+
+      runner.rewindAsync(userId = "u", sessionId = "s", rewindBeforeInvocationId = rewound)
+      runner.turn("after the rewind")
+
+      val stored =
+        javaSessions.getSession("app", "u", "s", Optional.empty()).blockingGet()
+          ?: fail("the adapted Java service should hold the session")
+      assertTrue(
+        stored.events().any { it.actions().rewindBeforeInvocationId().getOrNull() == rewound },
+        "the stored rewind event should keep its marker",
+      )
+      val lastPrompt =
+        model.requests.last().contents().flatMap { content ->
+          content.parts().getOrNull().orEmpty().mapNotNull { it.text().getOrNull() }
+        }
+      assertContains(lastPrompt, "keep me", "the turn before the rewind should stay in the prompt")
+      assertFalse("forget me" in lastPrompt, "the rewound turn must not reach the model")
+    }
+
+  @Test
   fun ktRunner_pluginBeforeToolCallback_firesForNativeKotlinTool_andCanDenyIt() = runBlocking {
     // A native Kotlin tool has no Java form, yet a Java plugin's beforeToolCallback must still
     // reach
@@ -3492,6 +3528,19 @@ class KtRunnerInteropTest {
   }
 
   @Test
+  fun eventCodec_rewindBeforeInvocationId_roundTripsThroughTheJavaEvent() {
+    // Wiring check: without both directions, a Java session service drops the rewind marker.
+    val ktEvent =
+      KtEvent(author = "user", actions = KtEventActions(rewindBeforeInvocationId = "inv1"))
+
+    assertEquals(
+      "inv1",
+      EventCodec.fromJava(EventCodec.toJava(ktEvent)).actions.rewindBeforeInvocationId,
+      "rewindBeforeInvocationId must survive EventCodec.toJava -> fromJava",
+    )
+  }
+
+  @Test
   fun schemaCodec_carriesEveryFacet_roundTrips() {
     // Every facet the Kotlin Schema models must survive Java -> Kotlin -> Java, or structured
     // output (responseSchema) and tool parameter constraints are silently lost.
@@ -3915,6 +3964,31 @@ class KtRunnerInteropTest {
 
     assertEquals("v", kt.stateDelta["k"], "setStateDelta should reach the Kotlin delta")
     assertTrue(kt.endOfAgent, "setEndInvocation should reach the Kotlin actions")
+  }
+
+  @Test
+  fun ktEventActionsView_rewindBeforeInvocationId_readsAndWritesThrough() {
+    // A marker set in place by a Java tool must reach the engine's actions.
+    val kt = KtEventActions(rewindBeforeInvocationId = "inv1")
+    val view = KtEventActionsToJavaView(kt)
+
+    assertEquals(
+      "inv1",
+      view.rewindBeforeInvocationId().getOrNull(),
+      "the view should read through",
+    )
+    view.setRewindBeforeInvocationId("inv2")
+    assertEquals("inv2", kt.rewindBeforeInvocationId, "the view should write through")
+  }
+
+  @Test
+  fun reconcileActions_carriesRewindBeforeInvocationId() {
+    // A Java tool that replaces its actions (setActions) must still carry the marker.
+    val kt = KtEventActions()
+
+    reconcileActionsToKt(JavaEventActions.builder().rewindBeforeInvocationId("inv1").build(), kt)
+
+    assertEquals("inv1", kt.rewindBeforeInvocationId)
   }
 
   @Test

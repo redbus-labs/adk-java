@@ -65,8 +65,8 @@ import kotlinx.coroutines.CoroutineDispatcher
  *   `EventActions`, the adapter throws once the Java call returns - the engine's event actions have
  *   no equivalent.
  *
- * Writes to the context's `skipSummarization`, `requestedToolConfirmations`, and `agentState` do
- * cross to the engine.
+ * Writes to the context's `skipSummarization`, `requestedToolConfirmations`, `agentState`, and
+ * `rewindBeforeInvocationId` do cross to the engine.
  */
 object JavaAdkToKt {
 
@@ -139,9 +139,9 @@ object JavaAdkToKt {
   /**
    * Adapts an ADK Java session service for the Kotlin engine, running its calls on `dispatcher`. A
    * Java view of a Kotlin service is unwrapped to that Kotlin service, with no `dispatcher` hop.
-   * Resumption works across the adapter (`EventActions.agentState` crosses), but a rewind reverts
-   * only state and artifacts: ADK Java's `EventActions` has no `rewindBeforeInvocationId`, so the
-   * rewound turns stay in the model's history.
+   * Resumption works across the adapter (`EventActions.agentState` crosses);
+   * `rewindBeforeInvocationId` crosses too, but a rewind drops the rewound turns only if the Java
+   * service stores it, which ADK Java's `VertexAiSessionService` does not.
    */
   @JvmStatic
   @JvmOverloads
