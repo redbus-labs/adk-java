@@ -172,6 +172,12 @@ public class Event extends JsonBaseModel {
     this.errorCode = errorCode;
   }
 
+  /**
+   * Sets the finish reason from an {@link Optional}.
+   *
+   * @deprecated Use {@link #setFinishReason(FinishReason)} with {@code finishReason.orElse(null)}
+   *     instead.
+   */
   @Deprecated
   @SuppressWarnings("checkstyle:IllegalType")
   public void setFinishReason(Optional<FinishReason> finishReason) {
