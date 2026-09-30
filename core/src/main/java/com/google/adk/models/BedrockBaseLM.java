@@ -60,6 +60,7 @@ import org.slf4j.LoggerFactory;
 public class BedrockBaseLM extends BaseLlm {
 
   public static final String BEDROCK_ENV_VAR = "BEDROCK_URL";
+  private static final String BEDROCK_REASONING_CONTENT_METADATA = "bedrockReasoningContent";
   public String D_URL = null;
 
   /**
@@ -144,14 +145,26 @@ public class BedrockBaseLM extends BaseLlm {
   }
 
   /** Converts ADK Content to a Bedrock Converse message with proper toolUse/toolResult blocks. */
-  private static JSONObject contentToBedrockMessage(
+  static JSONObject contentToBedrockMessage(
       Content item, List<Content> allContents, int messageIndex) {
     JSONObject messageQuantum = new JSONObject();
-    messageQuantum.put("role", mapBedrockRole(item.role().orElse("user")));
+    String bedrockRole = mapBedrockRole(item.role().orElse("user"));
+    messageQuantum.put("role", bedrockRole);
     JSONArray contentArray = new JSONArray();
 
     for (Part part : item.parts().orElse(ImmutableList.of())) {
-      if (part.functionResponse().isPresent()) {
+      Object bedrockReasoningContent =
+          part.partMetadata()
+              .map(metadata -> metadata.get(BEDROCK_REASONING_CONTENT_METADATA))
+              .orElse(null);
+      if ("assistant".equals(bedrockRole)
+          && bedrockReasoningContent instanceof Map<?, ?> reasoningContent) {
+        // Bedrock requires reasoning content (including signatures/redacted data) to be returned
+        // unchanged on subsequent assistant turns. Bedrock rejects reasoning content in user and
+        // tool-result messages, so the role check is mandatory even if ADK propagated metadata.
+        contentArray.put(
+            new JSONObject().put("reasoningContent", new JSONObject(reasoningContent)));
+      } else if (part.functionResponse().isPresent()) {
         var fr = part.functionResponse().get();
         String name = fr.name().orElse("tool");
         JSONObject toolResult = new JSONObject();
@@ -375,6 +388,14 @@ public class BedrockBaseLM extends BaseLlm {
     }
 
     LlmResponse.Builder responseBuilder = LlmResponse.builder();
+    JSONArray responseContent = responseQuantum.optJSONArray("content");
+    if (responseContent != null && responseContent.isEmpty()) {
+      logger.warn(
+          "Bedrock returned an empty assistant content array (stopReason={}, usagePresent={})",
+          Optional.ofNullable(getKeyIgnoreCase(agentresponse, "stopReason", "StopReason"))
+              .orElse("unknown"),
+          getKeyIgnoreCase(agentresponse, "usage", "Usage") != null);
+    }
     List<Part> parts = ollamaContentBlockToParts(responseQuantum);
 
     responseBuilder.content(
@@ -924,11 +945,17 @@ public class BedrockBaseLM extends BaseLlm {
     return parts.get(0);
   }
 
-  /** Parses all text and toolUse blocks from a Bedrock Converse message object. */
+  /** Parses text, toolUse, and reasoningContent blocks from a Bedrock Converse message object. */
   public static List<Part> ollamaContentBlockToParts(JSONObject blockJson) {
     List<Part> parts = new ArrayList<>();
     if (blockJson.has("content")) {
       JSONArray contentArray = blockJson.getJSONArray("content");
+      // A successful Bedrock turn may contain no visible output (for example, after redacted
+      // reasoning or provider-side filtering). Represent it as an empty text part so callers can
+      // complete the turn instead of treating a valid message shape as an unsupported format.
+      if (contentArray.isEmpty()) {
+        return ImmutableList.of(Part.fromText(""));
+      }
       for (int i = 0; i < contentArray.length(); i++) {
         JSONObject tempObj = contentArray.getJSONObject(i);
         if (tempObj.has("text")) {
@@ -947,6 +974,18 @@ public class BedrockBaseLM extends BaseLlm {
               fcBuilder.id(toolUse.getString("toolUseId"));
             }
             parts.add(Part.builder().functionCall(fcBuilder.build()).build());
+          }
+        } else if (tempObj.has("reasoningContent")) {
+          JSONObject reasoningContent = tempObj.optJSONObject("reasoningContent");
+          if (reasoningContent != null) {
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put(BEDROCK_REASONING_CONTENT_METADATA, reasoningContent.toMap());
+
+            // reasoningText may be displayed as a thought. redactedContent is deliberately kept
+            // opaque and only retained in metadata for lossless Bedrock round-tripping.
+            JSONObject reasoningText = reasoningContent.optJSONObject("reasoningText");
+            String text = reasoningText == null ? "" : reasoningText.optString("text", "");
+            parts.add(Part.builder().text(text).thought(true).partMetadata(metadata).build());
           }
         }
       }
@@ -1278,59 +1317,85 @@ public class BedrockBaseLM extends BaseLlm {
     return null;
   }
 
+  /**
+   * Returns the first positive-or-zero int found under any of the given keys (Bedrock Converse uses
+   * camelCase; some payloads use snake_case or PascalCase).
+   */
+  private static int firstPresent(JSONObject obj, String... keys) {
+    if (obj == null || keys == null) {
+      return 0;
+    }
+    for (String key : keys) {
+      if (key != null && obj.has(key) && !obj.isNull(key)) {
+        return obj.optInt(key, 0);
+      }
+    }
+    // Case-insensitive fallback for unexpected key casing
+    Iterator<String> it = obj.keys();
+    while (it.hasNext()) {
+      String actual = it.next();
+      for (String key : keys) {
+        if (key != null && actual.equalsIgnoreCase(key) && !obj.isNull(actual)) {
+          return obj.optInt(actual, 0);
+        }
+      }
+    }
+    return 0;
+  }
+
   // Added private method for usage metadata extraction
   private GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
     return Optional.ofNullable(agentResponse)
         .flatMap(
             response -> {
-              if (response.has("usage")) {
-                JSONObject usage = response.optJSONObject("usage");
-                if (usage != null) {
-                  int promptTokens = usage.optInt("input_tokens", 0);
-                  int completionTokens = usage.optInt("output_tokens", 0);
-                  int totalTokens = usage.optInt("total_tokens", 0);
+              Object usageObj = getKeyIgnoreCase(response, "usage", "Usage");
+              if (usageObj instanceof JSONObject usage) {
+                int promptTokens =
+                    firstPresent(usage, "inputTokens", "input_tokens", "InputTokens");
+                int completionTokens =
+                    firstPresent(usage, "outputTokens", "output_tokens", "OutputTokens");
+                int totalTokens = firstPresent(usage, "totalTokens", "total_tokens", "TotalTokens");
 
-                  if (totalTokens == 0 && (promptTokens > 0 || completionTokens > 0)) {
-                    totalTokens = promptTokens + completionTokens;
+                if (totalTokens == 0 && (promptTokens > 0 || completionTokens > 0)) {
+                  totalTokens = promptTokens + completionTokens;
+                }
+
+                if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+                  logger.info(
+                      "Non-streaming token counts (Bedrock format): prompt={}, completion={}, total={}",
+                      promptTokens,
+                      completionTokens,
+                      totalTokens);
+                  GenerateContentResponseUsageMetadata.Builder builder =
+                      GenerateContentResponseUsageMetadata.builder()
+                          .promptTokenCount(promptTokens)
+                          .candidatesTokenCount(completionTokens)
+                          .totalTokenCount(totalTokens);
+
+                  if (usage.has("prompt_tokens_details")) {
+                    JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
+                    if (pDetails != null && pDetails.has("audio_tokens")) {
+                      builder.promptTokensDetails(
+                          ImmutableList.of(
+                              ModalityTokenCount.builder()
+                                  .modality(MediaModality.Known.AUDIO)
+                                  .tokenCount(pDetails.getInt("audio_tokens"))
+                                  .build()));
+                    }
+                  }
+                  if (usage.has("completion_tokens_details")) {
+                    JSONObject cDetails = usage.optJSONObject("completion_tokens_details");
+                    if (cDetails != null && cDetails.has("audio_tokens")) {
+                      builder.candidatesTokensDetails(
+                          ImmutableList.of(
+                              ModalityTokenCount.builder()
+                                  .modality(MediaModality.Known.AUDIO)
+                                  .tokenCount(cDetails.getInt("audio_tokens"))
+                                  .build()));
+                    }
                   }
 
-                  if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
-                    logger.info(
-                        "Non-streaming token counts (Bedrock format): prompt={}, completion={}, total={}",
-                        promptTokens,
-                        completionTokens,
-                        totalTokens);
-                    GenerateContentResponseUsageMetadata.Builder builder =
-                        GenerateContentResponseUsageMetadata.builder()
-                            .promptTokenCount(promptTokens)
-                            .candidatesTokenCount(completionTokens)
-                            .totalTokenCount(totalTokens);
-
-                    if (usage.has("prompt_tokens_details")) {
-                      JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
-                      if (pDetails != null && pDetails.has("audio_tokens")) {
-                        builder.promptTokensDetails(
-                            ImmutableList.of(
-                                ModalityTokenCount.builder()
-                                    .modality(MediaModality.Known.AUDIO)
-                                    .tokenCount(pDetails.getInt("audio_tokens"))
-                                    .build()));
-                      }
-                    }
-                    if (usage.has("completion_tokens_details")) {
-                      JSONObject cDetails = usage.optJSONObject("completion_tokens_details");
-                      if (cDetails != null && cDetails.has("audio_tokens")) {
-                        builder.candidatesTokensDetails(
-                            ImmutableList.of(
-                                ModalityTokenCount.builder()
-                                    .modality(MediaModality.Known.AUDIO)
-                                    .tokenCount(cDetails.getInt("audio_tokens"))
-                                    .build()));
-                      }
-                    }
-
-                    return Optional.of(builder.build());
-                  }
+                  return Optional.of(builder.build());
                 }
               }
               return Optional.empty();
