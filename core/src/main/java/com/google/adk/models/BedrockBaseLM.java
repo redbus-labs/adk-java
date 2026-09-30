@@ -391,10 +391,12 @@ public class BedrockBaseLM extends BaseLlm {
     JSONArray responseContent = responseQuantum.optJSONArray("content");
     if (responseContent != null && responseContent.isEmpty()) {
       logger.warn(
-          "Bedrock returned an empty assistant content array (stopReason={}, usagePresent={})",
+          "Bedrock returned an empty assistant content array (stopReason={}, usagePresent={}); "
+              + "completing without a response so retry/failover can run",
           Optional.ofNullable(getKeyIgnoreCase(agentresponse, "stopReason", "StopReason"))
               .orElse("unknown"),
           getKeyIgnoreCase(agentresponse, "usage", "Usage") != null);
+      return Flowable.empty();
     }
     List<Part> parts = ollamaContentBlockToParts(responseQuantum);
 
@@ -793,17 +795,14 @@ public class BedrockBaseLM extends BaseLlm {
 
                   emitter.onNext(aggregatedResponseBuilder.build());
                 } else {
-                  // If no content accumulated, emit empty response to indicate completion
-                  LlmResponse.Builder emptyResponseBuilder =
-                      LlmResponse.builder()
-                          .content(Content.builder().role("model").parts(Part.fromText("")).build())
-                          .partial(false);
-
-                  if (usageMetadata != null) {
-                    emptyResponseBuilder.usageMetadata(usageMetadata);
-                  }
-
-                  emitter.onNext(emptyResponseBuilder.build());
+                  // Do not turn an empty provider response into a successful blank assistant
+                  // message. Completing without an item lets FailoverLlm's switchIfEmpty path
+                  // retry another model. If a preceding tool event already produced a UI action,
+                  // that event remains available to the application and no fake text is added.
+                  logger.warn(
+                      "Bedrock stream completed without text or a tool call; completing without "
+                          + "a response so retry/failover can run");
+                  emitter.onComplete();
                 }
               }
 
@@ -950,11 +949,11 @@ public class BedrockBaseLM extends BaseLlm {
     List<Part> parts = new ArrayList<>();
     if (blockJson.has("content")) {
       JSONArray contentArray = blockJson.getJSONArray("content");
-      // A successful Bedrock turn may contain no visible output (for example, after redacted
-      // reasoning or provider-side filtering). Represent it as an empty text part so callers can
-      // complete the turn instead of treating a valid message shape as an unsupported format.
+      // An empty array is a structurally valid Converse message, but it is not a meaningful model
+      // response. Return no parts so the caller can complete without emitting an item; emitting an
+      // empty text Part would incorrectly suppress retry/failover.
       if (contentArray.isEmpty()) {
-        return ImmutableList.of(Part.fromText(""));
+        return ImmutableList.of();
       }
       for (int i = 0; i < contentArray.length(); i++) {
         JSONObject tempObj = contentArray.getJSONObject(i);
