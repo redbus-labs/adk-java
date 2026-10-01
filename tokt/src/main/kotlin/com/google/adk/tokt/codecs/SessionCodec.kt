@@ -32,7 +32,7 @@ internal object SessionCodec {
       // Translate the Java removal sentinel so no foreign sentinel leaks into the Kotlin state.
       state = State(initialState = session.state().mapValues { stateValueFromJava(it.value) }),
       // Thread-safe like a Kotlin Session's default: parallel tool calls may append during reads.
-      events = CopyOnWriteArrayList(session.events().map { EventCodec.fromJava(it) }),
+      events = CopyOnWriteArrayList(session.immutableEvents().map { EventCodec.fromJava(it) }),
       lastUpdateTime = (session.lastUpdateTime() ?: java.time.Instant.EPOCH).toKotlinInstant(),
     )
 }

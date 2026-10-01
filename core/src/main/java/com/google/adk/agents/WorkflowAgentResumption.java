@@ -35,7 +35,7 @@ final class WorkflowAgentResumption {
   static Optional<Integer> resumeSubAgentIndex(
       InvocationContext invocationContext, List<? extends BaseAgent> subAgents) {
     Optional<String> author =
-        Functions.findMatchingFunctionCallEvent(invocationContext.session().events())
+        Functions.findMatchingFunctionCallEvent(invocationContext.session().immutableEvents())
             .map(Event::author);
     if (author.isEmpty()) {
       return Optional.empty();

@@ -1173,8 +1173,8 @@ public final class InvocationContextTest {
   @Test
   public void lastEventsPauseInvocation_callInsideWindow_returnsTrue() {
     Session eventSession = Session.builder("s").build();
-    eventSession.events().add(twoLongRunningCallsEvent());
-    eventSession.events().add(functionResponseEvent("a", "approve_a"));
+    eventSession.addEvent(twoLongRunningCallsEvent());
+    eventSession.addEvent(functionResponseEvent("a", "approve_a"));
     InvocationContext context = resumableContext(eventSession, "inv");
 
     assertThat(context.lastEventsPauseInvocation()).isTrue();
@@ -1183,9 +1183,9 @@ public final class InvocationContextTest {
   @Test
   public void lastEventsPauseInvocation_callPushedOutOfWindow_returnsFalse() {
     Session eventSession = Session.builder("s").build();
-    eventSession.events().add(twoLongRunningCallsEvent());
-    eventSession.events().add(functionResponseEvent("a", "approve_a"));
-    eventSession.events().add(functionResponseEvent("b", "approve_b"));
+    eventSession.addEvent(twoLongRunningCallsEvent());
+    eventSession.addEvent(functionResponseEvent("a", "approve_a"));
+    eventSession.addEvent(functionResponseEvent("b", "approve_b"));
     InvocationContext context = resumableContext(eventSession, "inv");
 
     assertThat(context.lastEventsPauseInvocation()).isFalse();
@@ -1196,8 +1196,8 @@ public final class InvocationContextTest {
   @Test
   public void lastEventsPauseInvocation_answeredCallInsideWindow_returnsTrue() {
     Session eventSession = Session.builder("s").build();
-    eventSession.events().add(longRunningCallEvent("c1", "approve_c1"));
-    eventSession.events().add(functionResponseEvent("c1", "approve_c1"));
+    eventSession.addEvent(longRunningCallEvent("c1", "approve_c1"));
+    eventSession.addEvent(functionResponseEvent("c1", "approve_c1"));
     InvocationContext context = resumableContext(eventSession, "inv");
 
     assertThat(context.lastEventsPauseInvocation()).isTrue();
@@ -1207,13 +1207,11 @@ public final class InvocationContextTest {
   @Test
   public void lastEventsPauseInvocation_unansweredCallOlderThanWindow_returnsFalse() {
     Session eventSession = Session.builder("s").build();
-    eventSession.events().add(twoLongRunningCallsEvent());
-    eventSession
-        .events()
-        .add(agentEvent("inv", "root", null, Content.fromParts(Part.fromText("thinking"))));
-    eventSession
-        .events()
-        .add(agentEvent("inv", "root", null, Content.fromParts(Part.fromText("still here"))));
+    eventSession.addEvent(twoLongRunningCallsEvent());
+    eventSession.addEvent(
+        agentEvent("inv", "root", null, Content.fromParts(Part.fromText("thinking"))));
+    eventSession.addEvent(
+        agentEvent("inv", "root", null, Content.fromParts(Part.fromText("still here"))));
     InvocationContext context = resumableContext(eventSession, "inv");
 
     assertThat(context.lastEventsPauseInvocation()).isFalse();
@@ -1222,12 +1220,9 @@ public final class InvocationContextTest {
   @Test
   public void lastEventsPauseInvocation_noCall_returnsFalse() {
     Session eventSession = Session.builder("s").build();
-    eventSession
-        .events()
-        .add(agentEvent("inv", "user", null, Content.fromParts(Part.fromText("hi"))));
-    eventSession
-        .events()
-        .add(agentEvent("inv", "root", null, Content.fromParts(Part.fromText("answer"))));
+    eventSession.addEvent(agentEvent("inv", "user", null, Content.fromParts(Part.fromText("hi"))));
+    eventSession.addEvent(
+        agentEvent("inv", "root", null, Content.fromParts(Part.fromText("answer"))));
     InvocationContext context = resumableContext(eventSession, "inv");
 
     assertThat(context.lastEventsPauseInvocation()).isFalse();
@@ -1246,9 +1241,9 @@ public final class InvocationContextTest {
             .branch("branchB")
             .content(Content.fromParts(Part.fromText("z")))
             .build();
-    eventSession.events().add(thisInv);
-    eventSession.events().add(otherInv);
-    eventSession.events().add(branchB);
+    eventSession.addEvent(thisInv);
+    eventSession.addEvent(otherInv);
+    eventSession.addEvent(branchB);
     InvocationContext context = resumableContext(eventSession, "inv");
 
     assertThat(context.events(/* currentInvocation= */ true, /* currentBranch= */ false))

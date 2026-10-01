@@ -22,7 +22,6 @@ import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -253,10 +252,7 @@ public interface BaseSessionService {
       }
     }
 
-    List<Event> sessionEvents = session.events();
-    if (sessionEvents != null) {
-      sessionEvents.add(event);
-    }
+    session.addEvent(event);
 
     return Single.just(event);
   }

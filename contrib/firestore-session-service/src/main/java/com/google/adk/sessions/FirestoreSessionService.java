@@ -371,7 +371,9 @@ public class FirestoreSessionService implements BaseSessionService {
    * @return A Part containing the file data.
    */
   private Part fileDataPartFromMap(Map<String, Object> fdMap) {
-    if (fdMap == null) return null;
+    if (fdMap == null) {
+      return null;
+    }
     String fileUri = (String) fdMap.get("fileUri");
     String mimeType = (String) fdMap.get("mimeType");
     return Part.fromUri(fileUri, mimeType);
@@ -678,7 +680,7 @@ public class FirestoreSessionService implements BaseSessionService {
           }
 
           // Manually add the event to the session's internal list.
-          session.events().add(event);
+          session.addEvent(event);
           session.lastUpdateTime(getInstantFromEvent(event));
 
           // --- Persist event to Firestore ---

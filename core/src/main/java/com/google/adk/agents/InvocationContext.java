@@ -184,10 +184,7 @@ public class InvocationContext {
    * sub-branch stays visible while a descendant agent's own events do not.
    */
   public ImmutableList<Event> eventsOnCurrentBranch() {
-    ImmutableList<Event> events;
-    synchronized (session.events()) {
-      events = ImmutableList.copyOf(session.events());
-    }
+    ImmutableList<Event> events = session.immutableEvents();
     // Snapshot the mutable branch too, so it cannot change between the id set and the filter.
     @Nullable String scopeBranch = branch;
     // Only the user-response cross-check needs these, and a null or empty branch skips it.
@@ -438,11 +435,7 @@ public class InvocationContext {
     if (currentBranch) {
       results = new ArrayList<>(eventsOnCurrentBranch());
     } else {
-      // session.events() is a synchronized list; copy it under its own monitor.
-      List<Event> sessionEvents = session.events();
-      synchronized (sessionEvents) {
-        results = new ArrayList<>(sessionEvents);
-      }
+      results = new ArrayList<>(session.immutableEvents());
     }
     if (currentInvocation) {
       results.removeIf(event -> !invocationId.equals(event.invocationId()));

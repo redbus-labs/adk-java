@@ -56,7 +56,8 @@ public final class Contents implements RequestProcessor {
       InvocationContext context, LlmRequest request) {
     if (!(context.agent() instanceof LlmAgent)) {
       return Single.just(
-          RequestProcessor.RequestProcessingResult.create(request, context.session().events()));
+          RequestProcessor.RequestProcessingResult.create(
+              request, context.session().immutableEvents()));
     }
     LlmAgent llmAgent = (LlmAgent) context.agent();
 
@@ -73,10 +74,7 @@ public final class Contents implements RequestProcessor {
             .groupFunctionResponsesInHistoryOverride()
             .orElse(modelName.contains("gemini-3"));
 
-    ImmutableList<Event> sessionEvents;
-    synchronized (context.session().events()) {
-      sessionEvents = ImmutableList.copyOf(context.session().events());
-    }
+    ImmutableList<Event> sessionEvents = context.session().immutableEvents();
 
     if (llmAgent.includeContents() == LlmAgent.IncludeContents.NONE) {
       return Single.just(

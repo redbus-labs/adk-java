@@ -75,7 +75,6 @@ import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.subjects.CompletableSubject;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -851,7 +850,7 @@ public class Runner {
             }
             return runNewInvocation(session, newMessage, runConfig, stateDelta);
           }
-          if (session.events().isEmpty()) {
+          if (session.immutableEvents().isEmpty()) {
             // Only a wholly empty session is rejected; Python does not reject an unmatched id.
             return Flowable.<Event>error(
                 new IllegalArgumentException("Session has no events to resume."));
@@ -1015,7 +1014,7 @@ public class Runner {
    */
   private static @Nullable String resumeParentBranch(
       Session session, String invocationId, BaseAgent resumeAgent) {
-    List<Event> events = session.events();
+    ImmutableList<Event> events = session.immutableEvents();
     for (int i = events.size() - 1; i >= 0; i--) {
       Event event = events.get(i);
       if (invocationId.equals(event.invocationId())
@@ -1058,7 +1057,7 @@ public class Runner {
     if (responseIds.isEmpty()) {
       return Optional.empty();
     }
-    List<Event> events = session.events();
+    ImmutableList<Event> events = session.immutableEvents();
     for (int i = events.size() - 1; i >= 0; i--) {
       Event event = events.get(i);
       for (FunctionCall call : event.functionCalls()) {
@@ -1096,7 +1095,7 @@ public class Runner {
         "A function response id is required to resume an invocation.");
     Set<String> unmatched = functionResponseIds(newMessage);
     Set<String> invocationIds = new HashSet<>();
-    List<Event> events = session.events();
+    ImmutableList<Event> events = session.immutableEvents();
     for (int i = events.size() - 1; i >= 0 && !unmatched.isEmpty(); i--) {
       Event event = events.get(i);
       for (FunctionCall call : event.functionCalls()) {
@@ -1150,7 +1149,7 @@ public class Runner {
 
   /** The user message that started {@code invocationId}, or empty when it has none. */
   private static Optional<Content> findOriginalUserMessage(Session session, String invocationId) {
-    return session.events().stream()
+    return session.immutableEvents().stream()
         .filter(event -> invocationId.equals(event.invocationId()))
         .filter(event -> Objects.equals(event.author(), Role.USER))
         .map(event -> event.content().orElse(null))
@@ -1351,8 +1350,9 @@ public class Runner {
   private BaseAgent findAgentToRun(Session session, BaseAgent rootAgent) {
     // Route a function response to its call's author, as Python's _agent_router does. An enclosing
     // workflow advances by re-entering the root, which holds its own checkpoint, not from here.
+    ImmutableList<Event> sessionEvents = session.immutableEvents();
     Optional<BaseAgent> functionCallAuthor =
-        Functions.findMatchingFunctionCallEvent(session.events())
+        Functions.findMatchingFunctionCallEvent(sessionEvents)
             .filter(event -> event.author() != null)
             .flatMap(event -> rootAgent.findAgent(event.author()));
     if (functionCallAuthor.isPresent()) {
@@ -1363,8 +1363,7 @@ public class Runner {
       return author;
     }
 
-    List<Event> events = new ArrayList<>(session.events());
-    Collections.reverse(events);
+    ImmutableList<Event> events = sessionEvents.reverse();
 
     for (Event event : events) {
       String author = event.author();

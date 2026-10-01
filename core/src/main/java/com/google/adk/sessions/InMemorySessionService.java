@@ -269,7 +269,7 @@ public final class InMemorySessionService implements BaseSessionService {
       return Single.just(ListEventsResponse.builder().build());
     }
 
-    ImmutableList<Event> eventsCopy = ImmutableList.copyOf(storedSession.events());
+    ImmutableList<Event> eventsCopy = storedSession.immutableEvents();
     return Single.just(ListEventsResponse.builder().events(eventsCopy).build());
   }
 
@@ -360,7 +360,7 @@ public final class InMemorySessionService implements BaseSessionService {
         .appName(original.appName())
         .userId(original.userId())
         .state(new ConcurrentHashMap<>(original.state()))
-        .events(new ArrayList<>(original.events()))
+        .events(original.immutableEvents())
         .lastUpdateTime(original.lastUpdateTime())
         .build();
   }
@@ -406,7 +406,7 @@ public final class InMemorySessionService implements BaseSessionService {
       String appName, String userId, Collection<Session> sessions) {
     return sessions.stream()
         .map(this::copySession)
-        .peek(s -> s.events().clear())
+        .peek(Session::clearEvents)
         .map(s -> mergeWithGlobalState(appName, userId, s))
         .collect(toCollection(ArrayList::new));
   }
