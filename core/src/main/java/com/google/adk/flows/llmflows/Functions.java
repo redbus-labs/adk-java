@@ -263,7 +263,7 @@ public final class Functions {
       return Observable.fromIterable(validFunctionCalls).concatMapMaybe(functionCallMapper);
     }
     if (mode == ToolExecutionMode.PARALLEL_SUBSCRIBE) {
-      Scheduler scheduler = resolveToolExecutionScheduler(invocationContext);
+      Scheduler scheduler = resolveWorkerScheduler(invocationContext);
       return Observable.fromIterable(validFunctionCalls)
           .concatMapEager(
               call -> functionCallMapper.apply(call).toObservable().subscribeOn(scheduler));
@@ -274,12 +274,16 @@ public final class Functions {
         .concatMapEager(call -> functionCallMapper.apply(call).toObservable());
   }
 
-  /** Agent executor if set, otherwise the IO scheduler. */
-  private static Scheduler resolveToolExecutionScheduler(InvocationContext invocationContext) {
+  /**
+   * Returns the scheduler for the work this invocation hands to a worker (tool calls in {@code
+   * ToolExecutionMode.PARALLEL_SUBSCRIBE} mode and the live send loop): the agent's executor when
+   * set, otherwise the invocation's scheduler.
+   */
+  static Scheduler resolveWorkerScheduler(InvocationContext invocationContext) {
     if (invocationContext.agent() instanceof LlmAgent llmAgent) {
-      return llmAgent.executor().map(Schedulers::from).orElse(Schedulers.io());
+      return llmAgent.executor().map(Schedulers::from).orElseGet(invocationContext::scheduler);
     }
-    return Schedulers.io();
+    return invocationContext.scheduler();
   }
 
   private static Function<FunctionCall, Maybe<Event>> getFunctionCallMapper(

@@ -55,7 +55,6 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.observers.DisposableCompletableObserver;
-import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -636,7 +635,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
                           });
               Disposable sendTask =
                   historySent
-                      .observeOn(agent.executor().map(Schedulers::from).orElse(Schedulers.io()))
+                      .observeOn(Functions.resolveWorkerScheduler(invocationContext))
                       .andThen(
                           liveRequests
                               .onBackpressureBuffer()

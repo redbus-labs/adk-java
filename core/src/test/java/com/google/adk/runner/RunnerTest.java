@@ -16,8 +16,10 @@
 
 package com.google.adk.runner;
 
+import static com.google.adk.testing.TestUtils.createEvent;
 import static com.google.adk.testing.TestUtils.createFunctionCallLlmResponse;
 import static com.google.adk.testing.TestUtils.createLlmResponse;
+import static com.google.adk.testing.TestUtils.createSubAgent;
 import static com.google.adk.testing.TestUtils.createTestAgent;
 import static com.google.adk.testing.TestUtils.createTestAgentBuilder;
 import static com.google.adk.testing.TestUtils.createTestLlm;
@@ -45,6 +47,7 @@ import com.google.adk.agents.Callbacks.AfterModelCallback;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.agents.ParallelAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.agents.SequentialAgent;
 import com.google.adk.apps.App;
@@ -65,6 +68,7 @@ import com.google.adk.sessions.Session;
 import com.google.adk.sessions.SessionKey;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.adk.telemetry.Tracing;
+import com.google.adk.testing.RecordingScheduler;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestUtils;
 import com.google.adk.testing.TestUtils.EchoTool;
@@ -91,6 +95,7 @@ import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import io.reactivex.rxjava3.subjects.PublishSubject;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.time.Instant;
@@ -1839,6 +1844,116 @@ public final class RunnerTest {
     assertThat(simplifyEvents(results))
         .containsExactly("author: content for event 1", "author: content for event 2")
         .inOrder();
+  }
+
+  @Test
+  public void runAsync_parallelAgent_usesRunnerScheduler() {
+    RecordingScheduler recordingScheduler = new RecordingScheduler(Schedulers.trampoline());
+    Runner schedulerRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(parallelAgentWithTwoSubAgents()).build())
+            .scheduler(recordingScheduler)
+            .build();
+    Session schedulerSession =
+        schedulerRunner.sessionService().createSession("test", "user").blockingGet();
+
+    List<Event> events =
+        schedulerRunner
+            .runAsync("user", schedulerSession.id(), createContent("hi"))
+            .toList()
+            .blockingGet();
+
+    assertThat(events).hasSize(2);
+    assertThat(recordingScheduler.workersCreated()).isEqualTo(2);
+  }
+
+  @Test
+  public void builder_scheduler_null_usesDefaultScheduler() {
+    RecordingScheduler recordingScheduler = new RecordingScheduler(Schedulers.trampoline());
+    Runner schedulerRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(parallelAgentWithTwoSubAgents()).build())
+            .scheduler(recordingScheduler)
+            .scheduler(null)
+            .build();
+    Session schedulerSession =
+        schedulerRunner.sessionService().createSession("test", "user").blockingGet();
+
+    List<Event> events =
+        schedulerRunner
+            .runAsync("user", schedulerSession.id(), createContent("hi"))
+            .toList()
+            .blockingGet();
+
+    assertThat(events).hasSize(2);
+    assertThat(recordingScheduler.workersCreated()).isEqualTo(0);
+  }
+
+  @Test
+  public void runLive_usesRunnerScheduler() throws Exception {
+    RecordingScheduler recordingScheduler = new RecordingScheduler(Schedulers.trampoline());
+    Runner schedulerRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .scheduler(recordingScheduler)
+            .build();
+    Session liveSession =
+        schedulerRunner.sessionService().createSession("test", "user").blockingGet();
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+    TestSubscriber<Event> testSubscriber =
+        schedulerRunner.runLive(liveSession, liveRequestQueue, RunConfig.builder().build()).test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+    assertThat(liveRequestTexts(testLlm)).contains("from user");
+    // The hop that starts the live send loop went through the runner's scheduler.
+    assertThat(recordingScheduler.workersCreated()).isEqualTo(1);
+  }
+
+  @Test
+  public void runLive_agentExecutorTakesPrecedenceOverRunnerScheduler() throws Exception {
+    RecordingScheduler recordingScheduler = new RecordingScheduler(Schedulers.trampoline());
+    TestLlm liveTestLlm = createTestLlm(createLlmResponse(createContent("from llm")));
+    LlmAgent agentWithExecutor =
+        createTestAgentBuilder(liveTestLlm).executor(Runnable::run).build();
+    Runner schedulerRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agentWithExecutor).build())
+            .scheduler(recordingScheduler)
+            .build();
+    Session liveSession =
+        schedulerRunner.sessionService().createSession("test", "user").blockingGet();
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+    TestSubscriber<Event> testSubscriber =
+        schedulerRunner.runLive(liveSession, liveRequestQueue, RunConfig.builder().build()).test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+    assertThat(liveRequestTexts(liveTestLlm)).contains("from user");
+    assertThat(recordingScheduler.workersCreated()).isEqualTo(0);
+  }
+
+  private static ParallelAgent parallelAgentWithTwoSubAgents() {
+    return ParallelAgent.builder()
+        .name("parallel")
+        .subAgents(createSubAgent("a", createEvent("ea")), createSubAgent("b", createEvent("eb")))
+        .build();
+  }
+
+  /** Returns the text of each content request that the live connection of {@code llm} received. */
+  private static ImmutableList<String> liveRequestTexts(TestLlm llm) {
+    return llm.getLiveRequestHistory().stream()
+        .map(request -> request.content().map(Content::text))
+        .flatMap(Optional::stream)
+        .collect(toImmutableList());
   }
 
   private Content createContent(String text) {

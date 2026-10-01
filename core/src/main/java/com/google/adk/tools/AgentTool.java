@@ -28,8 +28,8 @@ import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.agents.RunConfig.StreamingMode;
 import com.google.adk.events.Event;
+import com.google.adk.memory.InMemoryMemoryService;
 import com.google.adk.plugins.Plugin;
-import com.google.adk.runner.InMemoryRunner;
 import com.google.adk.runner.Runner;
 import com.google.adk.sessions.State;
 import com.google.common.annotations.VisibleForTesting;
@@ -187,7 +187,15 @@ public class AgentTool extends BaseTool {
         this.includePlugins
             ? ImmutableList.of(toolContext.invocationContext().pluginManager())
             : ImmutableList.of();
-    Runner runner = new InMemoryRunner(this.agent, toolContext.agentName(), plugins);
+    // The nested run inherits the caller's scheduler so its fan-out stays on the same scheduler.
+    Runner runner =
+        Runner.builder()
+            .agent(this.agent)
+            .appName(toolContext.agentName())
+            .plugins(plugins)
+            .memoryService(new InMemoryMemoryService())
+            .scheduler(toolContext.invocationContext().scheduler())
+            .build();
     // Follow the caller's RunConfig but run unary: only the last event becomes the result.
     RunConfig callerRunConfig = toolContext.invocationContext().runConfig();
     RunConfig runConfig =

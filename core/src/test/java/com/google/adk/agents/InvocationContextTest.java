@@ -37,6 +37,8 @@ import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
+import io.reactivex.rxjava3.core.Scheduler;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -303,6 +305,73 @@ public final class InvocationContextTest {
     // Basic check for UUID format after "e-"
     assertThat(id.substring(2))
         .matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+  }
+
+  @Test
+  public void scheduler_defaultsToIoScheduler() {
+    InvocationContext context =
+        InvocationContext.builder()
+            .sessionService(mockSessionService)
+            .artifactService(mockArtifactService)
+            .agent(mockAgent)
+            .session(session)
+            .build();
+
+    assertThat(context.scheduler()).isSameInstanceAs(Schedulers.io());
+  }
+
+  @Test
+  public void scheduler_customIsCarriedAndCopiedByToBuilder() {
+    Scheduler scheduler = Schedulers.trampoline();
+    InvocationContext context =
+        InvocationContext.builder()
+            .sessionService(mockSessionService)
+            .artifactService(mockArtifactService)
+            .agent(mockAgent)
+            .session(session)
+            .scheduler(scheduler)
+            .build();
+
+    assertThat(context.scheduler()).isSameInstanceAs(scheduler);
+    assertThat(context.toBuilder().build().scheduler()).isSameInstanceAs(scheduler);
+  }
+
+  @Test
+  public void scheduler_nullSelectsTheDefault() {
+    InvocationContext context =
+        InvocationContext.builder()
+            .sessionService(mockSessionService)
+            .artifactService(mockArtifactService)
+            .agent(mockAgent)
+            .session(session)
+            .scheduler(Schedulers.trampoline())
+            .scheduler(null)
+            .build();
+
+    assertThat(context.scheduler()).isSameInstanceAs(Schedulers.io());
+  }
+
+  @Test
+  public void equals_comparesTheConfiguredScheduler() {
+    InvocationContext unset =
+        InvocationContext.builder()
+            .sessionService(mockSessionService)
+            .artifactService(mockArtifactService)
+            .agent(mockAgent)
+            .session(session)
+            .invocationId("same-id")
+            .build();
+    InvocationContext trampoline = unset.toBuilder().scheduler(Schedulers.trampoline()).build();
+    InvocationContext io = unset.toBuilder().scheduler(Schedulers.io()).build();
+
+    assertThat(unset.toBuilder().build()).isEqualTo(unset);
+    assertThat(unset.toBuilder().build().hashCode()).isEqualTo(unset.hashCode());
+    assertThat(trampoline.toBuilder().build()).isEqualTo(trampoline);
+    assertThat(trampoline.toBuilder().build().hashCode()).isEqualTo(trampoline.hashCode());
+    assertThat(trampoline).isNotEqualTo(io);
+    assertThat(trampoline).isNotEqualTo(unset);
+    // The configured field is compared, so an unset scheduler differs from an explicit io().
+    assertThat(io).isNotEqualTo(unset);
   }
 
   @Test
