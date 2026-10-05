@@ -26,6 +26,8 @@ jobs:
           # We need to fetch all commits to accurately count them.
           # '0' means fetch all history for all branches and tags.
           fetch-depth: 0
+          # Only local git commands run later; don't leave the token on disk.
+          persist-credentials: false
 
       # Step 2: Count the commits in the pull request
       # This step runs a script to get the number of commits in the PR.
