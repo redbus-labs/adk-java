@@ -27,7 +27,6 @@ import com.google.adk.agents.ContextCacheConfig;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
-import com.google.adk.agents.ParallelAgent;
 import com.google.adk.agents.Role;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.agents.SequentialAgent;
@@ -416,13 +415,14 @@ public class Runner {
       InvocationContext invocationContext,
       boolean saveInputBlobsAsArtifacts,
       @Nullable Map<String, Object> stateDelta) {
+    // As on the resumable path, a function response takes the branch of the call it answers.
     return appendNewMessageToSession(
         session,
         newMessage,
         invocationContext,
         saveInputBlobsAsArtifacts,
         stateDelta,
-        /* branch= */ null);
+        matchingFunctionCallEvent(session, newMessage).flatMap(Event::branch).orElse(null));
   }
 
   private Single<Event> appendNewMessageToSession(
@@ -768,12 +768,14 @@ public class Runner {
    */
   private Flowable<Event> runAgentWithUpdatedSession(
       InvocationContext initialContext, Session updatedSession, Event event, BaseAgent rootAgent) {
+    BaseAgent agentToRun = this.findAgentToRun(updatedSession, rootAgent);
     // Create context with updated session for beforeRunCallback
     InvocationContext contextWithUpdatedSession =
         initialContext.toBuilder()
             .session(updatedSession)
-            .agent(this.findAgentToRun(updatedSession, rootAgent))
+            .agent(agentToRun)
             .userContent(event.content().orElseGet(Content::fromParts))
+            .branch(routedAgentParentBranch(updatedSession, agentToRun, rootAgent))
             .build();
 
     // If beforeRunCallback returns content, emit it and skip agent.
@@ -1055,26 +1057,79 @@ public class Runner {
   }
 
   /**
-   * Branch to seed a resumed context with so {@code resumeAgent} runs under the same branch it
-   * originally did. Returns the parent branch (the resolved agent's most recent event branch minus
-   * its own trailing name segment, which {@link BaseAgent#runAsync} re-appends), or {@code null}
-   * for the root branch. Non-null only for an agent nested under a {@link ParallelAgent}.
+   * Branch to seed a new invocation with so a routed sub-agent runs where it ran before, or {@code
+   * null} when {@code agentToRun} is the root. A function response restores the branch of the call
+   * it answers, since a Java agent's branch depends on the transfer path that reached it; other
+   * routing restores the agent's latest branch, as Python does.
+   */
+  private static @Nullable String routedAgentParentBranch(
+      Session session, BaseAgent agentToRun, BaseAgent rootAgent) {
+    if (agentToRun.equals(rootAgent)) {
+      return null;
+    }
+    Optional<Event> answeredCall =
+        Functions.findMatchingFunctionCallEvent(session.immutableEvents());
+    if (answeredCall.isPresent()) {
+      String ownSuffix = sequentialBranchSuffix(agentToRun, answeredCall.get().author());
+      if (ownSuffix != null) {
+        return parentBranch(answeredCall.get().branch().orElse(null), ownSuffix);
+      }
+    }
+    return resumeParentBranch(session, /* invocationId= */ null, agentToRun);
+  }
+
+  /**
+   * Branch to seed a context with so {@code resumeAgent} runs under the branch it last ran on: the
+   * parent branch of the newest event by {@code resumeAgent}, or by an agent it reaches through
+   * SequentialAgents, with a non-empty branch. A non-null {@code invocationId} limits the search to
+   * that invocation; {@code null} is returned for the root branch.
    */
   private static @Nullable String resumeParentBranch(
-      Session session, String invocationId, BaseAgent resumeAgent) {
+      Session session, @Nullable String invocationId, BaseAgent resumeAgent) {
     ImmutableList<Event> events = session.immutableEvents();
     for (int i = events.size() - 1; i >= 0; i--) {
       Event event = events.get(i);
-      if (invocationId.equals(event.invocationId())
-          && resumeAgent.name().equals(event.author())
-          && event.branch().isPresent()) {
-        String branch = event.branch().get();
-        String ownSegment = "." + resumeAgent.name();
-        if (branch.endsWith(ownSegment)) {
-          String parent = branch.substring(0, branch.length() - ownSegment.length());
-          return parent.isEmpty() ? null : parent;
+      if ((invocationId == null || invocationId.equals(event.invocationId()))
+          && event.branch().filter(branch -> !branch.isEmpty()).isPresent()) {
+        String ownSuffix = sequentialBranchSuffix(resumeAgent, event.author());
+        if (ownSuffix != null) {
+          return parentBranch(event.branch().get(), ownSuffix);
         }
-        return branch.equals(resumeAgent.name()) ? null : branch;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns {@code branch} minus the trailing {@code ownSuffix} that {@link BaseAgent#runAsync}
+   * re-appends, or {@code null} for the root branch.
+   */
+  private static @Nullable String parentBranch(@Nullable String branch, String ownSuffix) {
+    if (branch == null || branch.isEmpty() || branch.equals(ownSuffix)) {
+      return null;
+    }
+    if (branch.endsWith("." + ownSuffix)) {
+      String parent = branch.substring(0, branch.length() - ownSuffix.length() - 1);
+      return parent.isEmpty() ? null : parent;
+    }
+    return branch;
+  }
+
+  /**
+   * Returns the dot-joined names from {@code agent} down to the agent named {@code author} when
+   * that agent is {@code agent} or below it through SequentialAgents, else {@code null}. The legacy
+   * flow resumes such an ancestor, which records no events of its own.
+   */
+  private static @Nullable String sequentialBranchSuffix(BaseAgent agent, @Nullable String author) {
+    if (agent.name().equals(author)) {
+      return agent.name();
+    }
+    if (agent instanceof SequentialAgent) {
+      for (BaseAgent subAgent : agent.subAgents()) {
+        String suffix = sequentialBranchSuffix(subAgent, author);
+        if (suffix != null) {
+          return agent.name() + "." + suffix;
+        }
       }
     }
     return null;
@@ -1241,11 +1296,13 @@ public class Runner {
         runConfigBuilder.inputAudioTranscription(AudioTranscriptionConfig.builder().build());
       }
     }
+    BaseAgent agentToRun = findAgentToRun(session, this.agent);
     InvocationContext.Builder builder =
-        newInvocationContextBuilder(session, findAgentToRun(session, this.agent))
+        newInvocationContextBuilder(session, agentToRun)
             .runConfig(runConfigBuilder.build())
             .userContent(Content.fromParts())
-            .liveRequestQueue(liveRequestQueue);
+            .liveRequestQueue(liveRequestQueue)
+            .branch(routedAgentParentBranch(session, agentToRun, this.agent));
 
     return builder.build();
   }
