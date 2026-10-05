@@ -10,6 +10,10 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+# Read-only: the job only counts commits locally.
+permissions:
+  contents: read
+
 # Defines the jobs that will run as part of the workflow.
 jobs:
   check-commit-count:

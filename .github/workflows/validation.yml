@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+# Read-only: no step in this workflow writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   build-modules:
     runs-on: ubuntu-24.04
