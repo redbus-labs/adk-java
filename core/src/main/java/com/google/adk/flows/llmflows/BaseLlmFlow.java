@@ -791,7 +791,7 @@ public abstract class BaseLlmFlow implements BaseFlow {
       return self.concatWith(
           Flowable.error(new IllegalStateException("Agent not found: " + agentToTransfer)));
     }
-    BaseAgent target = nextAgent.get();
+    BaseAgent target;
     // Resumable only: restricting the default flow too would move behavior for existing callers.
     if (context.isResumable() && context.agent() instanceof LlmAgent llmAgent) {
       Optional<BaseAgent> declared = declaredTransferTarget(llmAgent, agentToTransfer);
@@ -804,8 +804,16 @@ public abstract class BaseLlmFlow implements BaseFlow {
                         + " is not allowed to transfer to the requested agent.")));
       }
       target = declared.get();
+    } else {
+      target = nextAgent.get();
     }
-    return self.concatWith(target.runAsync(context).compose(Tracing.withContext(spanContext)));
+    // Otherwise the target can build its request from a session missing the transfer event.
+    return self.concatWith(
+        PersistBarrier.awaitPersisted(context, ImmutableList.of(event))
+            .andThen(
+                // Not around the barrier: andThen subscribes the target on the append's thread.
+                Flowable.defer(() -> target.runAsync(context))
+                    .compose(Tracing.withContext(spanContext))));
   }
 
   /**

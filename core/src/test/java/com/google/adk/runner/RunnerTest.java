@@ -87,6 +87,7 @@ import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.truth.Correspondence;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
@@ -1099,6 +1100,109 @@ public final class RunnerTest {
             .flatMap(c -> c.parts().stream().flatMap(List::stream))
             .anyMatch(part -> part.functionResponse().isPresent());
     assertThat(foundToolResponse).isTrue();
+  }
+
+  /**
+   * Ensures a slow appendEvent does not let a transfer target build its request from a stale
+   * session, in either direction: the sub-agent must see the root's transfer, and after the
+   * transfer back the root must see its own transfer response.
+   */
+  @Test
+  public void runAsync_slowAppendEvent_doesNotCauseStaleSessionInTransferTarget() throws Exception {
+    TestLlm subTestLlm =
+        createTestLlm(
+            createFunctionCallLlmResponse(
+                "call_sub", "transfer_to_agent", ImmutableMap.of("agent_name", "test agent")));
+    LlmAgent subAgent = createTestAgentBuilder(subTestLlm).name("sub_agent").build();
+
+    TestLlm rootTestLlm =
+        createTestLlm(
+            createFunctionCallLlmResponse(
+                "call_root", "transfer_to_agent", ImmutableMap.of("agent_name", "sub_agent")),
+            createTextLlmResponse("done"));
+
+    LlmAgent rootAgent = createTestAgentBuilder(rootTestLlm).subAgents(subAgent).build();
+
+    Runner runnerForRace =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(rootAgent).build())
+            .sessionService(new AppendDelayingSessionService(new InMemorySessionService(), 50))
+            .build();
+    Session raceSession =
+        runnerForRace.sessionService().createSession("test", "user").blockingGet();
+
+    var unused =
+        runnerForRace
+            .runAsync("user", raceSession.id(), createContent("start"))
+            .toList()
+            .blockingGet();
+
+    // The root's transfer reaches the sub-agent as relayed text, since another agent authored it.
+    ImmutableList<LlmRequest> subRequests = subTestLlm.getRequests();
+    assertThat(subRequests).hasSize(1);
+    assertThat(
+            subRequests.get(0).contents().stream()
+                .flatMap(c -> c.parts().stream().flatMap(List::stream))
+                .flatMap(part -> part.text().stream())
+                .collect(toImmutableList()))
+        .comparingElementsUsing(
+            Correspondence.<String, String>from(String::startsWith, "starts with"))
+        .contains("[test agent] `transfer_to_agent` tool returned result:");
+
+    // After the transfer back, the root must see its own transfer response.
+    ImmutableList<LlmRequest> rootRequests = rootTestLlm.getRequests();
+    assertThat(rootRequests).hasSize(2);
+    assertThat(
+            rootRequests.get(1).contents().stream()
+                .flatMap(c -> c.parts().stream().flatMap(List::stream))
+                .flatMap(part -> part.functionResponse().flatMap(FunctionResponse::id).stream())
+                .collect(toImmutableList()))
+        .contains("call_root");
+    assertThat(Iterables.getLast(rootRequests.get(1).contents()).role()).hasValue("user");
+  }
+
+  /**
+   * With a slow appendEvent, the append's thread releases the transfer target; the target's {@code
+   * invoke_agent} span must still be a child of the transferring agent's, not start a new trace.
+   */
+  @Test
+  public void runAsync_slowAppendEvent_transferTargetSpanIsChildOfParentAgentSpan() {
+    LlmAgent subAgent =
+        createTestAgentBuilder(createTestLlm(createTextLlmResponse("sub response")))
+            .name("sub_agent")
+            .build();
+    LlmAgent rootAgent =
+        createTestAgentBuilder(
+                createTestLlm(
+                    createFunctionCallLlmResponse(
+                        "call_root",
+                        "transfer_to_agent",
+                        ImmutableMap.of("agent_name", "sub_agent"))))
+            .subAgents(subAgent)
+            .build();
+    Runner runnerForRace =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(rootAgent).build())
+            .sessionService(new AppendDelayingSessionService(new InMemorySessionService(), 50))
+            .build();
+    Session raceSession =
+        runnerForRace.sessionService().createSession("test", "user").blockingGet();
+
+    var unused =
+        runnerForRace
+            .runAsync("user", raceSession.id(), createContent("start"))
+            .toList()
+            .blockingGet();
+
+    List<SpanData> spans = openTelemetryRule.getSpans();
+    Optional<SpanData> parentSpan =
+        spans.stream().filter(s -> s.getName().equals("invoke_agent test agent")).findFirst();
+    Optional<SpanData> targetSpan =
+        spans.stream().filter(s -> s.getName().equals("invoke_agent sub_agent")).findFirst();
+    assertThat(parentSpan).isPresent();
+    assertThat(targetSpan).isPresent();
+    assertThat(targetSpan.get().getParentSpanContext().getSpanId())
+        .isEqualTo(parentSpan.get().getSpanContext().getSpanId());
   }
 
   /**
