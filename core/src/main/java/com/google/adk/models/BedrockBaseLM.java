@@ -23,6 +23,7 @@ import com.google.genai.types.MediaModality;
 import com.google.genai.types.ModalityTokenCount;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
+import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 import java.io.BufferedReader;
@@ -35,13 +36,17 @@ import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.ProtocolException;
+import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
@@ -51,6 +56,31 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.document.Document;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
+import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeAsyncClient;
+import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
+import software.amazon.awssdk.services.bedrockruntime.model.BedrockRuntimeException;
+import software.amazon.awssdk.services.bedrockruntime.model.ContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseStreamRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseStreamResponseHandler;
+import software.amazon.awssdk.services.bedrockruntime.model.Message;
+import software.amazon.awssdk.services.bedrockruntime.model.ReasoningContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ReasoningTextBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.Tool;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolConfiguration;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolInputSchema;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolResultBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolResultContentBlock;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolSpecification;
+import software.amazon.awssdk.services.bedrockruntime.model.ToolUseBlock;
 
 /**
  * @author ryzen
@@ -76,8 +106,12 @@ public class BedrockBaseLM extends BaseLlm {
 
   /** Returns Bearer token from env. Prefers BEDROCK_API_KEY (FMIS) when available. */
   public static String getBearerToken() {
+    return getBearerToken(System.getenv());
+  }
+
+  static String getBearerToken(Map<String, String> environment) {
     for (String name : BEARER_TOKEN_ENV_VARS) {
-      String v = System.getenv(name);
+      String v = environment.get(name);
       if (v != null && !v.isBlank()) return v;
     }
     return null;
@@ -91,6 +125,63 @@ public class BedrockBaseLM extends BaseLlm {
     String region = System.getenv("BEDROCK_REGION");
     if (region == null || region.isBlank()) region = "ap-south-1";
     return "https://bedrock-runtime." + region + ".amazonaws.com";
+  }
+
+  static Region resolveBedrockRegion(Map<String, String> environment) {
+    String configured = environment.get("BEDROCK_REGION");
+    if (configured == null || configured.isBlank()) {
+      configured = environment.get("AWS_REGION");
+    }
+    if (configured != null && !configured.isBlank()) {
+      return Region.of(configured.trim());
+    }
+    try {
+      return DefaultAwsRegionProviderChain.builder().build().getRegion();
+    } catch (RuntimeException ignored) {
+      return Region.AP_SOUTH_1;
+    }
+  }
+
+  private Region resolveBedrockRegion() {
+    return resolveBedrockRegion(System.getenv());
+  }
+
+  private URI resolveEndpointOverride() {
+    String configured = D_URL;
+    if (configured == null || configured.isBlank()) {
+      configured = System.getenv(BEDROCK_ENV_VAR);
+    }
+    if (configured == null || configured.isBlank()) {
+      return null;
+    }
+    String normalized = configured.trim().replaceAll("/+$", "").replaceAll("/model$", "");
+    return URI.create(normalized);
+  }
+
+  BedrockRuntimeClient createBedrockRuntimeClient() {
+    var builder =
+        BedrockRuntimeClient.builder()
+            .credentialsProvider(
+                DefaultCredentialsProvider.builder().asyncCredentialUpdateEnabled(true).build())
+            .region(resolveBedrockRegion());
+    URI endpoint = resolveEndpointOverride();
+    if (endpoint != null) {
+      builder.endpointOverride(endpoint);
+    }
+    return builder.build();
+  }
+
+  BedrockRuntimeAsyncClient createBedrockRuntimeAsyncClient() {
+    var builder =
+        BedrockRuntimeAsyncClient.builder()
+            .credentialsProvider(
+                DefaultCredentialsProvider.builder().asyncCredentialUpdateEnabled(true).build())
+            .region(resolveBedrockRegion());
+    URI endpoint = resolveEndpointOverride();
+    if (endpoint != null) {
+      builder.endpointOverride(endpoint);
+    }
+    return builder.build();
   }
 
   /**
@@ -184,22 +275,51 @@ public class BedrockBaseLM extends BaseLlm {
         toolUse.put("name", name);
         toolUse.put("input", new JSONObject(fc.args().orElse(Map.of())));
         contentArray.put(new JSONObject().put("toolUse", toolUse));
-      } else if (part.text().isPresent() && !part.text().get().isEmpty()) {
+      } else if (part.text().isPresent() && !part.text().get().isBlank()) {
         contentArray.put(new JSONObject().put("text", part.text().get()));
       }
     }
 
-    if (contentArray.length() == 0) {
-      contentArray.put(new JSONObject().put("text", item.text() == null ? "" : item.text()));
-    }
     messageQuantum.put("content", contentArray);
     return messageQuantum;
   }
 
-  private static JSONArray buildMessagesFromContents(List<Content> contents) {
+  static JSONArray buildMessagesFromContents(List<Content> contents) {
     JSONArray messages = new JSONArray();
     for (int i = 0; i < contents.size(); i++) {
-      messages.put(contentToBedrockMessage(contents.get(i), contents, i));
+      JSONObject message = contentToBedrockMessage(contents.get(i), contents, i);
+      JSONArray content = message.getJSONArray("content");
+      if (content.isEmpty()) {
+        logger.debug("Skipping Bedrock message {} because it has no supported content", i);
+        continue;
+      }
+
+      // Converse requires user and assistant messages to alternate. Filtering an unsupported or
+      // metadata-only message can leave equal roles adjacent, so preserve their content in one
+      // message instead of sending an invalid conversation.
+      if (!messages.isEmpty()) {
+        JSONObject previous = messages.getJSONObject(messages.length() - 1);
+        if (previous.getString("role").equals(message.getString("role"))) {
+          JSONArray previousContent = previous.getJSONArray("content");
+          for (int j = 0; j < content.length(); j++) {
+            previousContent.put(content.get(j));
+          }
+          continue;
+        }
+      }
+      messages.put(message);
+    }
+
+    // A blank/unsupported final user item may have been removed above. Converse still needs a
+    // non-empty user turn to ask the model to continue.
+    if (messages.isEmpty()
+        || !"user".equals(messages.getJSONObject(messages.length() - 1).getString("role"))) {
+      messages.put(
+          new JSONObject()
+              .put("role", "user")
+              .put(
+                  "content",
+                  new JSONArray().put(new JSONObject().put("text", CONTINUE_OUTPUT_MESSAGE))));
     }
     return messages;
   }
@@ -279,6 +399,244 @@ public class BedrockBaseLM extends BaseLlm {
     return payload;
   }
 
+  private static Document toDocument(Object value) {
+    if (value == null || value == JSONObject.NULL) {
+      return Document.fromNull();
+    }
+    if (value instanceof JSONObject json) {
+      return toDocument(json.toMap());
+    }
+    if (value instanceof JSONArray array) {
+      return toDocument(array.toList());
+    }
+    if (value instanceof Map<?, ?> map) {
+      Map<String, Document> converted = new HashMap<>();
+      map.forEach((key, item) -> converted.put(String.valueOf(key), toDocument(item)));
+      return Document.fromMap(converted);
+    }
+    if (value instanceof Collection<?> collection) {
+      return Document.fromList(collection.stream().map(BedrockBaseLM::toDocument).toList());
+    }
+    if (value instanceof Boolean bool) {
+      return Document.fromBoolean(bool);
+    }
+    if (value instanceof Number number) {
+      return Document.fromNumber(number.toString());
+    }
+    return Document.fromString(String.valueOf(value));
+  }
+
+  private static ReasoningContentBlock toSdkReasoningContent(JSONObject reasoning) {
+    ReasoningContentBlock.Builder builder = ReasoningContentBlock.builder();
+    JSONObject reasoningText = reasoning.optJSONObject("reasoningText");
+    if (reasoningText != null) {
+      builder.reasoningText(
+          ReasoningTextBlock.builder()
+              .text(reasoningText.optString("text", ""))
+              .signature(reasoningText.optString("signature", null))
+              .build());
+    } else if (reasoning.has("redactedContent")) {
+      String encoded = reasoning.optString("redactedContent", "");
+      try {
+        builder.redactedContent(SdkBytes.fromByteArray(Base64.getDecoder().decode(encoded)));
+      } catch (IllegalArgumentException ignored) {
+        builder.redactedContent(SdkBytes.fromUtf8String(encoded));
+      }
+    }
+    return builder.build();
+  }
+
+  private static ContentBlock toSdkContentBlock(JSONObject block) {
+    if (block.has("text")) {
+      return ContentBlock.fromText(block.optString("text", ""));
+    }
+    if (block.has("toolUse")) {
+      JSONObject toolUse = block.getJSONObject("toolUse");
+      return ContentBlock.fromToolUse(
+          ToolUseBlock.builder()
+              .toolUseId(toolUse.getString("toolUseId"))
+              .name(toolUse.getString("name"))
+              .input(toDocument(toolUse.opt("input")))
+              .build());
+    }
+    if (block.has("toolResult")) {
+      JSONObject toolResult = block.getJSONObject("toolResult");
+      List<ToolResultContentBlock> resultContent = new ArrayList<>();
+      JSONArray content = toolResult.optJSONArray("content");
+      if (content != null) {
+        for (int i = 0; i < content.length(); i++) {
+          JSONObject item = content.getJSONObject(i);
+          if (item.has("json")) {
+            resultContent.add(
+                ToolResultContentBlock.builder().json(toDocument(item.get("json"))).build());
+          } else if (item.has("text")) {
+            resultContent.add(
+                ToolResultContentBlock.builder().text(item.optString("text", "")).build());
+          }
+        }
+      }
+      return ContentBlock.fromToolResult(
+          ToolResultBlock.builder()
+              .toolUseId(toolResult.getString("toolUseId"))
+              .status(toolResult.optString("status", "success"))
+              .content(resultContent)
+              .build());
+    }
+    if (block.has("reasoningContent")) {
+      return ContentBlock.fromReasoningContent(
+          toSdkReasoningContent(block.getJSONObject("reasoningContent")));
+    }
+    throw new IllegalArgumentException("Unsupported Bedrock content block: " + block);
+  }
+
+  private static List<Message> toSdkMessages(JSONArray messages) {
+    List<Message> converted = new ArrayList<>();
+    for (int i = 0; i < messages.length(); i++) {
+      JSONObject message = messages.getJSONObject(i);
+      List<ContentBlock> content = new ArrayList<>();
+      JSONArray blocks = message.getJSONArray("content");
+      for (int j = 0; j < blocks.length(); j++) {
+        content.add(toSdkContentBlock(blocks.getJSONObject(j)));
+      }
+      converted.add(
+          Message.builder().role(message.optString("role", "user")).content(content).build());
+    }
+    return converted;
+  }
+
+  private static List<SystemContentBlock> toSdkSystem(JSONArray system) {
+    List<SystemContentBlock> converted = new ArrayList<>();
+    if (system != null) {
+      for (int i = 0; i < system.length(); i++) {
+        converted.add(
+            SystemContentBlock.builder()
+                .text(system.getJSONObject(i).optString("text", ""))
+                .build());
+      }
+    }
+    return converted;
+  }
+
+  private static ToolConfiguration toSdkToolConfiguration(JSONArray tools) {
+    if (tools == null || tools.isEmpty()) {
+      return null;
+    }
+    List<Tool> converted = new ArrayList<>();
+    for (int i = 0; i < tools.length(); i++) {
+      JSONObject spec = tools.getJSONObject(i).getJSONObject("toolSpec");
+      ToolSpecification.Builder builder =
+          ToolSpecification.builder()
+              .name(spec.getString("name"))
+              .description(spec.optString("description", ""));
+      JSONObject inputSchema = spec.optJSONObject("inputSchema");
+      if (inputSchema != null && inputSchema.has("json")) {
+        builder.inputSchema(
+            ToolInputSchema.builder().json(toDocument(inputSchema.get("json"))).build());
+      } else {
+        builder.inputSchema(
+            ToolInputSchema.builder()
+                .json(toDocument(Map.of("type", "object", "properties", Map.of())))
+                .build());
+      }
+      converted.add(Tool.fromToolSpec(builder.build()));
+    }
+    return ToolConfiguration.builder().tools(converted).build();
+  }
+
+  static ConverseRequest buildSdkConverseRequest(
+      String model, JSONArray system, JSONArray messages, JSONArray tools) {
+    ConverseRequest.Builder builder =
+        ConverseRequest.builder().modelId(model).messages(toSdkMessages(messages));
+    List<SystemContentBlock> systemBlocks = toSdkSystem(system);
+    if (!systemBlocks.isEmpty()) {
+      builder.system(systemBlocks);
+    }
+    ToolConfiguration toolConfiguration = toSdkToolConfiguration(tools);
+    if (toolConfiguration != null) {
+      builder.toolConfig(toolConfiguration);
+    }
+    return builder.build();
+  }
+
+  private static ConverseStreamRequest buildSdkConverseStreamRequest(
+      String model, JSONArray system, JSONArray messages, JSONArray tools) {
+    ConverseRequest request = buildSdkConverseRequest(model, system, messages, tools);
+    ConverseStreamRequest.Builder builder =
+        ConverseStreamRequest.builder().modelId(model).messages(request.messages());
+    if (request.hasSystem()) {
+      builder.system(request.system());
+    }
+    if (request.toolConfig() != null) {
+      builder.toolConfig(request.toolConfig());
+    }
+    return builder.build();
+  }
+
+  private static JSONObject sdkReasoningContentToJson(ReasoningContentBlock reasoning) {
+    JSONObject json = new JSONObject();
+    if (reasoning.reasoningText() != null) {
+      JSONObject text = new JSONObject().put("text", reasoning.reasoningText().text());
+      if (reasoning.reasoningText().signature() != null) {
+        text.put("signature", reasoning.reasoningText().signature());
+      }
+      json.put("reasoningText", text);
+    } else if (reasoning.redactedContent() != null) {
+      json.put(
+          "redactedContent",
+          Base64.getEncoder().encodeToString(reasoning.redactedContent().asByteArray()));
+    }
+    return json;
+  }
+
+  private static JSONObject sdkMessageToJson(Message message) {
+    JSONArray content = new JSONArray();
+    for (ContentBlock block : message.content()) {
+      if (block.text() != null) {
+        content.put(new JSONObject().put("text", block.text()));
+      } else if (block.toolUse() != null) {
+        content.put(
+            new JSONObject()
+                .put(
+                    "toolUse",
+                    new JSONObject()
+                        .put("toolUseId", block.toolUse().toolUseId())
+                        .put("name", block.toolUse().name())
+                        .put("input", JSONObject.wrap(block.toolUse().input().unwrap()))));
+      } else if (block.reasoningContent() != null) {
+        content.put(
+            new JSONObject()
+                .put("reasoningContent", sdkReasoningContentToJson(block.reasoningContent())));
+      }
+    }
+    return new JSONObject().put("role", message.roleAsString()).put("content", content);
+  }
+
+  static JSONObject sdkConverseResponseToJson(ConverseResponse response) {
+    JSONObject json = new JSONObject();
+    if (response.output() != null && response.output().message() != null) {
+      json.put(
+          "output", new JSONObject().put("message", sdkMessageToJson(response.output().message())));
+    }
+    if (response.stopReasonAsString() != null) {
+      json.put("stopReason", response.stopReasonAsString());
+    }
+    if (response.usage() != null) {
+      JSONObject usage =
+          new JSONObject()
+              .put("inputTokens", response.usage().inputTokens())
+              .put("outputTokens", response.usage().outputTokens())
+              .put("totalTokens", response.usage().totalTokens());
+      if (response.usage().cacheReadInputTokens() != null) {
+        usage.put("cacheReadInputTokens", response.usage().cacheReadInputTokens());
+      }
+      if (response.usage().cacheWriteInputTokens() != null) {
+        usage.put("cacheWriteInputTokens", response.usage().cacheWriteInputTokens());
+      }
+      json.put("usage", usage);
+    }
+    return json;
+  }
+
   // Corrected the logger name to use OllamaBaseLM.class
   private static final Logger logger = LoggerFactory.getLogger(BedrockBaseLM.class);
 
@@ -355,8 +713,9 @@ public class BedrockBaseLM extends BaseLlm {
       usageMetadata = getUsageMetadata(agentresponse);
       if (usageMetadata != null) {
         logger.info(
-            "Non-streaming token counts: prompt={}, completion={}, total={}",
+            "Non-streaming token counts: prompt={}, cachedPrompt={}, completion={}, total={}",
             usageMetadata.promptTokenCount().orElse(0),
+            usageMetadata.cachedContentTokenCount().orElse(0),
             usageMetadata.candidatesTokenCount().orElse(0),
             usageMetadata.totalTokenCount().orElse(0));
       }
@@ -522,6 +881,9 @@ public class BedrockBaseLM extends BaseLlm {
    */
   private Flowable<LlmResponse> createRobustStreamingResponse(
       String modelId, JSONArray system, JSONArray messages, JSONArray functions) {
+    if (getBearerToken() == null) {
+      return createAwsSdkStreamingResponse(modelId, system, messages, functions);
+    }
     final StringBuilder accumulatedText = new StringBuilder();
     final StringBuilder functionCallName = new StringBuilder();
     final StringBuilder functionCallArgs = new StringBuilder();
@@ -533,6 +895,8 @@ public class BedrockBaseLM extends BaseLlm {
     final AtomicInteger inputTokens = new AtomicInteger(0);
     final AtomicInteger outputTokens = new AtomicInteger(0);
     final AtomicInteger totalTokens = new AtomicInteger(0);
+    final AtomicInteger cacheReadInputTokens = new AtomicInteger(0);
+    final AtomicInteger cacheWriteInputTokens = new AtomicInteger(0);
     final AtomicInteger promptAudioTokens = new AtomicInteger(0);
     final AtomicInteger completionAudioTokens = new AtomicInteger(0);
 
@@ -556,7 +920,8 @@ public class BedrockBaseLM extends BaseLlm {
                         outputTokens.get(),
                         totalTokens.get(),
                         promptAudioTokens.get(),
-                        completionAudioTokens.get());
+                        completionAudioTokens.get(),
+                        cacheReadInputTokens.get());
 
                 LlmResponse.Builder finalResponseBuilder =
                     LlmResponse.builder()
@@ -607,6 +972,18 @@ public class BedrockBaseLM extends BaseLlm {
                 int total = usage.getInt("totalTokens");
                 totalTokens.set(total);
               }
+              cacheReadInputTokens.set(
+                  firstPresent(
+                      usage,
+                      "cacheReadInputTokens",
+                      "cache_read_input_tokens",
+                      "CacheReadInputTokens"));
+              cacheWriteInputTokens.set(
+                  firstPresent(
+                      usage,
+                      "cacheWriteInputTokens",
+                      "cache_write_input_tokens",
+                      "CacheWriteInputTokens"));
               if (usage.has("prompt_tokens_details")) {
                 JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
                 if (pDetails != null && pDetails.has("audio_tokens")) {
@@ -740,7 +1117,8 @@ public class BedrockBaseLM extends BaseLlm {
                       outputTokens.get(),
                       totalTokens.get(),
                       promptAudioTokens.get(),
-                      completionAudioTokens.get());
+                      completionAudioTokens.get(),
+                      cacheReadInputTokens.get());
 
               // Handle function call completion
               if (inFunctionCall.get() && functionCallName.length() > 0) {
@@ -833,6 +1211,237 @@ public class BedrockBaseLM extends BaseLlm {
             logger.error("Error closing stream reader", e);
           }
         });
+  }
+
+  private static final class StreamingToolCall {
+    private final String toolUseId;
+    private final String name;
+    private final StringBuilder input = new StringBuilder();
+
+    private StreamingToolCall(String toolUseId, String name) {
+      this.toolUseId = toolUseId;
+      this.name = name;
+    }
+  }
+
+  Flowable<LlmResponse> createAwsSdkStreamingResponse(
+      String modelId, JSONArray system, JSONArray messages, JSONArray functions) {
+    return Flowable.create(
+        downstream -> {
+          var emitter = downstream.serialize();
+          BedrockRuntimeAsyncClient client;
+          try {
+            client = createBedrockRuntimeAsyncClient();
+          } catch (SdkClientException ex) {
+            emitter.onError(awsCredentialException(ex));
+            return;
+          }
+          downstream.setCancellable(client::close);
+
+          StringBuilder accumulatedText = new StringBuilder();
+          StringBuilder reasoningText = new StringBuilder();
+          StringBuilder reasoningSignature = new StringBuilder();
+          java.util.concurrent.atomic.AtomicReference<SdkBytes> redactedReasoning =
+              new java.util.concurrent.atomic.AtomicReference<>();
+          Map<Integer, StreamingToolCall> toolCalls = new ConcurrentHashMap<>();
+          AtomicInteger inputTokens = new AtomicInteger();
+          AtomicInteger outputTokens = new AtomicInteger();
+          AtomicInteger totalTokens = new AtomicInteger();
+          AtomicInteger cacheReadInputTokens = new AtomicInteger();
+          AtomicInteger cacheWriteInputTokens = new AtomicInteger();
+
+          ConverseStreamResponseHandler.Visitor visitor =
+              ConverseStreamResponseHandler.Visitor.builder()
+                  .onContentBlockStart(
+                      event -> {
+                        if (event.start() != null && event.start().toolUse() != null) {
+                          var toolUse = event.start().toolUse();
+                          toolCalls.put(
+                              event.contentBlockIndex(),
+                              new StreamingToolCall(toolUse.toolUseId(), toolUse.name()));
+                        }
+                      })
+                  .onContentBlockDelta(
+                      event -> {
+                        if (event.delta() == null) {
+                          return;
+                        }
+                        if (event.delta().text() != null) {
+                          String text = event.delta().text();
+                          accumulatedText.append(text);
+                          emitter.onNext(createTextResponse(text, true));
+                        } else if (event.delta().toolUse() != null) {
+                          StreamingToolCall toolCall = toolCalls.get(event.contentBlockIndex());
+                          if (toolCall != null && event.delta().toolUse().input() != null) {
+                            toolCall.input.append(event.delta().toolUse().input());
+                          }
+                        } else if (event.delta().reasoningContent() != null) {
+                          var reasoning = event.delta().reasoningContent();
+                          if (reasoning.text() != null) {
+                            reasoningText.append(reasoning.text());
+                          }
+                          if (reasoning.signature() != null) {
+                            reasoningSignature.append(reasoning.signature());
+                          }
+                          if (reasoning.redactedContent() != null) {
+                            redactedReasoning.set(reasoning.redactedContent());
+                          }
+                        }
+                      })
+                  .onMetadata(
+                      event -> {
+                        if (event.usage() != null) {
+                          inputTokens.set(orZero(event.usage().inputTokens()));
+                          outputTokens.set(orZero(event.usage().outputTokens()));
+                          totalTokens.set(orZero(event.usage().totalTokens()));
+                          cacheReadInputTokens.set(orZero(event.usage().cacheReadInputTokens()));
+                          cacheWriteInputTokens.set(orZero(event.usage().cacheWriteInputTokens()));
+                        }
+                      })
+                  .build();
+
+          Runnable complete =
+              () -> {
+                try {
+                  List<Part> parts = new ArrayList<>();
+                  if (reasoningText.length() > 0 || redactedReasoning.get() != null) {
+                    JSONObject reasoningContent = new JSONObject();
+                    if (redactedReasoning.get() != null) {
+                      reasoningContent.put(
+                          "redactedContent",
+                          Base64.getEncoder()
+                              .encodeToString(redactedReasoning.get().asByteArray()));
+                    } else {
+                      JSONObject reasoningJson =
+                          new JSONObject().put("text", reasoningText.toString());
+                      if (reasoningSignature.length() > 0) {
+                        reasoningJson.put("signature", reasoningSignature.toString());
+                      }
+                      reasoningContent.put("reasoningText", reasoningJson);
+                    }
+                    parts.add(
+                        Part.builder()
+                            .text(reasoningText.toString())
+                            .thought(true)
+                            .partMetadata(
+                                Map.of(
+                                    BEDROCK_REASONING_CONTENT_METADATA, reasoningContent.toMap()))
+                            .build());
+                  }
+                  if (accumulatedText.length() > 0) {
+                    parts.add(Part.fromText(accumulatedText.toString()));
+                  }
+                  toolCalls.entrySet().stream()
+                      .sorted(Map.Entry.comparingByKey())
+                      .forEach(
+                          entry -> {
+                            StreamingToolCall call = entry.getValue();
+                            Map<String, Object> args =
+                                call.input.length() == 0
+                                    ? Map.of()
+                                    : new JSONObject(call.input.toString()).toMap();
+                            parts.add(
+                                Part.builder()
+                                    .functionCall(
+                                        FunctionCall.builder()
+                                            .id(call.toolUseId)
+                                            .name(call.name)
+                                            .args(args)
+                                            .build())
+                                    .build());
+                          });
+
+                  if (parts.isEmpty()) {
+                    emitter.onComplete();
+                    return;
+                  }
+                  LlmResponse.Builder response =
+                      LlmResponse.builder()
+                          .content(
+                              Content.builder()
+                                  .role("model")
+                                  .parts(ImmutableList.copyOf(parts))
+                                  .build())
+                          .partial(false);
+                  GenerateContentResponseUsageMetadata usage =
+                      getUsageMetadata(
+                          inputTokens.get(),
+                          outputTokens.get(),
+                          totalTokens.get(),
+                          0,
+                          0,
+                          cacheReadInputTokens.get());
+                  if (usage != null) {
+                    logger.info(
+                        "Streaming Bedrock cache counts: read={}, write={}",
+                        cacheReadInputTokens.get(),
+                        cacheWriteInputTokens.get());
+                    response.usageMetadata(usage);
+                  }
+                  emitter.onNext(response.build());
+                  emitter.onComplete();
+                } catch (RuntimeException ex) {
+                  emitter.onError(ex);
+                } finally {
+                  client.close();
+                }
+              };
+
+          ConverseStreamResponseHandler handler =
+              ConverseStreamResponseHandler.builder()
+                  .subscriber(event -> event.accept(visitor))
+                  .onError(
+                      error -> {
+                        try {
+                          emitter.onError(mapAwsException(error));
+                        } finally {
+                          client.close();
+                        }
+                      })
+                  .onComplete(complete)
+                  .build();
+
+          try {
+            client.converseStream(
+                buildSdkConverseStreamRequest(modelId, system, messages, functions), handler);
+          } catch (RuntimeException ex) {
+            client.close();
+            emitter.onError(mapAwsException(ex));
+          }
+        },
+        BackpressureStrategy.BUFFER);
+  }
+
+  private static int orZero(Integer value) {
+    return value == null ? 0 : value;
+  }
+
+  private static RuntimeException awsCredentialException(SdkClientException ex) {
+    return new IllegalStateException(
+        "Unable to call Amazon Bedrock with the AWS default credential chain. On EC2, attach an "
+            + "instance profile, keep IMDS enabled, and set BEDROCK_REGION or AWS_REGION. Cause: "
+            + ex.getMessage(),
+        ex);
+  }
+
+  static RuntimeException mapAwsException(Throwable error) {
+    Throwable cause =
+        error instanceof java.util.concurrent.CompletionException && error.getCause() != null
+            ? error.getCause()
+            : error;
+    if (cause instanceof BedrockRuntimeException ex) {
+      String message =
+          ex.awsErrorDetails() != null && ex.awsErrorDetails().errorMessage() != null
+              ? ex.awsErrorDetails().errorMessage()
+              : ex.getMessage();
+      return new LlmHttpException(ex.statusCode(), message, null, ex);
+    }
+    if (cause instanceof SdkClientException ex) {
+      return awsCredentialException(ex);
+    }
+    return cause instanceof RuntimeException runtime
+        ? runtime
+        : new IllegalStateException("Amazon Bedrock streaming request failed", cause);
   }
 
   /** Creates a text-based LlmResponse similar to OllamaBaseLM's approach. */
@@ -1006,13 +1615,11 @@ public class BedrockBaseLM extends BaseLlm {
    */
   public JSONObject callLLMChat(
       String model, JSONArray system, JSONArray messages, JSONArray tools) {
+    String bearerToken = getBearerToken();
+    if (bearerToken == null || bearerToken.isBlank()) {
+      return callLLMChatWithAwsCredentials(model, system, messages, tools);
+    }
     try {
-      String bearerToken = getBearerToken();
-      if (bearerToken == null || bearerToken.isBlank()) {
-        throw new IllegalStateException(
-            "Bedrock Bearer token not found. Set one of: AWS_BEARER_TOKEN_BEDROCK, "
-                + "BEDROCK_BEARER_TOKEN, BEDROCK_API_KEY, BEDROCK_TOKEN (e.g. in .bashrc)");
-      }
       String baseUrl = getBedrockBaseUrl(D_URL);
       String apiUrl = buildConverseUrl(baseUrl, model);
       JSONObject payload = buildConversePayload(system, messages, tools);
@@ -1065,6 +1672,29 @@ public class BedrockBaseLM extends BaseLlm {
       throw new LlmHttpException(-1, ex.getMessage(), null, ex);
     } catch (IOException ex) {
       throw new LlmHttpException(-1, "Bedrock request failed: " + ex.getMessage(), null, ex);
+    }
+  }
+
+  private JSONObject callLLMChatWithAwsCredentials(
+      String model, JSONArray system, JSONArray messages, JSONArray tools) {
+    try (BedrockRuntimeClient client = createBedrockRuntimeClient()) {
+      ConverseResponse response =
+          client.converse(buildSdkConverseRequest(model, system, messages, tools));
+      return sdkConverseResponseToJson(response);
+    } catch (BedrockRuntimeException ex) {
+      int statusCode = ex.statusCode();
+      String message =
+          ex.awsErrorDetails() != null && ex.awsErrorDetails().errorMessage() != null
+              ? ex.awsErrorDetails().errorMessage()
+              : ex.getMessage();
+      throw new LlmHttpException(statusCode, message, null, ex);
+    } catch (SdkClientException ex) {
+      throw new IllegalStateException(
+          "Unable to call Amazon Bedrock with the AWS default credential chain. On EC2, attach "
+              + "an instance profile, keep IMDS enabled, and set BEDROCK_REGION or AWS_REGION. "
+              + "Cause: "
+              + ex.getMessage(),
+          ex);
     }
   }
 
@@ -1281,11 +1911,13 @@ public class BedrockBaseLM extends BaseLlm {
       int completionTokens,
       int totalTokens,
       int promptAudioTokens,
-      int completionAudioTokens) {
-    if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+      int completionAudioTokens,
+      int cachedPromptTokens) {
+    if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0 || cachedPromptTokens > 0) {
       logger.info(
-          "Streaming token counts: prompt={}, completion={}, total={}",
+          "Streaming token counts: prompt={}, cachedPrompt={}, completion={}, total={}",
           promptTokens,
+          cachedPromptTokens,
           completionTokens,
           totalTokens);
       GenerateContentResponseUsageMetadata.Builder builder =
@@ -1293,6 +1925,10 @@ public class BedrockBaseLM extends BaseLlm {
               .promptTokenCount(promptTokens)
               .candidatesTokenCount(completionTokens)
               .totalTokenCount(totalTokens > 0 ? totalTokens : promptTokens + completionTokens);
+
+      if (cachedPromptTokens > 0) {
+        builder.cachedContentTokenCount(cachedPromptTokens);
+      }
 
       if (promptAudioTokens > 0) {
         builder.promptTokensDetails(
@@ -1343,7 +1979,7 @@ public class BedrockBaseLM extends BaseLlm {
   }
 
   // Added private method for usage metadata extraction
-  private GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
+  static GenerateContentResponseUsageMetadata getUsageMetadata(JSONObject agentResponse) {
     return Optional.ofNullable(agentResponse)
         .flatMap(
             response -> {
@@ -1354,15 +1990,33 @@ public class BedrockBaseLM extends BaseLlm {
                 int completionTokens =
                     firstPresent(usage, "outputTokens", "output_tokens", "OutputTokens");
                 int totalTokens = firstPresent(usage, "totalTokens", "total_tokens", "TotalTokens");
+                int cachedPromptTokens =
+                    firstPresent(
+                        usage,
+                        "cacheReadInputTokens",
+                        "cache_read_input_tokens",
+                        "CacheReadInputTokens");
+                int cacheWriteTokens =
+                    firstPresent(
+                        usage,
+                        "cacheWriteInputTokens",
+                        "cache_write_input_tokens",
+                        "CacheWriteInputTokens");
 
                 if (totalTokens == 0 && (promptTokens > 0 || completionTokens > 0)) {
                   totalTokens = promptTokens + completionTokens;
                 }
 
-                if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+                if (totalTokens > 0
+                    || promptTokens > 0
+                    || completionTokens > 0
+                    || cachedPromptTokens > 0) {
                   logger.info(
-                      "Non-streaming token counts (Bedrock format): prompt={}, completion={}, total={}",
+                      "Non-streaming token counts (Bedrock format): prompt={}, cachedPrompt={}, "
+                          + "cacheWrite={}, completion={}, total={}",
                       promptTokens,
+                      cachedPromptTokens,
+                      cacheWriteTokens,
                       completionTokens,
                       totalTokens);
                   GenerateContentResponseUsageMetadata.Builder builder =
@@ -1370,6 +2024,10 @@ public class BedrockBaseLM extends BaseLlm {
                           .promptTokenCount(promptTokens)
                           .candidatesTokenCount(completionTokens)
                           .totalTokenCount(totalTokens);
+
+                  if (cachedPromptTokens > 0) {
+                    builder.cachedContentTokenCount(cachedPromptTokens);
+                  }
 
                   if (usage.has("prompt_tokens_details")) {
                     JSONObject pDetails = usage.optJSONObject("prompt_tokens_details");
