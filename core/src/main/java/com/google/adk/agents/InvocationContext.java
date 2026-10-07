@@ -27,6 +27,7 @@ import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.Functions;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.LlmCallsLimitExceededException;
+import com.google.adk.platform.UuidProvider;
 import com.google.adk.plugins.Plugin;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
@@ -41,6 +42,8 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
 import io.reactivex.rxjava3.core.Scheduler;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import java.time.Instant;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -50,7 +53,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.jspecify.annotations.Nullable;
@@ -77,6 +79,8 @@ public class InvocationContext {
   private final Map<String, Map<String, Object>> agentStates;
   private final Map<String, Boolean> endOfAgents;
   @Nullable private final Scheduler scheduler;
+  private final InstantSource instantSource;
+  private final UuidProvider uuidProvider;
 
   @Nullable private String branch;
   private BaseAgent agent;
@@ -90,7 +94,8 @@ public class InvocationContext {
     this.liveRequestQueue = builder.liveRequestQueue;
     this.activeStreamingTools = builder.activeStreamingTools;
     this.branch = builder.branch;
-    this.invocationId = builder.invocationId;
+    // Resolved here so subclasses that construct from a builder without build() also get an id.
+    this.invocationId = builder.resolveInvocationId();
     this.agent = builder.agent;
     this.session = builder.session;
     this.userContent = builder.userContent;
@@ -107,6 +112,8 @@ public class InvocationContext {
     this.agentStates = builder.agentStates;
     this.endOfAgents = builder.endOfAgents;
     this.scheduler = builder.scheduler;
+    this.instantSource = builder.instantSource;
+    this.uuidProvider = builder.uuidProvider;
   }
 
   /** Returns a new {@link Builder} for creating {@link InvocationContext} instances. */
@@ -303,9 +310,34 @@ public class InvocationContext {
     return scheduler != null ? scheduler : Schedulers.io();
   }
 
+  /** Returns the {@link InstantSource} for this invocation. */
+  public InstantSource instantSource() {
+    return instantSource;
+  }
+
+  /** Returns the {@link UuidProvider} for this invocation. */
+  public UuidProvider uuidProvider() {
+    return uuidProvider;
+  }
+
+  /** Returns the current time from this invocation's {@link InstantSource}. */
+  public Instant now() {
+    return instantSource.instant();
+  }
+
+  /** Returns a new unique identifier from this invocation's {@link UuidProvider}. */
+  public String newUuid() {
+    return uuidProvider.newUuid();
+  }
+
   /** Generates a new unique ID for an invocation context. */
   public static String newInvocationContextId() {
-    return "e-" + UUID.randomUUID();
+    return newInvocationContextId(UuidProvider.SYSTEM);
+  }
+
+  /** Generates a new unique ID for an invocation context using the given {@link UuidProvider}. */
+  public static String newInvocationContextId(UuidProvider uuidProvider) {
+    return "e-" + uuidProvider.newUuid();
   }
 
   /**
@@ -619,6 +651,7 @@ public class InvocationContext {
       this.activeStreamingTools = new ConcurrentHashMap<>(context.activeStreamingTools);
       this.branch = context.branch;
       this.invocationId = context.invocationId;
+      this.invocationIdSet = true;
       this.agent = context.agent;
       this.session = context.session;
       this.userContent = context.userContent;
@@ -636,6 +669,8 @@ public class InvocationContext {
       this.agentStates = context.agentStates;
       this.endOfAgents = context.endOfAgents;
       this.scheduler = context.scheduler;
+      this.instantSource = context.instantSource;
+      this.uuidProvider = context.uuidProvider;
     }
 
     private BaseSessionService sessionService;
@@ -645,7 +680,9 @@ public class InvocationContext {
     @Nullable private LiveRequestQueue liveRequestQueue = null;
     private Map<String, ActiveStreamingTool> activeStreamingTools = new ConcurrentHashMap<>();
     @Nullable private String branch = null;
-    private String invocationId = newInvocationContextId();
+    private @Nullable String invocationId;
+    // Distinguishes "never set" (an id is minted from the UuidProvider) from an explicit null.
+    private boolean invocationIdSet;
     private BaseAgent agent;
     private Session session;
     @Nullable private Content userContent = null;
@@ -659,6 +696,8 @@ public class InvocationContext {
     private Map<String, Map<String, Object>> agentStates = new ConcurrentHashMap<>();
     private Map<String, Boolean> endOfAgents = new ConcurrentHashMap<>();
     @Nullable private Scheduler scheduler = null;
+    private InstantSource instantSource = InstantSource.system();
+    private UuidProvider uuidProvider = UuidProvider.SYSTEM;
 
     /**
      * Sets the session service for managing session state.
@@ -741,6 +780,7 @@ public class InvocationContext {
     @CanIgnoreReturnValue
     public Builder invocationId(String invocationId) {
       this.invocationId = invocationId;
+      this.invocationIdSet = true;
       return this;
     }
 
@@ -866,6 +906,44 @@ public class InvocationContext {
     }
 
     /**
+     * Sets the instant source for the invocation; {@code null} (the default) selects {@link
+     * InstantSource#system()}.
+     *
+     * @param instantSource the source of the current time, or {@code null} for the default.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder instantSource(@Nullable InstantSource instantSource) {
+      this.instantSource = instantSource != null ? instantSource : InstantSource.system();
+      return this;
+    }
+
+    /**
+     * Sets the UUID provider for the invocation; {@code null} (the default) selects {@link
+     * UuidProvider#SYSTEM}.
+     *
+     * @param uuidProvider the provider for new unique identifiers, or {@code null} for the default.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder uuidProvider(@Nullable UuidProvider uuidProvider) {
+      this.uuidProvider = uuidProvider != null ? uuidProvider : UuidProvider.SYSTEM;
+      return this;
+    }
+
+    /**
+     * Returns the invocation id, minting one from the {@link UuidProvider} on first use so that
+     * repeated builds from this builder share it.
+     */
+    private String resolveInvocationId() {
+      if (!invocationIdSet) {
+        invocationId = newInvocationContextId(uuidProvider);
+        invocationIdSet = true;
+      }
+      return invocationId;
+    }
+
+    /**
      * Builds the {@link InvocationContext} instance.
      *
      * @throws IllegalStateException if any required parameters are missing.
@@ -883,7 +961,8 @@ public class InvocationContext {
    * @throws IllegalStateException if any required parameters are missing.
    */
   private static void validate(Builder builder) {
-    if (isNullOrEmpty(builder.invocationId)) {
+    // An unset id is minted from the UuidProvider; an explicitly empty one is a caller error.
+    if (builder.invocationIdSet && isNullOrEmpty(builder.invocationId)) {
       throw new IllegalStateException("Invocation ID must be non-empty.");
     }
     if (builder.agent == null) {
@@ -923,7 +1002,9 @@ public class InvocationContext {
         && Objects.equals(resumabilityConfig, that.resumabilityConfig)
         && Objects.equals(invocationCostManager, that.invocationCostManager)
         && Objects.equals(callbackContextData, that.callbackContextData)
-        && Objects.equals(scheduler, that.scheduler);
+        && Objects.equals(scheduler, that.scheduler)
+        && Objects.equals(instantSource, that.instantSource)
+        && Objects.equals(uuidProvider, that.uuidProvider);
   }
 
   @Override
@@ -947,6 +1028,8 @@ public class InvocationContext {
         resumabilityConfig,
         invocationCostManager,
         callbackContextData,
-        scheduler);
+        scheduler,
+        instantSource,
+        uuidProvider);
   }
 }

@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.adk.JsonBaseModel;
+import com.google.adk.platform.UuidProvider;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -34,12 +35,11 @@ import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.GroundingMetadata;
 import com.google.genai.types.Transcription;
-import java.time.Instant;
+import java.time.InstantSource;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /** Represents an event in a session. */
@@ -71,8 +71,13 @@ public class Event extends JsonBaseModel {
 
   private Event() {}
 
+  /**
+   * Returns a random event id. Agents, tools, and plugins that build events inside an invocation
+   * should use {@code InvocationContext.newUuid()} instead so the id follows its {@link
+   * UuidProvider}.
+   */
   public static String generateEventId() {
-    return UUID.randomUUID().toString();
+    return UuidProvider.SYSTEM.newUuid();
   }
 
   /** The event id. */
@@ -519,6 +524,11 @@ public class Event extends JsonBaseModel {
       return this;
     }
 
+    /**
+     * Sets the timestamp in epoch milliseconds. When unset, {@link #build()} reads the wall clock;
+     * events built inside an invocation should pass {@code InvocationContext.now().toEpochMilli()}
+     * so the timestamp follows its {@link java.time.InstantSource}.
+     */
     @CanIgnoreReturnValue
     @JsonProperty("timestamp")
     public Builder timestamp(long value) {
@@ -602,7 +612,8 @@ public class Event extends JsonBaseModel {
       event.setCustomMetadata(customMetadata);
       event.setModelVersion(modelVersion);
       event.setActions(actions().orElseGet(() -> EventActions.builder().build()));
-      event.setTimestamp(timestamp().orElseGet(() -> Instant.now().toEpochMilli()));
+      event.setTimestamp(
+          timestamp().orElseGet(() -> InstantSource.system().instant().toEpochMilli()));
       event.setInputTranscription(inputTranscription);
       event.setOutputTranscription(outputTranscription);
       return event;
@@ -641,10 +652,8 @@ public class Event extends JsonBaseModel {
             .customMetadata(this.customMetadata)
             .modelVersion(this.modelVersion)
             .inputTranscription(this.inputTranscription)
-            .outputTranscription(this.outputTranscription);
-    if (this.timestamp != 0) {
-      builder.timestamp(this.timestamp);
-    }
+            .outputTranscription(this.outputTranscription)
+            .timestamp(this.timestamp);
     return builder;
   }
 

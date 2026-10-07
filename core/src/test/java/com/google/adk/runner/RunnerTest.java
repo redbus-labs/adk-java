@@ -35,10 +35,12 @@ import static com.google.adk.testing.TestUtils.createTextLlmResponse;
 import static com.google.adk.testing.TestUtils.simplifyEvents;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.stream;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -64,8 +66,11 @@ import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.Functions;
+import com.google.adk.models.BaseLlm;
+import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.platform.UuidProvider;
 import com.google.adk.plugins.BasePlugin;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.GetSessionConfig;
@@ -83,6 +88,7 @@ import com.google.adk.testing.TestUtils.EchoTool;
 import com.google.adk.testing.TestUtils.FailingEchoTool;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
+import com.google.adk.tools.SetModelResponseTool;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -94,6 +100,7 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.google.genai.types.PartialArg;
+import com.google.genai.types.Schema;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.ContextKey;
@@ -108,6 +115,7 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
 import io.reactivex.rxjava3.subjects.PublishSubject;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.time.Instant;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -3534,5 +3542,410 @@ public final class RunnerTest {
     public Single<ListEventsResponse> listEvents(String appName, String userId, String sessionId) {
       return delegate.listEvents(appName, userId, sessionId);
     }
+  }
+
+  /**
+   * Verification of custom time/UUID provider behavior: running identical input twice with the same
+   * deterministic clock and UUID provider yields byte-identical event ids, timestamps, and
+   * invocation ids.
+   */
+  @Test
+  public void runAsync_withDeterministicProviders_producesIdenticalEvents() {
+    List<Event> firstRun = runWithDeterministicProviders();
+    List<Event> secondRun = runWithDeterministicProviders();
+
+    assertThat(firstRun).isNotEmpty();
+
+    List<String> firstIds = firstRun.stream().map(Event::id).toList();
+    List<String> secondIds = secondRun.stream().map(Event::id).toList();
+    assertThat(firstIds).isEqualTo(secondIds);
+
+    List<Long> firstTimestamps = firstRun.stream().map(Event::timestamp).toList();
+    List<Long> secondTimestamps = secondRun.stream().map(Event::timestamp).toList();
+    assertThat(firstTimestamps).isEqualTo(secondTimestamps);
+
+    List<String> firstInvocationIds = firstRun.stream().map(Event::invocationId).toList();
+    List<String> secondInvocationIds = secondRun.stream().map(Event::invocationId).toList();
+    assertThat(firstInvocationIds).isEqualTo(secondInvocationIds);
+
+    // The injected clock seam is actually used: every event carries the fixed timestamp.
+    assertThat(firstTimestamps.stream().distinct().toList()).containsExactly(1234L);
+    // The invocation id is minted from the injected UUID provider.
+    assertThat(firstInvocationIds.stream().distinct().toList()).containsExactly("e-uuid-0000");
+  }
+
+  @Test
+  public void build_defaultSessionService_isSharedByRunnersFromTheSameBuilder() {
+    Runner.Builder builder =
+        Runner.builder().app(App.builder().name("test").rootAgent(agent).build());
+
+    Runner first = builder.build();
+    Runner second = builder.build();
+    Session created =
+        first.sessionService().createSession("test", "user", null, "shared-session").blockingGet();
+
+    assertThat(second.sessionService()).isSameInstanceAs(first.sessionService());
+    assertThat(
+            second
+                .sessionService()
+                .getSession("test", "user", created.id(), Optional.empty())
+                .blockingGet())
+        .isNotNull();
+  }
+
+  @Test
+  public void build_explicitSessionService_isUsedAsIs() {
+    BaseSessionService explicitSessionService = new InMemorySessionService();
+
+    Runner built =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .sessionService(explicitSessionService)
+            .build();
+
+    assertThat(built.sessionService()).isSameInstanceAs(explicitSessionService);
+  }
+
+  @Test
+  public void build_withNullSessionService_throws() {
+    Runner.Builder builder =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .sessionService(null);
+
+    IllegalStateException exception = assertThrows(IllegalStateException.class, builder::build);
+
+    assertThat(exception).hasMessageThat().isEqualTo("Session service must be provided.");
+  }
+
+  @Test
+  public void build_withNullThenSessionService_usesTheSessionService() {
+    BaseSessionService explicitSessionService = new InMemorySessionService();
+
+    Runner built =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .sessionService(null)
+            .sessionService(explicitSessionService)
+            .build();
+
+    assertThat(built.sessionService()).isSameInstanceAs(explicitSessionService);
+  }
+
+  @Test
+  public void builder_nullProviders_selectTheSystemDefaults() {
+    Runner nullProviderRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .instantSource(InstantSource.fixed(Instant.EPOCH))
+            .uuidProvider(() -> "fixed-uuid")
+            .instantSource(null)
+            .uuidProvider(null)
+            .build();
+
+    Session created =
+        nullProviderRunner.sessionService().createSession("test", "user").blockingGet();
+
+    assertThat(created.id()).isNotEqualTo("fixed-uuid");
+    assertThat(created.lastUpdateTime()).isGreaterThan(Instant.EPOCH);
+  }
+
+  @Test
+  public void build_defaultSessionService_usesRunnerProviders() {
+    InstantSource fixedClock = () -> Instant.ofEpochMilli(1234L);
+    UuidProvider fixedUuids = () -> "session-uuid";
+    Runner deterministicRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .instantSource(fixedClock)
+            .uuidProvider(fixedUuids)
+            .build();
+
+    Session createdSession =
+        deterministicRunner.sessionService().createSession("test", "user").blockingGet();
+
+    assertThat(createdSession.id()).isEqualTo("session-uuid");
+    assertThat(createdSession.lastUpdateTime()).isEqualTo(Instant.ofEpochMilli(1234L));
+  }
+
+  @Test
+  public void beforeRunCallback_eventUsesRunnerProviders() {
+    BasePlugin providerPlugin = mockPlugin("provider-plugin");
+    when(providerPlugin.beforeRunCallback(any())).thenReturn(Maybe.just(pluginContent));
+    Runner deterministicRunner =
+        Runner.builder()
+            .app(
+                App.builder()
+                    .name("test")
+                    .rootAgent(agent)
+                    .plugins(ImmutableList.of(providerPlugin))
+                    .build())
+            .instantSource(() -> Instant.ofEpochMilli(1234L))
+            .uuidProvider(() -> "plugin-event-uuid")
+            .build();
+    Session deterministicSession =
+        deterministicRunner.sessionService().createSession("test", "user").blockingGet();
+
+    List<Event> events =
+        deterministicRunner
+            .runAsync("user", deterministicSession.id(), createContent("will not be processed"))
+            .toList()
+            .blockingGet();
+
+    assertThat(simplifyEvents(events)).containsExactly("model: from plugin");
+    assertThat(events.get(0).id()).isEqualTo("plugin-event-uuid");
+    assertThat(events.get(0).timestamp()).isEqualTo(1234L);
+  }
+
+  @Test
+  public void runLive_withProviders_eventsUseRunnerProviders() throws Exception {
+    AtomicInteger counter = new AtomicInteger();
+    Runner liveRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .instantSource(() -> Instant.ofEpochMilli(1234L))
+            .uuidProvider(() -> String.format("uuid-%04d", counter.getAndIncrement()))
+            .build();
+    Session liveSession = liveRunner.sessionService().createSession("test", "user").blockingGet();
+    LiveRequestQueue liveRequestQueue = new LiveRequestQueue();
+    TestSubscriber<Event> testSubscriber =
+        liveRunner.runLive(liveSession, liveRequestQueue, RunConfig.builder().build()).test();
+
+    liveRequestQueue.content(createContent("from user"));
+    liveRequestQueue.close();
+
+    testSubscriber.await();
+    testSubscriber.assertComplete();
+    assertThat(simplifyEvents(testSubscriber.values())).containsExactly("test agent: from llm");
+    assertThat(liveSession.id()).isEqualTo("uuid-0000");
+    for (Event event : testSubscriber.values()) {
+      assertThat(event.id()).startsWith("uuid-");
+      assertThat(event.invocationId()).startsWith("e-uuid-");
+      assertThat(event.timestamp()).isEqualTo(1234L);
+    }
+  }
+
+  // A clock fixed at the epoch exposes every event a run builds or rebuilds without the
+  // invocation's providers: a wall-clock stamp is never 0, and any id not drawn from the counter
+  // breaks the "uuid-NNNN" pattern.
+
+  @Test
+  public void runAsync_toolCallTurn_withEpochClock_everyEventFollowsTheProviders() {
+    DeterministicRun first = runWithEpochClock(toolCallAgent());
+    DeterministicRun second = runWithEpochClock(toolCallAgent());
+
+    // Two parallel calls, their merged responses, and the final text.
+    assertThat(first.emitted()).hasSize(3);
+    assertThat(first.emitted().get(0).functionCalls()).hasSize(2);
+    assertThat(first.emitted().get(1).functionResponses()).hasSize(2);
+    assertThat(first.emitted().get(2).content().get().text()).isEqualTo("done");
+    assertThat(first.persisted()).hasSize(4);
+    assertEventsFollowProviders(first);
+    assertIdenticalRuns(first, second);
+  }
+
+  @Test
+  public void runAsync_agentCallbacks_withEpochClock_everyEventFollowsTheProviders() {
+    DeterministicRun first = runWithEpochClock(callbackAgent());
+    DeterministicRun second = runWithEpochClock(callbackAgent());
+
+    // The before-callback's state delta, the model response, and the after-callback's content.
+    assertThat(first.emitted()).hasSize(3);
+    assertThat(first.emitted().get(0).actions().stateDelta()).containsEntry("before_key", "v");
+    assertThat(first.emitted().get(1).content().get().text()).isEqualTo("from llm");
+    assertThat(first.emitted().get(2).content().get().text()).isEqualTo("from callback");
+    assertThat(first.persisted()).hasSize(4);
+    assertEventsFollowProviders(first);
+    assertIdenticalRuns(first, second);
+  }
+
+  @Test
+  public void runAsync_outputSchemaAgent_withEpochClock_everyEventFollowsTheProviders() {
+    DeterministicRun first = runWithEpochClock(outputSchemaAgent());
+    DeterministicRun second = runWithEpochClock(outputSchemaAgent());
+
+    // The set_model_response call, its response, and the final structured response.
+    assertThat(first.emitted()).hasSize(3);
+    assertThat(first.emitted().get(0).functionCalls().get(0).name())
+        .hasValue(SetModelResponseTool.NAME);
+    assertThat(first.emitted().get(2).content().get().text()).isEqualTo("{\"field1\":\"value1\"}");
+    assertThat(first.persisted()).hasSize(4);
+    assertEventsFollowProviders(first);
+    assertIdenticalRuns(first, second);
+  }
+
+  /** The events one run emitted and the events it left in the session. */
+  private record DeterministicRun(ImmutableList<Event> emitted, ImmutableList<Event> persisted) {}
+
+  /** Runs {@code agent} once on a fresh runner with an epoch clock and counter-minted ids. */
+  private DeterministicRun runWithEpochClock(LlmAgent agent) {
+    AtomicInteger counter = new AtomicInteger();
+    Runner epochRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(agent).build())
+            .instantSource(InstantSource.fixed(Instant.EPOCH))
+            .uuidProvider(() -> String.format("uuid-%04d", counter.getAndIncrement()))
+            .build();
+    Session epochSession =
+        epochRunner
+            .sessionService()
+            .createSession("test", "user", null, "fixed-session")
+            .blockingGet();
+    ImmutableList<Event> emitted =
+        ImmutableList.copyOf(
+            epochRunner
+                .runAsync("user", epochSession.id(), createContent("hi"))
+                .toList()
+                .blockingGet());
+    ImmutableList<Event> persisted =
+        ImmutableList.copyOf(
+            epochRunner
+                .sessionService()
+                .getSession("test", "user", epochSession.id(), Optional.empty())
+                .blockingGet()
+                .events());
+    return new DeterministicRun(emitted, persisted);
+  }
+
+  /** An agent whose model issues two id-less {@code echo_tool} calls and then answers in text. */
+  private LlmAgent toolCallAgent() {
+    Part idlessCall =
+        Part.builder()
+            .functionCall(
+                FunctionCall.builder()
+                    .name(echoTool.name())
+                    .args(ImmutableMap.of("args_name", "args_value"))
+                    .build())
+            .build();
+    Content parallelCalls =
+        Content.builder().role("model").parts(ImmutableList.of(idlessCall, idlessCall)).build();
+    return createTestAgentBuilder(
+            createTestLlm(createLlmResponse(parallelCalls), createTextLlmResponse("done")))
+        .tools(echoTool)
+        .build();
+  }
+
+  /**
+   * An agent whose before-agent callback only writes state and whose after-agent callback replies.
+   */
+  private LlmAgent callbackAgent() {
+    Callbacks.BeforeAgentCallback writeState =
+        callbackContext -> {
+          var unused = callbackContext.state().put("before_key", "v");
+          return Maybe.empty();
+        };
+    Callbacks.AfterAgentCallback reply =
+        callbackContext -> Maybe.just(createContent("from callback"));
+    return createTestAgentBuilder(createTestLlm(createTextLlmResponse("from llm")))
+        .beforeAgentCallback(writeState)
+        .afterAgentCallback(reply)
+        .build();
+  }
+
+  /**
+   * An agent with an output schema and a tool under a gemini-2 model name, so the flow routes the
+   * answer through {@code set_model_response} and builds the final structured response event.
+   */
+  private LlmAgent outputSchemaAgent() {
+    TestLlm scriptedLlm =
+        createTestLlm(
+            createLlmResponse(
+                Content.fromParts(
+                    Part.fromFunctionCall(
+                        SetModelResponseTool.NAME, ImmutableMap.of("field1", "value1")))));
+    BaseLlm gemini2NamedLlm =
+        new BaseLlm("gemini-2.0-flash") {
+          @Override
+          public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
+            return scriptedLlm.generateContent(llmRequest, stream);
+          }
+
+          @Override
+          public BaseLlmConnection connect(LlmRequest llmRequest) {
+            return scriptedLlm.connect(llmRequest);
+          }
+        };
+    Schema outputSchema =
+        Schema.builder()
+            .type("OBJECT")
+            .properties(ImmutableMap.of("field1", Schema.builder().type("STRING").build()))
+            .required(ImmutableList.of("field1"))
+            .build();
+    return LlmAgent.builder()
+        .name("test agent")
+        .model(gemini2NamedLlm)
+        .outputSchema(outputSchema)
+        .tools(echoTool)
+        .build();
+  }
+
+  /**
+   * Asserts that every emitted and persisted event carries the epoch timestamp, a counter id, a
+   * counter-derived invocation id, and ADK-prefixed function-call ids, with no id used twice.
+   */
+  private static void assertEventsFollowProviders(DeterministicRun run) {
+    for (Event event : Iterables.concat(run.emitted(), run.persisted())) {
+      assertWithMessage("timestamp of event %s", event.id()).that(event.timestamp()).isEqualTo(0L);
+      assertThat(event.id()).matches("uuid-\\d{4}");
+      assertThat(event.invocationId()).matches("e-uuid-\\d{4}");
+      for (FunctionCall functionCall : event.functionCalls()) {
+        assertThat(functionCall.id().get()).startsWith("adk-uuid-");
+      }
+      for (FunctionResponse functionResponse : event.functionResponses()) {
+        assertThat(functionResponse.id().get()).startsWith("adk-uuid-");
+      }
+    }
+    assertThat(ids(run.emitted())).containsNoDuplicates();
+    assertThat(ids(run.persisted())).containsNoDuplicates();
+  }
+
+  /** Asserts that {@code second} reproduced the ids, timestamps, and call ids of {@code first}. */
+  private static void assertIdenticalRuns(DeterministicRun first, DeterministicRun second) {
+    assertThat(ids(second.emitted())).isEqualTo(ids(first.emitted()));
+    assertThat(ids(second.persisted())).isEqualTo(ids(first.persisted()));
+    assertThat(second.persisted().stream().map(Event::timestamp).collect(toImmutableList()))
+        .isEqualTo(first.persisted().stream().map(Event::timestamp).collect(toImmutableList()));
+    assertThat(functionCallIds(second.persisted())).isEqualTo(functionCallIds(first.persisted()));
+  }
+
+  private static ImmutableList<String> ids(List<Event> events) {
+    return events.stream().map(Event::id).collect(toImmutableList());
+  }
+
+  private static ImmutableList<String> functionCallIds(List<Event> events) {
+    return events.stream()
+        .flatMap(event -> event.functionCalls().stream())
+        .map(functionCall -> functionCall.id().get())
+        .collect(toImmutableList());
+  }
+
+  private List<Event> runWithDeterministicProviders() {
+    InstantSource fixedClock = () -> Instant.ofEpochMilli(1234L);
+    UuidProvider sequentialUuids =
+        new UuidProvider() {
+          private final AtomicInteger counter = new AtomicInteger();
+
+          @Override
+          public String newUuid() {
+            return String.format("uuid-%04d", counter.getAndIncrement());
+          }
+        };
+    LlmAgent deterministicAgent =
+        createTestAgentBuilder(createTestLlm(createLlmResponse(createContent("from llm")))).build();
+    Runner deterministicRunner =
+        Runner.builder()
+            .app(App.builder().name("test").rootAgent(deterministicAgent).build())
+            .instantSource(fixedClock)
+            .uuidProvider(sequentialUuids)
+            .build();
+    Session deterministicSession =
+        deterministicRunner
+            .sessionService()
+            .createSession("test", "user", new ConcurrentHashMap<String, Object>(), "fixed-session")
+            .blockingGet();
+    return deterministicRunner
+        .runAsync("user", deterministicSession.id(), createContent("hi"))
+        .toList()
+        .blockingGet();
   }
 }

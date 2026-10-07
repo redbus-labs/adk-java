@@ -125,6 +125,21 @@ public final class EventTest {
   }
 
   @Test
+  public void event_toBuilder_preserves_zero_timestamp() {
+    Event event =
+        Event.builder()
+            .id("event_id")
+            .invocationId("invocation_id")
+            .author("agent")
+            .timestamp(0L)
+            .build();
+
+    Event copy = event.toBuilder().build();
+
+    assertThat(copy.timestamp()).isEqualTo(0L);
+  }
+
+  @Test
   public void event_equals_works() {
     Event event1 =
         Event.builder()

@@ -67,6 +67,7 @@ import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.plugins.RxJavaPlugins;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
+import java.time.Instant;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -76,6 +77,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -218,6 +220,39 @@ public final class RemoteA2AAgentTest {
     assertText(finalEvent, "Final artifact content");
     assertRequestMetadata(finalEvent);
     assertResponseMetadata(finalEvent);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked") // cast for Mockito
+  public void runAsync_usesInvocationProvidersForMessageIdAndEvents() {
+    RemoteA2AAgent agent = createAgent();
+    AtomicInteger counter = new AtomicInteger();
+    InvocationContext providerContext =
+        invocationContext.toBuilder()
+            .instantSource(() -> Instant.ofEpochMilli(1234L))
+            .uuidProvider(() -> String.format("uuid-%04d", counter.getAndIncrement()))
+            .build();
+    mockStreamResponse(
+        consumer -> {
+          consumer.accept(createPartialEvent("Hello ", true, false), agentCard);
+          consumer.accept(createPartialEvent("World!", true, false), agentCard);
+          consumer.accept(createFinalEvent("Final artifact content"), agentCard);
+        });
+
+    List<Event> events = agent.runAsync(providerContext).toList().blockingGet();
+
+    ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
+    verify(mockClient)
+        .sendMessage(messageCaptor.capture(), any(List.class), any(Consumer.class), any());
+    // The outbound A2A message id is the first id drawn from the invocation's provider: building
+    // the request parts draws none.
+    assertThat(messageCaptor.getValue().getMessageId()).isEqualTo("uuid-0000");
+    assertThat(events).hasSize(4);
+    assertThat(events.stream().map(Event::id).distinct()).hasSize(4);
+    for (Event event : events) {
+      assertThat(event.id()).startsWith("uuid-");
+      assertThat(event.timestamp()).isEqualTo(1234L);
+    }
   }
 
   @Test

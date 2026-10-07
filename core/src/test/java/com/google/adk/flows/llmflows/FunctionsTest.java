@@ -44,6 +44,8 @@ import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import java.time.Instant;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -563,26 +565,7 @@ public final class FunctionsTest {
   }
 
   private static Event twoToolCallsEvent() {
-    return createEvent("event").toBuilder()
-        .content(
-            Content.fromParts(
-                Part.builder()
-                    .functionCall(
-                        FunctionCall.builder()
-                            .id("call_1")
-                            .name("tool_1")
-                            .args(ImmutableMap.of())
-                            .build())
-                    .build(),
-                Part.builder()
-                    .functionCall(
-                        FunctionCall.builder()
-                            .id("call_2")
-                            .name("tool_2")
-                            .args(ImmutableMap.of())
-                            .build())
-                    .build()))
-        .build();
+    return toolCallsEvent("tool_1", "tool_2");
   }
 
   /** Single-tool case bypasses the parallel scheduler path; must still return the correct event. */
@@ -782,5 +765,84 @@ public final class FunctionsTest {
             return ImmutableMap.<String, Object>of("tool", name());
           });
     }
+  }
+
+  @Test
+  public void populateClientFunctionCallId_withProvider_usesProvider() {
+    Event event =
+        Event.builder()
+            .id("event1")
+            .invocationId("invocation1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromFunctionCall("some_function", ImmutableMap.of())))
+            .build();
+
+    Functions.populateClientFunctionCallId(event, () -> "deterministic-uuid");
+
+    Part populatedPart = event.content().get().parts().get().get(0);
+    assertThat(populatedPart.functionCall().get().id()).hasValue("adk-deterministic-uuid");
+  }
+
+  @Test
+  public void handleFunctionCalls_singleCall_responseEventUsesInvocationProviders() {
+    InvocationContext invocationContext = providerContext();
+
+    Event responseEvent =
+        Functions.handleFunctionCalls(
+                invocationContext,
+                toolCallsEvent("tool_1"),
+                ImmutableMap.of("tool_1", new SleepingTool("tool_1", 0L)))
+            .blockingGet();
+
+    assertThat(responseEvent.id()).isEqualTo("fixed-uuid");
+    assertThat(responseEvent.timestamp()).isEqualTo(0L);
+    assertThat(responseEvent.functionResponses()).hasSize(1);
+  }
+
+  @Test
+  public void handleFunctionCalls_parallelCalls_mergedEventUsesInvocationProviders() {
+    InvocationContext invocationContext = providerContext();
+
+    Event mergedEvent =
+        Functions.handleFunctionCalls(
+                invocationContext,
+                toolCallsEvent("tool_1", "tool_2"),
+                ImmutableMap.of(
+                    "tool_1",
+                    new SleepingTool("tool_1", 0L),
+                    "tool_2",
+                    new SleepingTool("tool_2", 0L)))
+            .blockingGet();
+
+    assertThat(mergedEvent.id()).isEqualTo("fixed-uuid");
+    assertThat(mergedEvent.timestamp()).isEqualTo(0L);
+    assertThat(mergedEvent.functionResponses()).hasSize(2);
+  }
+
+  /** A context whose clock is fixed at the epoch and whose ids are all {@code fixed-uuid}. */
+  private static InvocationContext providerContext() {
+    return createInvocationContext(createRootAgent()).toBuilder()
+        .instantSource(InstantSource.fixed(Instant.EPOCH))
+        .uuidProvider(() -> "fixed-uuid")
+        .build();
+  }
+
+  /** A model event calling each named tool once, with model-assigned call ids. */
+  private static Event toolCallsEvent(String... toolNames) {
+    ImmutableList.Builder<Part> parts = ImmutableList.builder();
+    for (int i = 0; i < toolNames.length; i++) {
+      parts.add(
+          Part.builder()
+              .functionCall(
+                  FunctionCall.builder()
+                      .id("call_" + (i + 1))
+                      .name(toolNames[i])
+                      .args(ImmutableMap.of())
+                      .build())
+              .build());
+    }
+    return createEvent("event").toBuilder()
+        .content(Content.builder().role("model").parts(parts.build()).build())
+        .build();
   }
 }
