@@ -19,8 +19,8 @@ config-based collection in `../configagent/README.md`.
 
 ## Prerequisites
 
-- Java 17+
-- Maven 3.9+
+-   Java 17+
+-   Maven 3.9+
 
 ## Build and Run
 
@@ -40,7 +40,7 @@ mvn exec:java -Dexec.args="--run-extended"
 
 ## Next Steps
 
-* Review `HelloWorldAgent.java` to see how function tools are registered.
-* Compare with the configuration-based samples in `../configagent/README.md` for
-  more complex agent setups (callbacks, multi-agent coordination, and custom
-  registries).
+*   Review `HelloWorldAgent.java` to see how function tools are registered.
+*   Compare with the configuration-based samples in `../configagent/README.md`
+    for more complex agent setups (callbacks, multi-agent coordination, and
+    custom registries).

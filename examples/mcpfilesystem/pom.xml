@@ -19,17 +19,17 @@
 
     <parent>
         <groupId>com.google.adk</groupId>
-        <artifactId>google-adk-samples</artifactId>
+        <artifactId>google-adk-examples</artifactId>
         <version>1.11.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
         <relativePath>..</relativePath>
     </parent>
 
     <groupId>com.google.adk.samples</groupId>
-    <artifactId>google-adk-sample-helloworld</artifactId>
-    <name>Google ADK - Sample - Hello World</name>
+    <artifactId>google-adk-sample-mcpfilesystem</artifactId>
+    <name>Google ADK - Sample - MCP Filesystem</name>
     <description>
-        A sample "Hello World" application demonstrating basic agent and tool usage with the Google ADK,
-        runnable via com.example.helloworld.HelloWorldRun.
+        Programmatic MCP filesystem sample mirroring the YAML-based configuration under
+        examples/configagent.
     </description>
     <packaging>jar</packaging>
 
@@ -37,25 +37,24 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>17</java.version>
         <auto-value.version>1.11.1</auto-value.version>
-        <!-- Main class for exec-maven-plugin -->
-        <exec.mainClass>com.example.helloworld.HelloWorldRun</exec.mainClass>
-        <google-adk.version>${project.version}</google-adk.version>
+        <exec.mainClass>com.example.mcpfilesystem.McpFilesystemRun</exec.mainClass>
+        <google-adk.version>${project.parent.version}</google-adk.version>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>com.google.adk</groupId>
-      <artifactId>google-adk</artifactId>
-      <version>${google-adk.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>commons-logging</groupId>
-      <artifactId>commons-logging</artifactId>
-      <version>1.2</version> <!-- Or use a property if defined in a parent POM -->
-    </dependency>
-  </dependencies>
+            <artifactId>google-adk</artifactId>
+            <version>${google-adk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-logging</groupId>
+            <artifactId>commons-logging</artifactId>
+            <version>1.2</version>
+        </dependency>
+    </dependencies>
 
-  <build>
+    <build>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

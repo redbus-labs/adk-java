@@ -39,7 +39,7 @@ GOOGLE_API_KEY before running the service):
 ```bash
 export GOOGLE_API_KEY=<YOUR_API_KEY>
 
-cd contrib/samples/a2a_server
+cd examples/a2a_server
 mvn quarkus:dev
 ```
 
