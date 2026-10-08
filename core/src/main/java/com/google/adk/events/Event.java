@@ -23,7 +23,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.adk.JsonBaseModel;
+import com.google.adk.annotations.Experimental;
 import com.google.adk.platform.UuidProvider;
+import com.google.adk.workflow.NodeInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -66,6 +68,8 @@ public class Event extends JsonBaseModel {
   private @Nullable String modelVersion;
   private @Nullable Transcription inputTranscription;
   private @Nullable Transcription outputTranscription;
+  private @Nullable Object output;
+  private @Nullable NodeInfo nodeInfo;
 
   private long timestamp;
 
@@ -306,6 +310,38 @@ public class Event extends JsonBaseModel {
     this.outputTranscription = outputTranscription;
   }
 
+  /**
+   * For a workflow node, returns the value handed to successors, distinct from {@link #content()},
+   * or empty when the event carries no node output. Holds any value Jackson can serialize, such as
+   * a JSON-native value or a {@link Content}. An event read from JSON holds the JSON-native form (a
+   * map with string keys, a list, a string, a number, or a boolean).
+   */
+  @Experimental
+  @JsonProperty("output")
+  public Optional<Object> output() {
+    return Optional.ofNullable(output);
+  }
+
+  @Experimental
+  public void setOutput(@Nullable Object output) {
+    this.output = output;
+  }
+
+  /**
+   * Identifies the workflow-node activation that emitted this event; outside a workflow, this value
+   * is empty or has an empty path.
+   */
+  @Experimental
+  @JsonProperty("nodeInfo")
+  public Optional<NodeInfo> nodeInfo() {
+    return Optional.ofNullable(nodeInfo);
+  }
+
+  @Experimental
+  public void setNodeInfo(@Nullable NodeInfo nodeInfo) {
+    this.nodeInfo = nodeInfo;
+  }
+
   /** The timestamp of the event. */
   @JsonProperty("timestamp")
   public long timestamp() {
@@ -415,6 +451,8 @@ public class Event extends JsonBaseModel {
     private @Nullable String modelVersion;
     private @Nullable Transcription inputTranscription;
     private @Nullable Transcription outputTranscription;
+    private @Nullable Object output;
+    private @Nullable NodeInfo nodeInfo;
     private @Nullable Long timestamp;
 
     @JsonCreator
@@ -592,6 +630,22 @@ public class Event extends JsonBaseModel {
       return this;
     }
 
+    @Experimental
+    @CanIgnoreReturnValue
+    @JsonProperty("output")
+    public Builder output(@Nullable Object value) {
+      this.output = value;
+      return this;
+    }
+
+    @Experimental
+    @CanIgnoreReturnValue
+    @JsonProperty("nodeInfo")
+    public Builder nodeInfo(@Nullable NodeInfo value) {
+      this.nodeInfo = value;
+      return this;
+    }
+
     public Event build() {
       Event event = new Event();
       event.setId(id);
@@ -616,6 +670,8 @@ public class Event extends JsonBaseModel {
           timestamp().orElseGet(() -> InstantSource.system().instant().toEpochMilli()));
       event.setInputTranscription(inputTranscription);
       event.setOutputTranscription(outputTranscription);
+      event.setOutput(output);
+      event.setNodeInfo(nodeInfo);
       return event;
     }
   }
@@ -631,30 +687,30 @@ public class Event extends JsonBaseModel {
 
   /** Creates a builder pre-filled with this event's values. */
   public Builder toBuilder() {
-    Builder builder =
-        new Builder()
-            .id(this.id)
-            .invocationId(this.invocationId)
-            .author(this.author)
-            .content(this.content)
-            .actions(this.actions)
-            .longRunningToolIds(this.longRunningToolIds)
-            .partial(this.partial)
-            .turnComplete(this.turnComplete)
-            .errorCode(this.errorCode)
-            .errorMessage(this.errorMessage)
-            .finishReason(this.finishReason)
-            .usageMetadata(this.usageMetadata)
-            .avgLogprobs(this.avgLogprobs)
-            .interrupted(this.interrupted)
-            .branch(this.branch)
-            .groundingMetadata(this.groundingMetadata)
-            .customMetadata(this.customMetadata)
-            .modelVersion(this.modelVersion)
-            .inputTranscription(this.inputTranscription)
-            .outputTranscription(this.outputTranscription)
-            .timestamp(this.timestamp);
-    return builder;
+    return new Builder()
+        .id(this.id)
+        .invocationId(this.invocationId)
+        .author(this.author)
+        .content(this.content)
+        .actions(this.actions)
+        .longRunningToolIds(this.longRunningToolIds)
+        .partial(this.partial)
+        .turnComplete(this.turnComplete)
+        .errorCode(this.errorCode)
+        .errorMessage(this.errorMessage)
+        .finishReason(this.finishReason)
+        .usageMetadata(this.usageMetadata)
+        .avgLogprobs(this.avgLogprobs)
+        .interrupted(this.interrupted)
+        .branch(this.branch)
+        .groundingMetadata(this.groundingMetadata)
+        .customMetadata(this.customMetadata)
+        .modelVersion(this.modelVersion)
+        .inputTranscription(this.inputTranscription)
+        .outputTranscription(this.outputTranscription)
+        .output(this.output)
+        .nodeInfo(this.nodeInfo)
+        .timestamp(this.timestamp);
   }
 
   @Override
@@ -685,7 +741,9 @@ public class Event extends JsonBaseModel {
         && Objects.equals(customMetadata, other.customMetadata)
         && Objects.equals(modelVersion, other.modelVersion)
         && Objects.equals(inputTranscription, other.inputTranscription)
-        && Objects.equals(outputTranscription, other.outputTranscription);
+        && Objects.equals(outputTranscription, other.outputTranscription)
+        && Objects.equals(output, other.output)
+        && Objects.equals(nodeInfo, other.nodeInfo);
   }
 
   @Override
@@ -716,6 +774,8 @@ public class Event extends JsonBaseModel {
         modelVersion,
         inputTranscription,
         outputTranscription,
+        output,
+        nodeInfo,
         timestamp);
   }
 }
