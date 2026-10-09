@@ -50,6 +50,7 @@ import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -327,29 +328,10 @@ public class OllamaBaseLM extends BaseLlm {
 
     JSONObject responseQuantum = agentresponse.getJSONObject("message");
 
-    // Check if tool call is required
-    // Tools call
     LlmResponse.Builder responseBuilder = LlmResponse.builder();
-    List<Part> parts = new ArrayList<>();
-    Part part = ollamaContentBlockToPart(responseQuantum);
-    parts.add(part);
-
-    // Call tool
-    if (responseQuantum.has("tool_calls")
-        && "stop".contentEquals(agentresponse.getString("done_reason"))) {
-
-      responseBuilder.content(
-          Content.builder()
-              .role("model")
-              .parts(
-                  ImmutableList.of(Part.builder().functionCall(part.functionCall().get()).build()))
-              .build());
-
-      //  responseBuilder.partial(false).turnComplete(false);
-    } else {
-      responseBuilder.content(
-          Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
-    }
+    List<Part> parts = ollamaContentBlockToParts(responseQuantum);
+    responseBuilder.content(
+        Content.builder().role("model").parts(ImmutableList.copyOf(parts)).build());
 
     if (usageMetadata != null) {
       responseBuilder.usageMetadata(usageMetadata);
@@ -490,9 +472,7 @@ public class OllamaBaseLM extends BaseLlm {
   private Flowable<LlmResponse> createRobustStreamingResponse(
       String modelId, JSONArray messages, JSONArray functions) {
     final StringBuilder accumulatedText = new StringBuilder();
-    final StringBuilder functionCallName = new StringBuilder();
-    final StringBuilder functionCallArgs = new StringBuilder();
-    final AtomicBoolean inFunctionCall = new AtomicBoolean(false);
+    final List<FunctionCall> accumulatedToolCalls = new ArrayList<>();
     final AtomicBoolean streamCompleted = new AtomicBoolean(false);
 
     final AtomicInteger inputTokens = new AtomicInteger(0);
@@ -548,19 +528,31 @@ public class OllamaBaseLM extends BaseLlm {
               }
 
               if (message.has("tool_calls")) {
-                inFunctionCall.set(true);
-                JSONArray toolCalls = message.getJSONArray("tool_calls");
-                if (toolCalls.length() > 0) {
-                  JSONObject toolCall = toolCalls.getJSONObject(0);
-                  JSONObject function = toolCall.getJSONObject("function");
-                  if (function.has("name")) {
-                    functionCallName.append(function.getString("name"));
-                  }
-                  if (function.has("arguments")) {
-                    JSONObject argsJson = function.optJSONObject("arguments");
-                    if (argsJson != null) {
-                      String args = argsJson.toString();
-                      functionCallArgs.append(args);
+                JSONArray toolCalls = message.optJSONArray("tool_calls");
+                if (toolCalls != null) {
+                  for (int i = 0; i < toolCalls.length(); i++) {
+                    JSONObject toolCall = toolCalls.optJSONObject(i);
+                    if (toolCall != null && toolCall.has("function")) {
+                      JSONObject function = toolCall.optJSONObject("function");
+                      if (function != null && function.has("name")) {
+                        String name = function.optString("name", null);
+                        Map<String, Object> args = new HashMap<>();
+                        Object argsRaw = function.opt("arguments");
+                        if (argsRaw instanceof JSONObject) {
+                          args = ((JSONObject) argsRaw).toMap();
+                        } else if (argsRaw instanceof String && !((String) argsRaw).isEmpty()) {
+                          try {
+                            args = new JSONObject((String) argsRaw).toMap();
+                          } catch (Exception e) {
+                            logger.warn(
+                                "Failed to parse tool call arguments string: {}", argsRaw, e);
+                          }
+                        }
+                        if (name != null) {
+                          accumulatedToolCalls.add(
+                              FunctionCall.builder().name(name).args(args).build());
+                        }
+                      }
                     }
                   }
                 }
@@ -598,7 +590,7 @@ public class OllamaBaseLM extends BaseLlm {
                       promptAudioTokens.get(),
                       completionAudioTokens.get());
 
-              if (accumulatedText.length() > 0 && !inFunctionCall.get()) {
+              if (accumulatedText.length() > 0 && accumulatedToolCalls.isEmpty()) {
                 LlmResponse.Builder aggregatedResponseBuilder =
                     LlmResponse.builder()
                         .content(
@@ -616,30 +608,25 @@ public class OllamaBaseLM extends BaseLlm {
                 responsesToEmit.add(aggregatedResponseBuilder.build());
               }
 
-              if (inFunctionCall.get() && functionCallName.length() > 0) {
-                try {
-                  Map<String, Object> args = new JSONObject(functionCallArgs.toString()).toMap();
-                  FunctionCall fc =
-                      FunctionCall.builder().name(functionCallName.toString()).args(args).build();
-                  Part part = Part.builder().functionCall(fc).build();
+              if (!accumulatedToolCalls.isEmpty()) {
+                List<Part> toolParts =
+                    accumulatedToolCalls.stream()
+                        .map(fc -> Part.builder().functionCall(fc).build())
+                        .collect(Collectors.toList());
 
-                  LlmResponse.Builder functionResponseBuilder =
-                      LlmResponse.builder()
-                          .content(
-                              Content.builder()
-                                  .role("model")
-                                  .parts(ImmutableList.of(part))
-                                  .build());
+                LlmResponse.Builder functionResponseBuilder =
+                    LlmResponse.builder()
+                        .content(
+                            Content.builder()
+                                .role("model")
+                                .parts(ImmutableList.copyOf(toolParts))
+                                .build());
 
-                  if (usageMetadata != null) {
-                    functionResponseBuilder.usageMetadata(usageMetadata);
-                  }
-                  functionResponseBuilder.modelVersion(this.model());
-
-                  responsesToEmit.add(functionResponseBuilder.build());
-                } catch (Exception funcEx) {
-                  logger.error("Error creating function call response", funcEx);
+                if (usageMetadata != null) {
+                  functionResponseBuilder.usageMetadata(usageMetadata);
                 }
+                functionResponseBuilder.modelVersion(this.model());
+                responsesToEmit.add(functionResponseBuilder.build());
               }
 
               for (LlmResponse response : responsesToEmit) {
@@ -883,62 +870,61 @@ public class OllamaBaseLM extends BaseLlm {
     }
   }
 
-  public static Part ollamaContentBlockToPart(JSONObject blockJson) {
-    // Check for tool_calls first, as the example with tool_calls had empty content
+  public static List<Part> ollamaContentBlockToParts(JSONObject blockJson) {
+    List<Part> parts = new ArrayList<>();
+
+    if (blockJson.has("thinking") && !blockJson.optString("thinking").isEmpty()) {
+      parts.add(Part.builder().thought(true).text(blockJson.getString("thinking")).build());
+    }
+
     if (blockJson.has("tool_calls")) {
-      JSONArray toolCalls =
-          blockJson.optJSONArray("tool_calls"); // Use optJSONArray for null safety
+      JSONArray toolCalls = blockJson.optJSONArray("tool_calls");
       if (toolCalls != null && toolCalls.length() > 0) {
-        // Based on the provided structure and LangChain4j Part,
-        // we typically handle one function call per Part.
-        // We will process the first tool call in the array.
-        JSONObject toolCall = toolCalls.optJSONObject(0); // Use optJSONObject for null safety
+        for (int i = 0; i < toolCalls.length(); i++) {
+          JSONObject toolCall = toolCalls.optJSONObject(i);
+          if (toolCall != null && toolCall.has("function")) {
+            JSONObject function = toolCall.optJSONObject("function");
+            if (function != null && function.has("name")) {
+              String name = function.optString("name", null);
+              Map<String, Object> args = new HashMap<>();
+              Object argsRaw = function.opt("arguments");
+              if (argsRaw instanceof JSONObject) {
+                args = ((JSONObject) argsRaw).toMap();
+              } else if (argsRaw instanceof String && !((String) argsRaw).isEmpty()) {
+                try {
+                  args = new JSONObject((String) argsRaw).toMap();
+                } catch (JSONException e) {
+                  logger.warn("Failed to parse tool call arguments string: {}", argsRaw, e);
+                }
+              }
 
-        if (toolCall != null && toolCall.has("function")) {
-          JSONObject function =
-              toolCall.optJSONObject("function"); // Use optJSONObject for null safety
-
-          if (function != null && function.has("name") && function.has("arguments")) {
-            String name = function.optString("name", null); // Use optString for null safety
-            JSONObject argsJson =
-                function.optJSONObject("arguments"); // Use optJSONObject for null safety
-
-            if (name != null && argsJson != null) {
-              // Convert JSONObject arguments to Map<String, Object>
-              // Assuming org.json.JSONObject.toMap() is available
-              Map<String, Object> args = argsJson.toMap();
-
-              // Build the FunctionCall Part
-              // The provided JSON does not include an 'id' for the tool call, so omitting it.
-              FunctionCall functionCall = FunctionCall.builder().name(name).args(args).build();
-
-              return Part.builder().functionCall(functionCall).build();
+              if (name != null) {
+                FunctionCall functionCall = FunctionCall.builder().name(name).args(args).build();
+                parts.add(Part.builder().functionCall(functionCall).build());
+              }
             }
           }
         }
       }
     }
 
-    if (blockJson.has("thinking") && !blockJson.optString("thinking").isEmpty()) {
-      return Part.builder().thought(true).text(blockJson.getString("thinking")).build();
-    }
-
-    // If no valid tool_calls were processed, check for text content
     if (blockJson.has("content")) {
-      Object content = blockJson.opt("content"); // Use opt for null safety
-      if (content instanceof String) {
-        String text = (String) content;
-        // Return a text Part, even if the string is empty (matches empty content example)
-        return Part.builder().text(text).build();
+      Object content = blockJson.opt("content");
+      if (content instanceof String && !((String) content).isEmpty()) {
+        parts.add(Part.builder().text((String) content).build());
       }
-      // If 'content' key exists but value is not a String, might be unsupported.
     }
 
-    // If neither usable tool_calls nor String content was found
-    // This covers cases like malformed JSON matching the structure,
-    // or structures not covered (e.g., image parts, other types).
-    throw new UnsupportedOperationException(
-        "Unsupported content block format or missing required fields: " + blockJson.toString());
+    if (parts.isEmpty()) {
+      parts.add(Part.builder().text("").build());
+    }
+
+    return parts;
+  }
+
+  public static Part ollamaContentBlockToPart(JSONObject blockJson) {
+    List<Part> parts = ollamaContentBlockToParts(blockJson);
+    return parts.get(0);
   }
 
   /**
