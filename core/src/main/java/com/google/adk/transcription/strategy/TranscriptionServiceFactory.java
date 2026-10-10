@@ -22,6 +22,7 @@ import com.google.adk.transcription.TranscriptionService;
 import com.google.adk.transcription.client.WhisperApiClient;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,6 +93,9 @@ public class TranscriptionServiceFactory {
       case WHISPER:
         return createWhisperService(config);
 
+      case OLLAMA_WHISPER:
+        return createOllamaWhisperService(config);
+
       case GEMINI:
         throw new UnsupportedOperationException("Gemini transcription not yet implemented");
 
@@ -111,6 +115,9 @@ public class TranscriptionServiceFactory {
     String endpoint = config.getEndpoint();
     if (endpoint != null) {
       String lowerEndpoint = endpoint.toLowerCase();
+      if (lowerEndpoint.contains("ollama")) {
+        return ServiceType.OLLAMA_WHISPER;
+      }
       if (lowerEndpoint.contains("whisper") || lowerEndpoint.contains("transcribe")) {
         return ServiceType.WHISPER;
       }
@@ -129,6 +136,25 @@ public class TranscriptionServiceFactory {
     WhisperApiClient client = new WhisperApiClient(endpoint, config.getMaxRetries());
 
     return new WhisperTranscriptionService(client, config);
+  }
+
+  private static TranscriptionService createOllamaWhisperService(TranscriptionConfig config) {
+    String endpoint = config.getEndpoint();
+    if (endpoint == null || endpoint.isEmpty()) {
+      throw new IllegalArgumentException("Ollama/Whisper endpoint is required");
+    }
+
+    String apiKey = config.getApiKey().orElse(null);
+
+    // Check if streaming mode is enabled via environment variable
+    String streamingEnabled = System.getenv("ADK_TRANSCRIPTION_STREAMING");
+    if ("true".equalsIgnoreCase(streamingEnabled)) {
+      logger.info("Streaming mode enabled, creating StreamingWhisperSttService");
+      OkHttpClient httpClient = new OkHttpClient();
+      return new StreamingWhisperSttService(endpoint, null, apiKey, httpClient);
+    }
+
+    return new OllamaWhisperSttService(endpoint, null, apiKey);
   }
 
   private static String generateCacheKey(TranscriptionConfig config) {
