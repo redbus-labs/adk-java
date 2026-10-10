@@ -17,7 +17,9 @@
 package com.google.adk.web;
 
 import com.google.adk.agents.BaseAgent;
+import com.google.adk.apps.App;
 import com.google.common.collect.ImmutableList;
+import java.util.Optional;
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -81,6 +83,16 @@ public interface AgentLoader {
    * @throws IllegalStateException if the agent exists but fails to load
    */
   BaseAgent loadAgent(String name);
+
+  /**
+   * Loads an application definition when the loader provides application-wide configuration.
+   *
+   * <p>The default remains empty for backwards compatibility with agent-only loaders. The web
+   * server falls back to {@link #loadAgent(String)} in that case.
+   */
+  default Optional<App> loadApp(String name) {
+    return Optional.empty();
+  }
 
   /**
    * Checks if an agent with the given name exists.

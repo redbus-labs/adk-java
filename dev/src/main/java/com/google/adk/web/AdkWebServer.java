@@ -19,6 +19,7 @@ package com.google.adk.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.BaseAgent;
+import com.google.adk.apps.App;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.artifacts.MapDbArtifactService;
@@ -211,5 +212,25 @@ public class AdkWebServer implements WebMvcConfigurer {
         });
 
     app.run(new String[0]);
+  }
+
+  /** Starts the web server with application definitions, preserving application-wide settings. */
+  public static void startApps(App... apps) {
+    System.setProperty("adk.agents.loader", "static");
+    System.setProperty(
+        "org.apache.tomcat.websocket.DEFAULT_BUFFER_SIZE", String.valueOf(10 * 1024 * 1024));
+
+    SpringApplication springApplication = new SpringApplication(AdkWebServer.class);
+    springApplication.addInitializers(
+        new ApplicationContextInitializer<ConfigurableApplicationContext>() {
+          @Override
+          public void initialize(ConfigurableApplicationContext context) {
+            DefaultListableBeanFactory beanFactory =
+                (DefaultListableBeanFactory) context.getBeanFactory();
+            beanFactory.registerSingleton("agentLoader", AgentStaticLoader.fromApps(apps));
+          }
+        });
+
+    springApplication.run(new String[0]);
   }
 }

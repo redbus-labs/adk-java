@@ -22,9 +22,11 @@ import static java.util.Arrays.stream;
 import static java.util.function.Function.identity;
 
 import com.google.adk.agents.BaseAgent;
+import com.google.adk.apps.App;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
@@ -40,9 +42,21 @@ import javax.annotation.Nonnull;
 public class AgentStaticLoader implements AgentLoader {
 
   private final ImmutableMap<String, BaseAgent> agents;
+  private final ImmutableMap<String, App> apps;
 
   public AgentStaticLoader(BaseAgent... agents) {
     this.agents = stream(agents).collect(toImmutableMap(BaseAgent::name, identity()));
+    this.apps = ImmutableMap.of();
+  }
+
+  private AgentStaticLoader(App... apps) {
+    this.apps = stream(apps).collect(toImmutableMap(App::name, identity()));
+    this.agents = this.apps.values().stream().collect(toImmutableMap(App::name, App::rootAgent));
+  }
+
+  /** Creates a static loader that preserves application-wide ADK configuration. */
+  public static AgentStaticLoader fromApps(App... apps) {
+    return new AgentStaticLoader(apps);
   }
 
   @Override
@@ -63,5 +77,10 @@ public class AgentStaticLoader implements AgentLoader {
     }
 
     return agent;
+  }
+
+  @Override
+  public Optional<App> loadApp(String name) {
+    return Optional.ofNullable(apps.get(name));
   }
 }

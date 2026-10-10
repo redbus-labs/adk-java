@@ -24,6 +24,7 @@ import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
@@ -45,6 +46,7 @@ public class App {
   private final @Nullable EventsCompactionConfig eventsCompactionConfig;
   private final @Nullable ContextCacheConfig contextCacheConfig;
   private final @Nullable ResumabilityConfig resumabilityConfig;
+  private final InactivityNudgeConfig inactivityNudgeConfig;
 
   private App(
       String name,
@@ -52,13 +54,15 @@ public class App {
       List<? extends Plugin> plugins,
       @Nullable EventsCompactionConfig eventsCompactionConfig,
       @Nullable ContextCacheConfig contextCacheConfig,
-      @Nullable ResumabilityConfig resumabilityConfig) {
+      @Nullable ResumabilityConfig resumabilityConfig,
+      InactivityNudgeConfig inactivityNudgeConfig) {
     this.name = name;
     this.rootAgent = rootAgent;
     this.plugins = ImmutableList.copyOf(plugins);
     this.eventsCompactionConfig = eventsCompactionConfig;
     this.contextCacheConfig = contextCacheConfig;
     this.resumabilityConfig = resumabilityConfig;
+    this.inactivityNudgeConfig = inactivityNudgeConfig;
   }
 
   public String name() {
@@ -87,6 +91,11 @@ public class App {
     return resumabilityConfig;
   }
 
+  /** Returns the policy for inactivity nudges in connected live sessions. */
+  public InactivityNudgeConfig inactivityNudgeConfig() {
+    return inactivityNudgeConfig;
+  }
+
   /** Builder for {@link App}. */
   public static class Builder {
     private String name;
@@ -95,6 +104,7 @@ public class App {
     @Nullable private EventsCompactionConfig eventsCompactionConfig;
     @Nullable private ContextCacheConfig contextCacheConfig;
     private @Nullable ResumabilityConfig resumabilityConfig;
+    private InactivityNudgeConfig inactivityNudgeConfig = InactivityNudgeConfig.disabled();
 
     @CanIgnoreReturnValue
     public Builder name(String name) {
@@ -132,6 +142,14 @@ public class App {
       return this;
     }
 
+    /** Sets the application-wide policy for inactivity nudges in connected live sessions. */
+    @CanIgnoreReturnValue
+    public Builder inactivityNudgeConfig(InactivityNudgeConfig inactivityNudgeConfig) {
+      this.inactivityNudgeConfig =
+          Objects.requireNonNull(inactivityNudgeConfig, "inactivityNudgeConfig cannot be null");
+      return this;
+    }
+
     /**
      * Sets the app resumability config.
      *
@@ -154,7 +172,13 @@ public class App {
       }
       validateAppName(name);
       return new App(
-          name, rootAgent, plugins, eventsCompactionConfig, contextCacheConfig, resumabilityConfig);
+          name,
+          rootAgent,
+          plugins,
+          eventsCompactionConfig,
+          contextCacheConfig,
+          resumabilityConfig,
+          inactivityNudgeConfig);
     }
   }
 

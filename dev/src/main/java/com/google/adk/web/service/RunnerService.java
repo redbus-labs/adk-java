@@ -17,6 +17,7 @@
 package com.google.adk.web.service;
 
 import com.google.adk.agents.BaseAgent;
+import com.google.adk.apps.App;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.plugins.BasePlugin;
@@ -26,6 +27,7 @@ import com.google.adk.web.AgentLoader;
 import com.google.common.collect.ImmutableList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,18 +75,23 @@ public class RunnerService {
         appName,
         key -> {
           try {
-            BaseAgent agent = agentProvider.loadAgent(key);
+            Optional<App> configuredApp = agentProvider.loadApp(key);
+            BaseAgent agent =
+                configuredApp.map(App::rootAgent).orElseGet(() -> agentProvider.loadAgent(key));
             log.info(
                 "RunnerService: Creating Runner for appName: {}, using agent definition: {}",
                 appName,
                 agent.name());
-            return Runner.builder()
-                .agent(agent)
-                .appName(appName)
+            Runner.Builder runnerBuilder = Runner.builder();
+            if (configuredApp.isPresent()) {
+              runnerBuilder.app(configuredApp.get()).additionalPlugins(this.extraPlugins);
+            } else {
+              runnerBuilder.agent(agent).appName(appName).plugins(this.extraPlugins);
+            }
+            return runnerBuilder
                 .artifactService(this.artifactService)
                 .sessionService(this.sessionService)
                 .memoryService(this.memoryService)
-                .plugins(this.extraPlugins)
                 .build();
           } catch (java.util.NoSuchElementException e) {
             log.error(

@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.LlmAgent;
+import com.google.adk.apps.App;
+import com.google.adk.apps.InactivityNudgeConfig;
 import org.junit.jupiter.api.Test;
 
 public class AgentStaticLoaderTest {
@@ -40,5 +42,25 @@ public class AgentStaticLoaderTest {
     assertTrue(staticLoader.listAgents().contains("test_agent"));
     assertEquals(testAgent, staticLoader.loadAgent("test_agent"));
     assertEquals("test_agent", staticLoader.loadAgent("test_agent").name());
+  }
+
+  @Test
+  public void appStaticLoaderPreservesApplicationConfiguration() {
+    BaseAgent rootAgent =
+        LlmAgent.builder().name("root_agent").model("gemini-2.5-flash-lite").build();
+    InactivityNudgeConfig inactivityConfig = InactivityNudgeConfig.builder().enabled(true).build();
+    App app =
+        App.builder()
+            .name("test_app")
+            .rootAgent(rootAgent)
+            .inactivityNudgeConfig(inactivityConfig)
+            .build();
+
+    AgentStaticLoader staticLoader = AgentStaticLoader.fromApps(app);
+
+    assertTrue(staticLoader.listAgents().contains("test_app"));
+    assertEquals(rootAgent, staticLoader.loadAgent("test_app"));
+    assertEquals(
+        inactivityConfig, staticLoader.loadApp("test_app").orElseThrow().inactivityNudgeConfig());
   }
 }
