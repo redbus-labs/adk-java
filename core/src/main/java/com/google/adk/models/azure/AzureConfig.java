@@ -1,6 +1,8 @@
 package com.google.adk.models.azure;
 
 import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,9 +28,12 @@ public final class AzureConfig {
 
   private static final Logger logger = LoggerFactory.getLogger(AzureConfig.class);
 
+  public static final String MODEL_ENDPOINT_ENV = "AZURE_MODEL_ENDPOINT";
   public static final String RESPONSE_ENDPOINT_ENV = "AZURE_RESPONSE_ENDPOINT";
   public static final String REALTIME_ENDPOINT_ENV = "AZURE_REALTIME_ENDPOINT";
   public static final String TRANSLATE_ENDPOINT_ENV = "AZURE_TRANSLATE_ENDPOINT";
+
+  private static final Map<String, String> runtimeOverrides = new ConcurrentHashMap<>();
 
   public static final String API_KEY_ENV = "AZURE_OPENAI_API_KEY";
   public static final String VOICE_ENV = "AZURE_REALTIME_VOICE";
@@ -80,6 +85,17 @@ public final class AzureConfig {
     this.apiKey = apiKey;
     this.voice = voice;
     this.translateTargetLanguage = translateTargetLanguage;
+  }
+
+  /**
+   * Sets a runtime configuration value that takes precedence over environment variables. Used by
+   * host applications (e.g. RAE) to inject values from {@code application.properties} or AWS
+   * Secrets Manager at startup.
+   */
+  public static void setRuntimeOverride(String envKey, String value) {
+    if (value != null && !value.isBlank()) {
+      runtimeOverrides.put(envKey, value.replaceAll("/+$", ""));
+    }
   }
 
   public static AzureConfig fromEnvironment(String modelName) {
@@ -217,6 +233,9 @@ public final class AzureConfig {
 
   private static String resolveContractEndpoint(String specificEnv, String label) {
     String val = resolveOptionalEnv(specificEnv);
+    if ((val == null || val.isBlank()) && RESPONSE_ENDPOINT_ENV.equals(specificEnv)) {
+      val = resolveOptionalEnv(MODEL_ENDPOINT_ENV);
+    }
     if (val == null || val.isBlank()) {
       throw new IllegalStateException(
           "Azure " + label + " endpoint not configured. Set " + specificEnv);
@@ -256,7 +275,7 @@ public final class AzureConfig {
   }
 
   private static String resolveRequired(String envVar) {
-    String val = System.getenv(envVar);
+    String val = resolveEnvOrOverride(envVar);
     if (val == null || val.isBlank()) {
       throw new IllegalStateException(envVar + " environment variable is not set.");
     }
@@ -264,13 +283,21 @@ public final class AzureConfig {
   }
 
   private static String resolveOptional(String envVar, String defaultValue) {
-    String val = System.getenv(envVar);
+    String val = resolveEnvOrOverride(envVar);
     return (val != null && !val.isBlank()) ? val : defaultValue;
   }
 
   private static String resolveOptionalEnv(String envVar) {
-    String val = System.getenv(envVar);
+    String val = resolveEnvOrOverride(envVar);
     return (val != null && !val.isBlank()) ? val.replaceAll("/+$", "") : null;
+  }
+
+  private static String resolveEnvOrOverride(String envVar) {
+    String override = runtimeOverrides.get(envVar);
+    if (override != null && !override.isBlank()) {
+      return override;
+    }
+    return System.getenv(envVar);
   }
 
   private static String maskEndpoint(String url) {

@@ -16,10 +16,15 @@
 
 package com.google.adk.models;
 
+import com.google.adk.models.failover.FailoverConfig;
+import com.google.adk.models.failover.FailoverLlm;
 import com.google.common.annotations.VisibleForTesting;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /** Central registry for managing Large Language Model (LLM) instances. */
 public final class LlmRegistry {
@@ -40,6 +45,16 @@ public final class LlmRegistry {
    * before broad catch-alls (e.g. {@code Azure\\|.*} before {@code .*realtime.*}).
    */
   private static final LinkedHashMap<String, LlmFactory> llmFactories = new LinkedHashMap<>();
+
+  /**
+   * Regex patterns to ordered fallback model-name chains, in registration order. When a resolved
+   * model name matches one of these patterns, {@link #getLlm} wraps the created model in a {@link
+   * FailoverLlm} that fails over to the listed models. First match wins.
+   */
+  private static final LinkedHashMap<String, List<String>> fallbackChains = new LinkedHashMap<>();
+
+  /** Config applied to {@link FailoverLlm} instances built by the registry. */
+  private static volatile FailoverConfig defaultFailoverConfig = FailoverConfig.defaults();
 
   /** Registers default LLM factories, e.g. for Gemini models. */
   static {
@@ -95,7 +110,85 @@ public final class LlmRegistry {
    * @throws IllegalArgumentException If no factory matches the model name.
    */
   public static BaseLlm getLlm(String modelName) {
-    return instances.computeIfAbsent(modelName, LlmRegistry::createLlm);
+    return instances.computeIfAbsent(modelName, LlmRegistry::createLlmWithFallback);
+  }
+
+  /**
+   * Registers an ordered fallback chain for model names matching the given regex pattern. Models
+   * resolved through {@link #getLlm} whose name matches the pattern are wrapped in a {@link
+   * FailoverLlm} that tries the matched model first, then each fallback model in order on a
+   * classified, retryable failure or timeout.
+   *
+   * <p>Fallback model names are resolved lazily (only on failure) through the registered factories,
+   * so a chain may mix providers, e.g. {@code ["gemini-2.5-flash-lite", "Bedrock|...claude..."]}.
+   *
+   * @param modelNamePattern Regex pattern for matching primary model names.
+   * @param fallbackModelNames Ordered fallback model names (excluding the primary).
+   */
+  public static void registerFallback(String modelNamePattern, List<String> fallbackModelNames) {
+    synchronized (factoryLock) {
+      fallbackChains.put(modelNamePattern, new ArrayList<>(fallbackModelNames));
+    }
+    // Drop cached instances so subsequent lookups pick up the new (un)wrapped form.
+    instances.keySet().removeIf(name -> name.matches(modelNamePattern));
+  }
+
+  /** Sets the {@link FailoverConfig} used for registry-built {@link FailoverLlm} instances. */
+  public static void setDefaultFailoverConfig(FailoverConfig config) {
+    defaultFailoverConfig = config == null ? FailoverConfig.defaults() : config;
+    // Existing wrapped instances captured the old config; drop them so they rebuild.
+    if (!fallbackChains.isEmpty()) {
+      instances.clear();
+    }
+  }
+
+  /**
+   * Evicts cached LLM instances whose model name matches the given regex pattern. Use this to
+   * switch a model at runtime: change the factory/config, then evict so the next {@link #getLlm}
+   * rebuilds the instance.
+   *
+   * @param modelNamePattern Regex pattern for matching cached model names.
+   */
+  public static void evict(String modelNamePattern) {
+    instances.keySet().removeIf(name -> name.matches(modelNamePattern));
+  }
+
+  /** Clears all cached LLM instances. The next {@link #getLlm} call rebuilds them. */
+  public static void clearInstances() {
+    instances.clear();
+  }
+
+  private static BaseLlm createLlmWithFallback(String modelName) {
+    BaseLlm primary = createLlm(modelName);
+    List<String> fallbacks = findFallbackChain(modelName);
+    if (fallbacks == null || fallbacks.isEmpty()) {
+      return primary;
+    }
+    List<Supplier<BaseLlm>> suppliers = new ArrayList<>();
+    suppliers.add(() -> primary);
+    for (String fallbackName : fallbacks) {
+      if (fallbackName == null || fallbackName.isEmpty() || fallbackName.equals(modelName)) {
+        continue;
+      }
+      // Resolve fallbacks via the raw factory path (not getLlm) to avoid re-wrapping/recursion;
+      // FailoverLlm memoizes each supplier so the instance is built at most once, only on failure.
+      suppliers.add(() -> createLlm(fallbackName));
+    }
+    if (suppliers.size() == 1) {
+      return primary;
+    }
+    return new FailoverLlm(suppliers, defaultFailoverConfig);
+  }
+
+  private static List<String> findFallbackChain(String modelName) {
+    synchronized (factoryLock) {
+      for (Map.Entry<String, List<String>> entry : fallbackChains.entrySet()) {
+        if (modelName.matches(entry.getKey())) {
+          return entry.getValue();
+        }
+      }
+    }
+    return null;
   }
 
   /**
