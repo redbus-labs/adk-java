@@ -1111,10 +1111,12 @@ public class LlmAgent extends BaseAgent {
     return onToolErrorCallback;
   }
 
+  @Override
   public Optional<Schema> inputSchema() {
     return inputSchema;
   }
 
+  @Override
   public Optional<Schema> outputSchema() {
     return outputSchema;
   }

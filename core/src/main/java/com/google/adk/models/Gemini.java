@@ -40,6 +40,7 @@ import com.google.genai.types.LiveConnectConfig;
 import com.google.genai.types.Part;
 import com.google.genai.types.PartialArg;
 import io.reactivex.rxjava3.core.Flowable;
+import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -66,6 +67,10 @@ public class Gemini extends BaseLlm {
 
   private static final Logger logger = LoggerFactory.getLogger(Gemini.class);
   private static final ImmutableMap<String, String> TRACKING_HEADERS;
+
+  /** The google-genai setter for automatic continuation, or null on releases without it. */
+  private static final @Nullable Method automaticContinuationSetter =
+      findAutomaticContinuationSetter();
 
   private static OkHttpClient prepareHttpClient(@Nullable ExecutorService executorService) {
     OkHttpClient client =
@@ -276,7 +281,7 @@ public class Gemini extends BaseLlm {
     llmRequest =
         GeminiUtil.prepareGenenerateContentRequest(
             llmRequest, !apiClient.vertexAI(), /* stripThoughts= */ false);
-    GenerateContentConfig config = llmRequest.config().orElse(null);
+    GenerateContentConfig config = withoutAutomaticContinuation(llmRequest.config().orElse(null));
     String effectiveModelName = llmRequest.model().orElse(model());
 
     logger.trace("Request Contents: {}", llmRequest.contents());
@@ -305,6 +310,35 @@ public class Gemini extends BaseLlm {
   @VisibleForTesting
   static Flowable<LlmResponse> processRawResponses(Flowable<GenerateContentResponse> rawResponses) {
     return Flowable.defer(() -> new StreamingResponseAggregator().process(rawResponses));
+  }
+
+  /**
+   * Returns {@code config} with google-genai's automatic continuation turned off, because ADK
+   * resumes paused generations itself. Calls the setter by reflection because ADK also builds
+   * against google-genai releases without it.
+   */
+  private static @Nullable GenerateContentConfig withoutAutomaticContinuation(
+      @Nullable GenerateContentConfig config) {
+    if (automaticContinuationSetter == null) {
+      return config;
+    }
+    GenerateContentConfig.Builder builder =
+        config == null ? GenerateContentConfig.builder() : config.toBuilder();
+    try {
+      automaticContinuationSetter.invoke(builder, false);
+    } catch (ReflectiveOperationException e) {
+      // The setter is a public builder method, so it is accessible and does not throw.
+      throw new AssertionError(e);
+    }
+    return builder.build();
+  }
+
+  private static @Nullable Method findAutomaticContinuationSetter() {
+    try {
+      return GenerateContentConfig.Builder.class.getMethod("automaticContinuation", boolean.class);
+    } catch (NoSuchMethodException e) {
+      return null;
+    }
   }
 
   /**
