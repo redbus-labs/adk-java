@@ -20,33 +20,44 @@ import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 
+import com.google.adk.annotations.Experimental;
 import com.google.adk.apps.ResumabilityConfig;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.events.Event;
+import com.google.adk.flows.llmflows.Functions;
 import com.google.adk.memory.BaseMemoryService;
 import com.google.adk.models.LlmCallsLimitExceededException;
+import com.google.adk.platform.UuidProvider;
 import com.google.adk.plugins.Plugin;
 import com.google.adk.plugins.PluginManager;
 import com.google.adk.sessions.BaseSessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.summarizer.EventsCompactionConfig;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionResponse;
+import io.reactivex.rxjava3.core.Scheduler;
+import io.reactivex.rxjava3.schedulers.Schedulers;
+import java.time.Instant;
+import java.time.InstantSource;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.jspecify.annotations.Nullable;
 
 /** The context for an agent invocation. */
-@SuppressWarnings("deprecation") // Plumbs the deprecated ResumabilityConfig.
 public class InvocationContext {
 
   private final BaseSessionService sessionService;
@@ -64,6 +75,12 @@ public class InvocationContext {
   private final @Nullable ResumabilityConfig resumabilityConfig;
   private final InvocationCostManager invocationCostManager;
   private final Map<String, Object> callbackContextData;
+  // Shared by reference so a sub-agent's checkpoint is visible to its parent and the runner.
+  private final Map<String, Map<String, Object>> agentStates;
+  private final Map<String, Boolean> endOfAgents;
+  @Nullable private final Scheduler scheduler;
+  private final InstantSource instantSource;
+  private final UuidProvider uuidProvider;
 
   @Nullable private String branch;
   private BaseAgent agent;
@@ -77,7 +94,8 @@ public class InvocationContext {
     this.liveRequestQueue = builder.liveRequestQueue;
     this.activeStreamingTools = builder.activeStreamingTools;
     this.branch = builder.branch;
-    this.invocationId = builder.invocationId;
+    // Resolved here so subclasses that construct from a builder without build() also get an id.
+    this.invocationId = builder.resolveInvocationId();
     this.agent = builder.agent;
     this.session = builder.session;
     this.userContent = builder.userContent;
@@ -91,6 +109,11 @@ public class InvocationContext {
     // invocation invocation so that Plugins can access the same data it during the invocation
     // across all types of callbacks.
     this.callbackContextData = builder.callbackContextData;
+    this.agentStates = builder.agentStates;
+    this.endOfAgents = builder.endOfAgents;
+    this.scheduler = builder.scheduler;
+    this.instantSource = builder.instantSource;
+    this.uuidProvider = builder.uuidProvider;
   }
 
   /** Returns a new {@link Builder} for creating {@link InvocationContext} instances. */
@@ -172,10 +195,7 @@ public class InvocationContext {
    * sub-branch stays visible while a descendant agent's own events do not.
    */
   public ImmutableList<Event> eventsOnCurrentBranch() {
-    ImmutableList<Event> events;
-    synchronized (session.events()) {
-      events = ImmutableList.copyOf(session.events());
-    }
+    ImmutableList<Event> events = session.immutableEvents();
     // Snapshot the mutable branch too, so it cannot change between the id set and the filter.
     @Nullable String scopeBranch = branch;
     // Only the user-response cross-check needs these, and a null or empty branch skips it.
@@ -279,9 +299,45 @@ public class InvocationContext {
     return session.userId();
   }
 
+  /**
+   * Returns the {@link Scheduler} on which this invocation runs the work ADK hands to worker
+   * threads: the sub-agents of a {@code ParallelAgent}, tool calls in {@code
+   * ToolExecutionMode.PARALLEL_SUBSCRIBE} mode, and the hop that starts the live send loop. An
+   * agent-level setting ({@code ParallelAgent.Builder#scheduler}, {@code
+   * LlmAgent.Builder#executor}) takes precedence over it. Defaults to {@link Schedulers#io()}.
+   */
+  public Scheduler scheduler() {
+    return scheduler != null ? scheduler : Schedulers.io();
+  }
+
+  /** Returns the {@link InstantSource} for this invocation. */
+  public InstantSource instantSource() {
+    return instantSource;
+  }
+
+  /** Returns the {@link UuidProvider} for this invocation. */
+  public UuidProvider uuidProvider() {
+    return uuidProvider;
+  }
+
+  /** Returns the current time from this invocation's {@link InstantSource}. */
+  public Instant now() {
+    return instantSource.instant();
+  }
+
+  /** Returns a new unique identifier from this invocation's {@link UuidProvider}. */
+  public String newUuid() {
+    return uuidProvider.newUuid();
+  }
+
   /** Generates a new unique ID for an invocation context. */
   public static String newInvocationContextId() {
-    return "e-" + UUID.randomUUID();
+    return newInvocationContextId(UuidProvider.SYSTEM);
+  }
+
+  /** Generates a new unique ID for an invocation context using the given {@link UuidProvider}. */
+  public static String newInvocationContextId(UuidProvider uuidProvider) {
+    return "e-" + uuidProvider.newUuid();
   }
 
   /**
@@ -304,16 +360,249 @@ public class InvocationContext {
     return Optional.ofNullable(contextCacheConfig);
   }
 
-  /**
-   * Returns whether the current invocation is resumable. Mirrors Python ADK v1's {@code
-   * InvocationContext.is_resumable}. The deprecated plain-text continuation shim selects the same
-   * resumption behavior, so it reports resumable too; the two are mutually exclusive.
-   */
-  @SuppressWarnings("deprecation") // The shim it reads is deprecated by design.
+  /** Returns whether the current invocation is resumable. */
+  @Experimental
   public boolean isResumable() {
-    return resumabilityConfig != null
-        && (resumabilityConfig.isResumable()
-            || resumabilityConfig.isPlainTextContinuationAutoResume());
+    return resumabilityConfig != null && resumabilityConfig.isResumable();
+  }
+
+  /**
+   * Returns whether the invocation runs the legacy resumption flow: the behavior {@link
+   * #isResumable()} had before durable checkpoints existed. It is a separate flow, not a weaker
+   * {@link #isResumable()}, so a caller wanting either has to ask for both.
+   *
+   * @deprecated Reports the deprecated plain-text continuation shim and goes away with it; use
+   *     {@link #isResumable()}.
+   */
+  @Deprecated
+  @SuppressWarnings("deprecation") // The shim it reads is deprecated by design.
+  public boolean isLegacyResumability() {
+    return resumabilityConfig != null && resumabilityConfig.isPlainTextContinuationAutoResume();
+  }
+
+  /**
+   * Returns an unmodifiable view of the per-agent resumability checkpoint states for this
+   * invocation, keyed by agent name. The backing map is shared by reference across derived contexts
+   * within the invocation; mutate it only through {@link #setAgentState}.
+   */
+  @Experimental
+  public Map<String, Map<String, Object>> agentStates() {
+    return Collections.unmodifiableMap(agentStates);
+  }
+
+  /**
+   * Returns an unmodifiable view of the per-agent end-of-agent flags for this invocation, keyed by
+   * agent name.
+   */
+  @Experimental
+  public Map<String, Boolean> endOfAgents() {
+    return Collections.unmodifiableMap(endOfAgents);
+  }
+
+  /**
+   * Sets the checkpoint state of an agent explicitly. Does not implicitly initialize.
+   *
+   * @param agentName the agent whose state to set.
+   * @param agentState the serialized agent state to store; ignored when {@code endOfAgent} is true.
+   * @param endOfAgent when true, marks the agent finished and drops any stored state.
+   */
+  void setAgentState(
+      String agentName, @Nullable Map<String, Object> agentState, boolean endOfAgent) {
+    if (endOfAgent) {
+      endOfAgents.put(agentName, true);
+      agentStates.remove(agentName);
+    } else if (agentState != null) {
+      // LinkedHashMap, not ImmutableMap.copyOf: a deserialized agentState may carry a null value.
+      agentStates.put(agentName, Collections.unmodifiableMap(new LinkedHashMap<>(agentState)));
+      endOfAgents.put(agentName, false);
+    } else {
+      endOfAgents.remove(agentName);
+      agentStates.remove(agentName);
+    }
+  }
+
+  /** Recursively resets the checkpoint state of all sub-agents of the given agent. */
+  void resetSubAgentStates(String agentName) {
+    Optional<BaseAgent> target = agent.findAgent(agentName);
+    if (target.isEmpty()) {
+      return;
+    }
+    for (BaseAgent subAgent : target.get().subAgents()) {
+      setAgentState(subAgent.name(), /* agentState= */ null, /* endOfAgent= */ false);
+      resetSubAgentStates(subAgent.name());
+    }
+  }
+
+  /**
+   * Rehydrates {@link #agentStates()} and {@link #endOfAgents()} from the current invocation's
+   * history when this invocation is resumable. For each event carrying agent-state information,
+   * sets the authoring agent's checkpoint; for a non-workflow author that already produced content,
+   * seeds an empty state so it is treated as mid-run.
+   */
+  @Experimental
+  public void populateInvocationAgentStates() {
+    if (!isResumable()) {
+      return;
+    }
+    for (Event event : events(/* currentInvocation= */ true, /* currentBranch= */ false)) {
+      String author = event.author();
+      if (author == null) {
+        continue;
+      }
+      Optional<Map<String, Object>> agentState = event.actions().agentState();
+      // The deprecated setEndInvocation aliases endOfAgent, so only a content-less marker counts.
+      if (event.actions().endOfAgent() && event.content().isEmpty()) {
+        endOfAgents.put(author, true);
+        agentStates.remove(author);
+      } else if (agentState.isPresent()) {
+        setAgentState(author, agentState.get(), /* endOfAgent= */ false);
+      } else if (!author.equals(Role.USER)
+          && event.content().isPresent()
+          && !agentStates.containsKey(author)) {
+        // Content after an end-of-agent marker reopens the agent, as in Python.
+        agentStates.put(author, ImmutableMap.of());
+        endOfAgents.put(author, false);
+      }
+    }
+  }
+
+  /**
+   * Returns the current session's events, optionally filtered to the current invocation and/or the
+   * current branch. Reads the in-memory {@link Session#events()} list, which {@link
+   * BaseSessionService#appendEvent} keeps in sync. A {@code null}-branch event is visible on any
+   * branch.
+   *
+   * @param currentInvocation whether to filter to events from this invocation.
+   * @param currentBranch whether to filter to events on this branch (or with no branch).
+   */
+  @Experimental
+  public ImmutableList<Event> events(boolean currentInvocation, boolean currentBranch) {
+    // eventsOnCurrentBranch owns branch filtering: author-asymmetric rule and cross-branch guard.
+    List<Event> results;
+    if (currentBranch) {
+      results = new ArrayList<>(eventsOnCurrentBranch());
+    } else {
+      results = new ArrayList<>(session.immutableEvents());
+    }
+    if (currentInvocation) {
+      results.removeIf(event -> !invocationId.equals(event.invocationId()));
+    }
+    return ImmutableList.copyOf(results);
+  }
+
+  /**
+   * Returns whether to pause the invocation right after this event: it is resumable and the event
+   * carries a long-running function call, including a synthetic {@code adk_request_confirmation}
+   * HITL request. Pausing, unlike ending, leaves the invocation resumable.
+   */
+  @Experimental
+  public boolean shouldPauseInvocation(Event event) {
+    return isResumable() && carriesLongRunningCall(event);
+  }
+
+  /**
+   * Returns whether the event carries a long-running function call, independent of the mode. Shared
+   * with the legacy flow's check so the two cannot drift apart.
+   */
+  private static boolean carriesLongRunningCall(Event event) {
+    return Functions.hasPendingLongRunningCall(event);
+  }
+
+  /**
+   * Returns whether either of the last two events on this branch pauses the invocation, the
+   * condition Python uses to decide whether to withhold an agent's end-of-agent checkpoint.
+   */
+  boolean lastEventsPauseInvocation() {
+    ImmutableList<Event> events = events(/* currentInvocation= */ true, /* currentBranch= */ true);
+    return events.subList(Math.max(0, events.size() - 2), events.size()).stream()
+        .anyMatch(this::shouldPauseInvocation);
+  }
+
+  /**
+   * Returns whether a long-running call made anywhere inside {@code agent}'s subtree is still
+   * unanswered. A workflow agent needs this because a sub-agent can pause without emitting an
+   * event, and because Java gives every sub-agent of a {@link ParallelAgent} that agent's own
+   * branch, which no branch filter can tell apart. Scoping by subtree keeps a paused parallel
+   * sibling from stalling an unrelated branch, as Python does.
+   */
+  boolean hasUnansweredLongRunningCallIn(BaseAgent agent) {
+    Set<String> scope = new HashSet<>();
+    collectAgentNames(agent, scope);
+    return hasUnansweredLongRunningCall(
+        events(/* currentInvocation= */ true, /* currentBranch= */ false), scope);
+  }
+
+  private static void collectAgentNames(BaseAgent agent, Set<String> names) {
+    if (!names.add(agent.name())) {
+      return;
+    }
+    for (BaseAgent subAgent : agent.subAgents()) {
+      collectAgentNames(subAgent, names);
+    }
+  }
+
+  /**
+   * Whether {@code events} hold a long-running call with no response. {@code scope} restricts which
+   * authors' calls count; responses always count whoever authored them, since a resumed answer is
+   * authored by the user.
+   */
+  private static boolean hasUnansweredLongRunningCall(
+      ImmutableList<Event> events, Set<String> scope) {
+    if (events.isEmpty()) {
+      return false;
+    }
+    Set<String> awaited = new HashSet<>();
+    for (Event event : events) {
+      if (!carriesLongRunningCall(event)) {
+        continue;
+      }
+      if (!scope.contains(event.author())) {
+        continue;
+      }
+      // Only long-running calls count, as in Python: an ordinary call in the event runs inline.
+      Set<String> longRunningIds = event.longRunningToolIds().orElse(ImmutableSet.of());
+      for (FunctionCall call : event.functionCalls()) {
+        call.id().filter(longRunningIds::contains).ifPresent(awaited::add);
+      }
+    }
+    if (awaited.isEmpty()) {
+      return false;
+    }
+    Set<String> answered = new HashSet<>();
+    for (Event event : events) {
+      for (FunctionResponse response : event.functionResponses()) {
+        response.id().ifPresent(answered::add);
+      }
+    }
+    return !answered.containsAll(awaited);
+  }
+
+  /**
+   * Finds the current-invocation event whose function call matches any function response id in
+   * {@code functionResponseEvent}, searching newest-first. Matching any id (not just the first)
+   * keeps parallel function responses resolvable when their calls interleave.
+   */
+  Optional<Event> findMatchingFunctionCall(Event functionResponseEvent) {
+    Set<String> targetIds = new HashSet<>();
+    for (FunctionResponse response : functionResponseEvent.functionResponses()) {
+      response.id().ifPresent(targetIds::add);
+    }
+    if (targetIds.isEmpty()) {
+      return Optional.empty();
+    }
+    ImmutableList<Event> events = events(/* currentInvocation= */ true, /* currentBranch= */ false);
+    for (int i = events.size() - 1; i >= 0; i--) {
+      // The response event never answers itself, as in Python.
+      if (events.get(i).id().equals(functionResponseEvent.id())) {
+        continue;
+      }
+      for (FunctionCall call : events.get(i).functionCalls()) {
+        if (call.id().filter(targetIds::contains).isPresent()) {
+          return Optional.of(events.get(i));
+        }
+      }
+    }
+    return Optional.empty();
   }
 
   private static class InvocationCostManager {
@@ -362,6 +651,7 @@ public class InvocationContext {
       this.activeStreamingTools = new ConcurrentHashMap<>(context.activeStreamingTools);
       this.branch = context.branch;
       this.invocationId = context.invocationId;
+      this.invocationIdSet = true;
       this.agent = context.agent;
       this.session = context.session;
       this.userContent = context.userContent;
@@ -375,6 +665,12 @@ public class InvocationContext {
       // invocation invocation so that Plugins can access the same data it during the invocation
       // across all types of callbacks.
       this.callbackContextData = context.callbackContextData;
+      // Shared by reference, not copied: the checkpoints belong to the invocation, not a context.
+      this.agentStates = context.agentStates;
+      this.endOfAgents = context.endOfAgents;
+      this.scheduler = context.scheduler;
+      this.instantSource = context.instantSource;
+      this.uuidProvider = context.uuidProvider;
     }
 
     private BaseSessionService sessionService;
@@ -384,7 +680,9 @@ public class InvocationContext {
     @Nullable private LiveRequestQueue liveRequestQueue = null;
     private Map<String, ActiveStreamingTool> activeStreamingTools = new ConcurrentHashMap<>();
     @Nullable private String branch = null;
-    private String invocationId = newInvocationContextId();
+    private @Nullable String invocationId;
+    // Distinguishes "never set" (an id is minted from the UuidProvider) from an explicit null.
+    private boolean invocationIdSet;
     private BaseAgent agent;
     private Session session;
     @Nullable private Content userContent = null;
@@ -395,6 +693,11 @@ public class InvocationContext {
     private @Nullable ResumabilityConfig resumabilityConfig;
     private InvocationCostManager invocationCostManager = new InvocationCostManager();
     private Map<String, Object> callbackContextData = new ConcurrentHashMap<>();
+    private Map<String, Map<String, Object>> agentStates = new ConcurrentHashMap<>();
+    private Map<String, Boolean> endOfAgents = new ConcurrentHashMap<>();
+    @Nullable private Scheduler scheduler = null;
+    private InstantSource instantSource = InstantSource.system();
+    private UuidProvider uuidProvider = UuidProvider.SYSTEM;
 
     /**
      * Sets the session service for managing session state.
@@ -477,6 +780,7 @@ public class InvocationContext {
     @CanIgnoreReturnValue
     public Builder invocationId(String invocationId) {
       this.invocationId = invocationId;
+      this.invocationIdSet = true;
       return this;
     }
 
@@ -577,6 +881,19 @@ public class InvocationContext {
     }
 
     /**
+     * Sets the scheduler for the invocation's internal fan-out; see {@link
+     * InvocationContext#scheduler()}. {@code null} (the default) selects {@link Schedulers#io()}.
+     *
+     * @param scheduler the scheduler, or {@code null} for the default.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder scheduler(@Nullable Scheduler scheduler) {
+      this.scheduler = scheduler;
+      return this;
+    }
+
+    /**
      * Sets the callback context data for the invocation.
      *
      * @param callbackContextData the callback context data.
@@ -586,6 +903,44 @@ public class InvocationContext {
     public Builder callbackContextData(Map<String, Object> callbackContextData) {
       this.callbackContextData = callbackContextData;
       return this;
+    }
+
+    /**
+     * Sets the instant source for the invocation; {@code null} (the default) selects {@link
+     * InstantSource#system()}.
+     *
+     * @param instantSource the source of the current time, or {@code null} for the default.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder instantSource(@Nullable InstantSource instantSource) {
+      this.instantSource = instantSource != null ? instantSource : InstantSource.system();
+      return this;
+    }
+
+    /**
+     * Sets the UUID provider for the invocation; {@code null} (the default) selects {@link
+     * UuidProvider#SYSTEM}.
+     *
+     * @param uuidProvider the provider for new unique identifiers, or {@code null} for the default.
+     * @return this builder instance for chaining.
+     */
+    @CanIgnoreReturnValue
+    public Builder uuidProvider(@Nullable UuidProvider uuidProvider) {
+      this.uuidProvider = uuidProvider != null ? uuidProvider : UuidProvider.SYSTEM;
+      return this;
+    }
+
+    /**
+     * Returns the invocation id, minting one from the {@link UuidProvider} on first use so that
+     * repeated builds from this builder share it.
+     */
+    private String resolveInvocationId() {
+      if (!invocationIdSet) {
+        invocationId = newInvocationContextId(uuidProvider);
+        invocationIdSet = true;
+      }
+      return invocationId;
     }
 
     /**
@@ -606,7 +961,8 @@ public class InvocationContext {
    * @throws IllegalStateException if any required parameters are missing.
    */
   private static void validate(Builder builder) {
-    if (isNullOrEmpty(builder.invocationId)) {
+    // An unset id is minted from the UuidProvider; an explicitly empty one is a caller error.
+    if (builder.invocationIdSet && isNullOrEmpty(builder.invocationId)) {
       throw new IllegalStateException("Invocation ID must be non-empty.");
     }
     if (builder.agent == null) {
@@ -645,7 +1001,10 @@ public class InvocationContext {
         && Objects.equals(contextCacheConfig, that.contextCacheConfig)
         && Objects.equals(resumabilityConfig, that.resumabilityConfig)
         && Objects.equals(invocationCostManager, that.invocationCostManager)
-        && Objects.equals(callbackContextData, that.callbackContextData);
+        && Objects.equals(callbackContextData, that.callbackContextData)
+        && Objects.equals(scheduler, that.scheduler)
+        && Objects.equals(instantSource, that.instantSource)
+        && Objects.equals(uuidProvider, that.uuidProvider);
   }
 
   @Override
@@ -668,6 +1027,9 @@ public class InvocationContext {
         contextCacheConfig,
         resumabilityConfig,
         invocationCostManager,
-        callbackContextData);
+        callbackContextData,
+        scheduler,
+        instantSource,
+        uuidProvider);
   }
 }
