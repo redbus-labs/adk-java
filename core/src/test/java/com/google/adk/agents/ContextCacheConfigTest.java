@@ -16,6 +16,7 @@
 package com.google.adk.agents;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertThrows;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.HttpOptions;
@@ -41,7 +42,8 @@ public final class ContextCacheConfigTest {
 
   @Test
   public void threeArgConstructor_leavesHttpOptionsUnset() {
-    ContextCacheConfig config = new ContextCacheConfig(5, TTL, 100);
+    ContextCacheConfig config =
+        new ContextCacheConfig(/* cacheIntervals= */ 5, TTL, /* minTokens= */ 100);
 
     assertThat(config.cacheIntervals()).isEqualTo(5);
     assertThat(config.createHttpOptions()).isNull();
@@ -51,14 +53,104 @@ public final class ContextCacheConfigTest {
   public void constructor_keepsHttpOptions() {
     HttpOptions httpOptions = HttpOptions.builder().timeout(10_000).build();
 
-    assertThat(new ContextCacheConfig(5, TTL, 100, httpOptions).createHttpOptions())
+    assertThat(
+            new ContextCacheConfig(/* cacheIntervals= */ 5, TTL, /* minTokens= */ 100, httpOptions)
+                .createHttpOptions())
         .isEqualTo(httpOptions);
   }
 
   @Test
   @SuppressWarnings({"deprecation", "InlineMeInliner"}) // Covers the deprecated alias.
   public void maxInvocations_returnsCacheIntervals() {
-    assertThat(new ContextCacheConfig(7, TTL, 0).maxInvocations()).isEqualTo(7);
+    assertThat(
+            new ContextCacheConfig(/* cacheIntervals= */ 7, TTL, /* minTokens= */ 0)
+                .maxInvocations())
+        .isEqualTo(7);
+  }
+
+  @Test
+  public void constructor_cacheIntervalsAtBounds_isAccepted() {
+    assertThat(
+            new ContextCacheConfig(/* cacheIntervals= */ 1, TTL, /* minTokens= */ 0)
+                .cacheIntervals())
+        .isEqualTo(1);
+    assertThat(
+            new ContextCacheConfig(/* cacheIntervals= */ 100, TTL, /* minTokens= */ 0)
+                .cacheIntervals())
+        .isEqualTo(100);
+  }
+
+  @Test
+  public void constructor_cacheIntervalsBelowOne_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new ContextCacheConfig(/* cacheIntervals= */ 0, TTL, /* minTokens= */ 0));
+  }
+
+  @Test
+  public void constructor_cacheIntervalsAboveHundred_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new ContextCacheConfig(/* cacheIntervals= */ 101, TTL, /* minTokens= */ 0));
+  }
+
+  @Test
+  public void constructor_zeroTtl_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new ContextCacheConfig(/* cacheIntervals= */ 10, Duration.ZERO, /* minTokens= */ 0));
+  }
+
+  @Test
+  public void constructor_negativeTtl_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new ContextCacheConfig(
+                /* cacheIntervals= */ 10, Duration.ofSeconds(-1), /* minTokens= */ 0));
+  }
+
+  @Test
+  public void constructor_oneSecondTtl_isAccepted() {
+    assertThat(
+            new ContextCacheConfig(
+                    /* cacheIntervals= */ 10, Duration.ofSeconds(1), /* minTokens= */ 0)
+                .ttl())
+        .isEqualTo(Duration.ofSeconds(1));
+  }
+
+  @Test
+  public void constructor_ttlUnderOneSecond_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new ContextCacheConfig(
+                /* cacheIntervals= */ 10, Duration.ofMillis(500), /* minTokens= */ 0));
+  }
+
+  @Test
+  public void constructor_fractionalTtl_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new ContextCacheConfig(
+                /* cacheIntervals= */ 10, Duration.ofMillis(1500), /* minTokens= */ 0));
+  }
+
+  @Test
+  public void constructor_negativeMinTokens_throws() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new ContextCacheConfig(/* cacheIntervals= */ 10, TTL, /* minTokens= */ -1));
+  }
+
+  @Test
+  public void getTtlString_returnsSeconds() {
+    assertThat(
+            new ContextCacheConfig(
+                    /* cacheIntervals= */ 10, Duration.ofMinutes(5), /* minTokens= */ 0)
+                .getTtlString())
+        .isEqualTo("300s");
   }
 
   @Test
@@ -74,7 +166,9 @@ public final class ContextCacheConfigTest {
     HttpOptions httpOptions =
         HttpOptions.builder().headers(ImmutableMap.of("x-goog-api-key", "secret")).build();
 
-    assertThat(new ContextCacheConfig(5, TTL, 100, httpOptions).toString())
+    assertThat(
+            new ContextCacheConfig(/* cacheIntervals= */ 5, TTL, /* minTokens= */ 100, httpOptions)
+                .toString())
         .isEqualTo(
             "ContextCacheConfig(cacheIntervals=5, ttl=1800s, minTokens=100,"
                 + " createHttpOptions=set)");
