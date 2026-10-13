@@ -9,8 +9,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Shared configuration for all Azure transports (REST, Realtime voice, Realtime translate).
  *
- * <p>Each API contract has its own endpoint environment variable. {@code AZURE_MODEL_ENDPOINT} is
- * kept as a legacy fallback when a contract-specific variable is not set.
+ * <p>Each API contract has its own endpoint environment variable.
  *
  * <p>Environment variables:
  *
@@ -28,7 +27,6 @@ public final class AzureConfig {
 
   private static final Logger logger = LoggerFactory.getLogger(AzureConfig.class);
 
-  public static final String MODEL_ENDPOINT_ENV = "AZURE_MODEL_ENDPOINT";
   public static final String RESPONSE_ENDPOINT_ENV = "AZURE_RESPONSE_ENDPOINT";
   public static final String REALTIME_ENDPOINT_ENV = "AZURE_REALTIME_ENDPOINT";
   public static final String TRANSLATE_ENDPOINT_ENV = "AZURE_TRANSLATE_ENDPOINT";
@@ -233,9 +231,6 @@ public final class AzureConfig {
 
   private static String resolveContractEndpoint(String specificEnv, String label) {
     String val = resolveOptionalEnv(specificEnv);
-    if ((val == null || val.isBlank()) && RESPONSE_ENDPOINT_ENV.equals(specificEnv)) {
-      val = resolveOptionalEnv(MODEL_ENDPOINT_ENV);
-    }
     if (val == null || val.isBlank()) {
       throw new IllegalStateException(
           "Azure " + label + " endpoint not configured. Set " + specificEnv);
