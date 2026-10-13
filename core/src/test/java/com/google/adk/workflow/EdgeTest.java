@@ -19,10 +19,7 @@ package com.google.adk.workflow;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
-import com.google.adk.agents.Context;
 import com.google.common.collect.ImmutableList;
-import io.reactivex.rxjava3.core.Flowable;
-import org.jspecify.annotations.Nullable;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -72,12 +69,5 @@ public final class EdgeTest {
   @Test
   public void constructor_rejectsANullRouteList() {
     assertThrows(NullPointerException.class, () -> new Edge(from, to, (ImmutableList<Route>) null));
-  }
-
-  private record StubNode(String name) implements Node {
-    @Override
-    public Flowable<?> runNode(Context context, @Nullable Object nodeInput) {
-      return Flowable.empty();
-    }
   }
 }
