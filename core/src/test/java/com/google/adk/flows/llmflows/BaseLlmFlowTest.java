@@ -36,14 +36,18 @@ import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.RequestProcessor.RequestProcessingResult;
 import com.google.adk.flows.llmflows.ResponseProcessor.ResponseProcessingResult;
 import com.google.adk.models.CacheMetadata;
+import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.runner.InMemoryRunner;
+import com.google.adk.sessions.Session;
 import com.google.adk.testing.TestLlm;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.BaseToolset;
 import com.google.adk.tools.ToolContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.genai.types.Content;
 import com.google.genai.types.FinishReason;
 import com.google.genai.types.FunctionCall;
@@ -60,12 +64,15 @@ import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.stream.Stream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -216,6 +223,47 @@ public final class BaseLlmFlowTest {
     assertEqualIgnoringFunctionIds(
         events.get(3).content().get(),
         Content.fromParts(Part.fromFunctionResponse("my_function", testResponse)));
+  }
+
+  @Test
+  public void run_modelRespondingOnSubscribingThread_reachesMaxLlmCallsWithoutStackOverflow() {
+    int maxLlmCalls = 2_000;
+    List<Long> stackDepths = new ArrayList<>();
+    TestLlm testLlm = createTestLlmAlwaysCallingMyFunction(stackDepths);
+    InvocationContext invocationContext =
+        createInvocationContext(
+            createTestAgentWithMyFunction(testLlm),
+            RunConfig.builder().maxLlmCalls(maxLlmCalls).build());
+    BaseLlmFlow baseLlmFlow = createBaseLlmFlowWithoutProcessors();
+
+    TestSubscriber<Event> subscriber = baseLlmFlow.run(invocationContext).test();
+
+    subscriber.assertError(LlmCallsLimitExceededException.class);
+    assertThat(testLlm.getRequests()).hasSize(maxLlmCalls);
+    assertThat(ImmutableSet.copyOf(stackDepths)).hasSize(1);
+  }
+
+  @Test
+  public void run_throughInMemoryRunner_reachesMaxLlmCallsWithoutStackOverflow() {
+    // Unlike the test above, each step also waits for the Runner to persist its events.
+    int maxLlmCalls = 500;
+    List<Long> stackDepths = new ArrayList<>();
+    TestLlm testLlm = createTestLlmAlwaysCallingMyFunction(stackDepths);
+    InMemoryRunner runner = new InMemoryRunner(createTestAgentWithMyFunction(testLlm));
+    Session session = runner.sessionService().createSession(runner.appName(), "user").blockingGet();
+
+    TestSubscriber<Event> subscriber =
+        runner
+            .runAsync(
+                "user",
+                session.id(),
+                Content.builder().role("user").parts(Part.fromText("call my_function")).build(),
+                RunConfig.builder().maxLlmCalls(maxLlmCalls).build())
+            .test();
+
+    subscriber.assertError(LlmCallsLimitExceededException.class);
+    assertThat(testLlm.getRequests()).hasSize(maxLlmCalls);
+    assertThat(ImmutableSet.copyOf(stackDepths)).hasSize(1);
   }
 
   @Test
@@ -669,6 +717,26 @@ public final class BaseLlmFlowTest {
     return (context, response) ->
         Single.just(
             ResponseProcessingResult.create(responseUpdater.apply(response), ImmutableList.of()));
+  }
+
+  /** Returns a model that always calls {@code my_function} and records its stack depth per call. */
+  private static TestLlm createTestLlmAlwaysCallingMyFunction(List<Long> stackDepths) {
+    Content contentWithFunctionCall =
+        Content.fromParts(Part.fromFunctionCall("my_function", ImmutableMap.of("arg1", "value1")));
+    return createTestLlm(
+        () -> {
+          stackDepths.add(StackWalker.getInstance().walk(Stream::count));
+          // Flowable.just answers on the subscribing thread, like the built-in models.
+          return Flowable.just(createLlmResponse(contentWithFunctionCall));
+        });
+  }
+
+  private static LlmAgent createTestAgentWithMyFunction(TestLlm testLlm) {
+    ImmutableMap<String, Object> testResponse =
+        ImmutableMap.<String, Object>of("response", "response for my_function");
+    return createTestAgentBuilder(testLlm)
+        .tools(ImmutableList.of(new TestTool("my_function", testResponse)))
+        .build();
   }
 
   private static class TestTool extends BaseTool {
