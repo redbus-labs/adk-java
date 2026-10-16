@@ -11,6 +11,9 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.google.adk.models.decision.DecisionCriterion;
+import com.google.adk.models.decision.DecisionResult;
+import com.google.adk.models.decision.IDecisionModel;
 import com.google.adk.tools.BaseTool;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -60,7 +63,7 @@ import org.slf4j.LoggerFactory;
  * @author Manoj Kumar, Sandeep Belgavi
  * @date 2025-06-27
  */
-public class OllamaBaseLM extends BaseLlm {
+public class OllamaBaseLM extends BaseLlm implements IDecisionModel {
 
   // The Ollama endpoint is already correctly set as requested.
   public static String OLLAMA_EP = "OLLAMA_API_BASE";
@@ -1203,6 +1206,83 @@ public class OllamaBaseLM extends BaseLlm {
 
   public static String toBase64String(byte[] data) {
     return Base64.getEncoder().encodeToString(data);
+  }
+
+  @Override
+  public List<DecisionResult> decide(String state, List<DecisionCriterion> criteria) {
+    try {
+      org.json.JSONObject payload = new org.json.JSONObject();
+      payload.put("model", this.model());
+      payload.put("state", state);
+
+      org.json.JSONObject questions = new org.json.JSONObject();
+      for (DecisionCriterion c : criteria) {
+        org.json.JSONObject questionDef = new org.json.JSONObject();
+        questionDef.put("type", c.getType() != null ? c.getType() : "choice");
+        if (c.getDescription() != null) {
+          questionDef.put("instructions", c.getDescription());
+        }
+        if (c.getChoices() != null && !c.getChoices().isEmpty()) {
+          questionDef.put("criteria", new org.json.JSONObject(c.getChoices()));
+        }
+        questions.put(c.getName(), questionDef);
+      }
+      payload.put("questions", questions);
+
+      String baseUrl = D_URL != null ? D_URL : System.getenv(OLLAMA_EP);
+      if (baseUrl == null) {
+        baseUrl = "http://localhost:11434";
+      }
+      java.net.URL url = new java.net.URL(baseUrl + "/v1/systemone");
+      java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+      conn.setRequestMethod("POST");
+      conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+      conn.setDoOutput(true);
+
+      try (java.io.OutputStream os = conn.getOutputStream()) {
+        byte[] input = payload.toString().getBytes("utf-8");
+        os.write(input, 0, input.length);
+      }
+
+      int code = conn.getResponseCode();
+      if (code >= 400) {
+        java.io.InputStream err = conn.getErrorStream();
+        String errorMsg = new String(err.readAllBytes(), "utf-8");
+        logger.error("Ollama /v1/systemone failed with code {}: {}", code, errorMsg);
+        throw new RuntimeException("Ollama /v1/systemone returned error: " + errorMsg);
+      }
+
+      java.io.InputStream is = conn.getInputStream();
+      String responseStr = new String(is.readAllBytes(), "utf-8");
+      org.json.JSONObject rawResponse = new org.json.JSONObject(responseStr);
+
+      List<DecisionResult> results = new java.util.ArrayList<>();
+      if (rawResponse.has("answers")) {
+        org.json.JSONObject answers = rawResponse.getJSONObject("answers");
+        for (String key : answers.keySet()) {
+          org.json.JSONObject answerObj = answers.getJSONObject(key);
+          DecisionResult dr = new DecisionResult();
+          dr.setCriterion(key);
+          if (answerObj.has("choice")) {
+            dr.setDecision(answerObj.getString("choice"));
+          } else if (answerObj.has("boolean")) {
+            dr.setDecision(String.valueOf(answerObj.getBoolean("boolean")));
+          } else if (answerObj.has("level")) {
+            dr.setDecision(answerObj.getString("level"));
+          }
+          if (answerObj.has("probability")) {
+            dr.setProbability(answerObj.getDouble("probability"));
+          }
+          if (answerObj.has("score")) {
+            dr.setScore(answerObj.getDouble("score"));
+          }
+          results.add(dr);
+        }
+      }
+      return results;
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to execute decision evaluation via Ollama systemone", e);
+    }
   }
 
   public static void main(String[] args) {
