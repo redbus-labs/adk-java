@@ -25,6 +25,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Schema;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.Consumer;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -112,6 +113,19 @@ public final class WorkflowTest {
   }
 
   @Test
+  public void edges_withAConsumer_setsTheEdgesItAdds() {
+    Node a = new StubNode("a");
+    Node b = new StubNode("b");
+
+    Workflow workflow =
+        Workflow.builder().name("flow").edges(g -> g.fromStart().then(a).then(b)).build();
+
+    assertThat(workflow.edges())
+        .containsExactly(new Edge(Start.INSTANCE, a), new Edge(a, b))
+        .inOrder();
+  }
+
+  @Test
   public void name_rejectsNull() {
     Workflow.Builder builder = Workflow.builder();
 
@@ -137,6 +151,13 @@ public final class WorkflowTest {
     Workflow.Builder builder = Workflow.builder();
 
     assertThrows(NullPointerException.class, () -> builder.edges((List<Edge>) null));
+  }
+
+  @Test
+  public void edges_rejectsANullConsumer() {
+    Workflow.Builder builder = Workflow.builder();
+
+    assertThrows(NullPointerException.class, () -> builder.edges((Consumer<EdgesBuilder>) null));
   }
 
   @Test

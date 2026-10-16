@@ -28,6 +28,7 @@ import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -116,6 +117,18 @@ public final class Workflow extends BaseNode {
     @CanIgnoreReturnValue
     public Builder edges(Edge... edges) {
       return edges(ImmutableList.copyOf(edges));
+    }
+
+    /**
+     * Sets the edges that {@code graphDefinition} adds to a new {@link EdgesBuilder}.
+     *
+     * <p>For example: {@code .edges(g -> g.fromStart().chain(a, b))}.
+     */
+    @CanIgnoreReturnValue
+    public Builder edges(Consumer<? super EdgesBuilder> graphDefinition) {
+      EdgesBuilder builder = new EdgesBuilder();
+      graphDefinition.accept(builder);
+      return edges(builder.build());
     }
 
     @CanIgnoreReturnValue
