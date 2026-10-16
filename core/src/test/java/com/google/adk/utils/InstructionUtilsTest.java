@@ -115,12 +115,12 @@ public final class InstructionUtilsTest {
   }
 
   @Test
-  public void injectSessionState_missingNonOptionalStateVariable_throwsIllegalArgumentException() {
+  public void injectSessionState_missingNonOptionalStateVariable_returnsPlaceholderVerbatim() {
     String template = "Use the name {user:name} and the id {app:id}.";
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> InstructionUtils.injectSessionState(templateContext, template).blockingGet());
+    String result = InstructionUtils.injectSessionState(templateContext, template).blockingGet();
+
+    assertThat(result).isEqualTo(template);
   }
 
   @Test
@@ -129,11 +129,11 @@ public final class InstructionUtilsTest {
     testContext.session().state().put("user:first_name", "John");
     testContext.session().state().put("user:last_name", "Doe");
     String template =
-        "The user's full name is: {user:first_name} {user:middle_name?} {user:last_name}.";
+        "The user's full name is: {user:first_name} {user:middle_name?} {?user:middle_name} {user:last_name}.";
 
     String result = InstructionUtils.injectSessionState(testContext, template).blockingGet();
 
-    assertThat(result).isEqualTo("The user's full name is: John  Doe.");
+    assertThat(result).isEqualTo("The user's full name is: John   Doe.");
   }
 
   @Test

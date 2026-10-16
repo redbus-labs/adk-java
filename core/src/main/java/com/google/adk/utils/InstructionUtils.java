@@ -46,8 +46,9 @@ public final class InstructionUtils {
    * <p>Placeholders are enclosed by one or more curly braces at the start and end, e.g., {@code
    * {key}} or {@code {{key}}}. The core {@code key} is extracted from whatever is between the
    * innermost pair of braces after trimming whitespace and possibly removing the {@code ?} which
-   * denotes optionality (e.g. {@code {key?}}). The {@code key} itself must not contain curly
-   * braces. For typical usage, a single pair of braces like {@code {my_variable}} is standard.
+   * denotes optionality (e.g. {@code {key?}} or {@code {?key}}). The {@code key} itself must not
+   * contain curly braces. For typical usage, a single pair of braces like {@code {my_variable}} is
+   * standard.
    *
    * <p>The extracted {@code key} determines the source and name of the value:
    *
@@ -67,10 +68,11 @@ public final class InstructionUtils {
    *       </ul>
    *   <li><b>Artifacts:</b> The {@code key} starts with "{@code artifact.}" (e.g., {@code
    *       "artifact.file_name"}).
-   *   <li><b>Optional Placeholders:</b> A {@code key} can be marked as optional by appending a
-   *       question mark {@code ?} at its very end, inside the braces.
+   *   <li><b>Optional Placeholders:</b> A {@code key} can be marked as optional by appending or
+   *       prepending a question mark {@code ?} to it.
    *       <ul>
-   *         <li>Example: {@code {optional_variable?}}, {@code {{artifact.optional_file.txt?}}}
+   *         <li>Example: {@code {optional_variable?}}, {@code {?optional_variable}}, {@code
+   *             {{artifact.optional_file.txt?}}}
    *         <li>If an optional placeholder cannot be resolved (e.g., variable not found, artifact
    *             not found), it is replaced with an empty string.
    *       </ul>
@@ -100,11 +102,9 @@ public final class InstructionUtils {
    *
    * @param context The invocation context providing access to session state and artifact services.
    * @param template The instruction template string containing placeholders to be populated.
-   * @return A {@link Single} that will emit the populated instruction string upon successful
-   *     resolution of all non-optional placeholders. Emits the original template if it is empty or
-   *     contains no placeholders that are processed.
+   * @return A {@link Single} that will emit the populated instruction string.
    * @throws NullPointerException if the template or context is null.
-   * @throws IllegalArgumentException if a non-optional variable or artifact is not found.
+   * @throws IllegalArgumentException if a non-optional artifact is not found.
    */
   public static Single<String> injectSessionState(InvocationContext context, String template) {
     if (template == null) {
@@ -154,6 +154,9 @@ public final class InstructionUtils {
     if (varNameFromPlaceholder.endsWith("?")) {
       optional = true;
       cleanVarName = varNameFromPlaceholder.substring(0, varNameFromPlaceholder.length() - 1);
+    } else if (varNameFromPlaceholder.startsWith("?")) {
+      optional = true;
+      cleanVarName = varNameFromPlaceholder.substring(1);
     } else {
       optional = false;
       cleanVarName = varNameFromPlaceholder;
@@ -190,9 +193,9 @@ public final class InstructionUtils {
     } else if (optional) {
       return Single.just("");
     } else {
-      return Single.error(
-          new IllegalArgumentException(
-              String.format("Context variable not found: `%s`.", cleanVarName)));
+      // Graceful fallback: if variable is not in state, preserve placeholder verbatim instead of
+      // crashing
+      return Single.just(placeholder);
     }
   }
 
