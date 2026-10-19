@@ -17,6 +17,12 @@
 package com.google.adk.models;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -43,9 +49,144 @@ import java.util.function.Consumer;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.ArgumentCaptor;
 
 @RunWith(JUnit4.class)
 public final class GeminiLlmConnectionTest {
+
+  @Test
+  public void sendContent_withoutPartial_completesTurn() {
+    Content content = Content.fromParts(Part.fromText("complete input"));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(content)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      ArgumentCaptor<LiveSendClientContentParameters> parameters =
+          ArgumentCaptor.forClass(LiveSendClientContentParameters.class);
+      verify(fixture.transport).sendClientContent(parameters.capture());
+      assertThat(parameters.getValue().turns()).hasValue(ImmutableList.of(content));
+      assertThat(parameters.getValue().turnComplete()).hasValue(true);
+    }
+  }
+
+  @Test
+  public void sendContent_withPartialTrue_leavesTurnOpen() {
+    Content content = Content.fromParts(Part.fromText("partial input"));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(content, true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      ArgumentCaptor<LiveSendClientContentParameters> parameters =
+          ArgumentCaptor.forClass(LiveSendClientContentParameters.class);
+      verify(fixture.transport).sendClientContent(parameters.capture());
+      assertThat(parameters.getValue().turns()).hasValue(ImmutableList.of(content));
+      assertThat(parameters.getValue().turnComplete()).hasValue(false);
+    }
+  }
+
+  @Test
+  public void sendContent_withPartialFalse_completesTurn() {
+    Content content = Content.fromParts(Part.fromText("final input"));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(content, false)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      ArgumentCaptor<LiveSendClientContentParameters> parameters =
+          ArgumentCaptor.forClass(LiveSendClientContentParameters.class);
+      verify(fixture.transport).sendClientContent(parameters.capture());
+      assertThat(parameters.getValue().turns()).hasValue(ImmutableList.of(content));
+      assertThat(parameters.getValue().turnComplete()).hasValue(true);
+    }
+  }
+
+  @Test
+  public void sendContent_multiplePartialUpdates_onlyFinalContentCompletesTurn() {
+    Content first = Content.fromParts(Part.fromText("first context"));
+    Content second = Content.fromParts(Part.fromText("second context"));
+    Content last = Content.fromParts(Part.fromText("final context"));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(first, true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+      fixture
+          .connection
+          .sendContent(second, true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+      fixture
+          .connection
+          .sendContent(last, false)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      ArgumentCaptor<LiveSendClientContentParameters> parameters =
+          ArgumentCaptor.forClass(LiveSendClientContentParameters.class);
+      verify(fixture.transport, times(3)).sendClientContent(parameters.capture());
+      List<LiveSendClientContentParameters> sent = parameters.getAllValues();
+      assertThat(sent.get(0).turns()).hasValue(ImmutableList.of(first));
+      assertThat(sent.get(1).turns()).hasValue(ImmutableList.of(second));
+      assertThat(sent.get(2).turns()).hasValue(ImmutableList.of(last));
+      assertThat(sent.stream().map(p -> p.turnComplete().orElseThrow()).toList())
+          .containsExactly(false, false, true)
+          .inOrder();
+    }
+  }
+
+  @Test
+  public void sendContent_functionResponses_useToolResponseRegardlessOfPartial() {
+    Content content =
+        Content.fromParts(
+            Part.fromFunctionResponse("firstTool", ImmutableMap.of("result", "first")),
+            Part.fromFunctionResponse("secondTool", ImmutableMap.of("result", "second")));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(content, true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+      fixture
+          .connection
+          .sendContent(content, false)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      ArgumentCaptor<LiveSendToolResponseParameters> parameters =
+          ArgumentCaptor.forClass(LiveSendToolResponseParameters.class);
+      verify(fixture.transport, times(2)).sendToolResponse(parameters.capture());
+      verify(fixture.transport, never()).sendClientContent(any());
+      for (LiveSendToolResponseParameters sent : parameters.getAllValues()) {
+        assertThat(sent.functionResponses())
+            .hasValue(content.parts().get().stream().map(p -> p.functionResponse().get()).toList());
+      }
+    }
+  }
 
   @Test
   public void convertToServerResponse_withInterruptedTrue_mapsInterruptedField() {
@@ -406,6 +547,25 @@ public final class GeminiLlmConnectionTest {
     public CompletableFuture<Void> close() {
       closeCount.incrementAndGet();
       return CompletableFuture.completedFuture(null);
+    }
+  }
+
+  /** Exercises the real connection's send path without opening a WebSocket or using credentials. */
+  private static final class LiveConnectionFixture implements AutoCloseable {
+    final GeminiLiveTransport transport = mock(GeminiLiveTransport.class);
+    final GeminiLlmConnection connection;
+
+    LiveConnectionFixture() {
+      when(transport.receive(any(), any())).thenReturn(CompletableFuture.completedFuture(null));
+      when(transport.close()).thenReturn(CompletableFuture.completedFuture(null));
+      when(transport.sendClientContent(any())).thenReturn(CompletableFuture.completedFuture(null));
+      when(transport.sendToolResponse(any())).thenReturn(CompletableFuture.completedFuture(null));
+      connection = new GeminiLlmConnection(CompletableFuture.completedFuture(transport));
+    }
+
+    @Override
+    public void close() {
+      connection.close();
     }
   }
 }

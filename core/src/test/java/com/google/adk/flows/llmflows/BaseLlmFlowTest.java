@@ -26,15 +26,24 @@ import static com.google.adk.testing.TestUtils.createTestLlm;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.adk.agents.Callbacks;
 import com.google.adk.agents.InvocationContext;
+import com.google.adk.agents.LiveRequest;
+import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.ReadonlyContext;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.RequestProcessor.RequestProcessingResult;
 import com.google.adk.flows.llmflows.ResponseProcessor.ResponseProcessingResult;
+import com.google.adk.models.BaseLlm;
+import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.CacheMetadata;
 import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.models.LlmRequest;
@@ -76,10 +85,53 @@ import java.util.stream.Stream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+import org.mockito.InOrder;
 
 /** Unit tests for {@link BaseLlmFlow}. */
 @RunWith(JUnit4.class)
 public final class BaseLlmFlowTest {
+
+  @Test
+  public void runLive_contentForwardsPartialFlagsInOrder() {
+    Content firstContent = Content.fromParts(Part.fromText("first context"));
+    Content secondContent = Content.fromParts(Part.fromText("second context"));
+    Content finalContent = Content.fromParts(Part.fromText("final context"));
+    Content defaultContent = Content.fromParts(Part.fromText("complete input"));
+    Content unsetContent = Content.fromParts(Part.fromText("unset partial"));
+    BaseLlm llm = mock(BaseLlm.class);
+    BaseLlmConnection connection = mock(BaseLlmConnection.class);
+    when(llm.model()).thenReturn("test-model");
+    when(llm.connect(any())).thenReturn(connection);
+    when(connection.sendContent(any(), anyBoolean())).thenReturn(Completable.complete());
+    when(connection.receive()).thenReturn(Flowable.never());
+    LiveRequestQueue queue = new LiveRequestQueue();
+    InvocationContext context =
+        createInvocationContext(createTestAgentBuilder(llm).executor(Runnable::run).build())
+            .toBuilder()
+            .liveRequestQueue(queue)
+            .build();
+    TestSubscriber<Event> subscriber = createBaseLlmFlowWithoutProcessors().runLive(context).test();
+
+    try {
+      subscriber.assertNoErrors();
+      queue.content(firstContent, true);
+      queue.content(secondContent, true);
+      queue.content(finalContent, false);
+      queue.content(defaultContent);
+      queue.send(LiveRequest.builder().content(unsetContent).partial(null).build());
+
+      InOrder order = inOrder(connection);
+      order.verify(connection).sendContent(firstContent, true);
+      order.verify(connection).sendContent(secondContent, true);
+      order.verify(connection).sendContent(finalContent, false);
+      order.verify(connection).sendContent(defaultContent, false);
+      order.verify(connection).sendContent(unsetContent, false);
+      subscriber.assertNoErrors();
+    } finally {
+      queue.close();
+      subscriber.cancel();
+    }
+  }
 
   @Test
   public void run_singleTextResponse_returnsSingleEvent() {
