@@ -573,21 +573,29 @@ public class VertexAiSessionServiceTest {
 
   @Test
   public void deleteSession_wrongUser_deniedAndSessionKept() {
+    sessionMap.put("victim-session", mockSessionJson("victim-session", "2024-12-12T12:12:12Z"));
     // The ownership error surfaces on subscription, so hoist the Completable out.
-    Completable deletion = vertexAiSessionService.deleteSession("123", "attacker", "1");
-    assertThrows(SecurityException.class, deletion::blockingAwait);
+    Completable deletion =
+        vertexAiSessionService.deleteSession("123", "attacker", "victim-session");
+    SecurityException exception = assertThrows(SecurityException.class, deletion::blockingAwait);
+    assertThat(exception).hasMessageThat().doesNotContain("attacker");
+    assertThat(exception).hasMessageThat().doesNotContain("victim-session");
     // The session is still readable by its real owner, i.e. it was not deleted.
     assertThat(
-            vertexAiSessionService.getSession("123", "user", "1", Optional.empty()).blockingGet())
+            vertexAiSessionService
+                .getSession("123", "user", "victim-session", Optional.empty())
+                .blockingGet())
         .isNotNull();
   }
 
   // Session id validation is synchronous, so each call below throws before returning a stream.
   @Test
   public void getSession_invalidSessionId_throws() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> vertexAiSessionService.getSession("123", "user", "1/../2", Optional.empty()));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> vertexAiSessionService.getSession("123", "user", "1/../2", Optional.empty()));
+    assertThat(exception).hasMessageThat().doesNotContain("1/../2");
   }
 
   @Test
@@ -610,6 +618,15 @@ public class VertexAiSessionServiceTest {
     Event event = Event.builder().author("user").build();
     assertThrows(
         IllegalArgumentException.class, () -> vertexAiSessionService.appendEvent(session, event));
+  }
+
+  @Test
+  public void getSession_invalidAppName_throws() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> vertexAiSessionService.getSession("customer-app", "user", "1", Optional.empty()));
+    assertThat(exception).hasMessageThat().doesNotContain("customer-app");
   }
 
   @Test
