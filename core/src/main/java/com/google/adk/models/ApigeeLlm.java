@@ -95,26 +95,20 @@ public class ApigeeLlm extends BaseLlm {
               + " APIGEE_PROXY_URL.");
     }
 
-    // Chat completions clients send no language tag, so they get both tags; the genai SDK adds its
-    // own gl-java tag.
-    ImmutableMap<String, String> trackingHeaders =
-        this.apiType == ApiType.CHAT_COMPLETIONS
-            ? TrackingHeaders.HEADERS
-            : TrackingHeaders.GENAI_SDK_HEADERS;
-
     // Build the Client
+    Map<String, String> callerHeaders = customHeaders != null ? customHeaders : ImmutableMap.of();
     HttpOptions.Builder httpOptionsBuilder =
-        HttpOptions.builder().baseUrl(effectiveProxyUrl).headers(trackingHeaders);
+        HttpOptions.builder()
+            .baseUrl(effectiveProxyUrl)
+            // Chat completions clients send no language tag, so they get both tags; the genai SDK
+            // adds its own gl-java tag.
+            .headers(
+                this.apiType == ApiType.CHAT_COMPLETIONS
+                    ? TrackingHeaders.mergeInto(callerHeaders)
+                    : TrackingHeaders.mergeIntoGenAiSdkHeaders(callerHeaders));
     String apiVersion = identifyApiVersion(modelName);
     if (!apiVersion.isEmpty()) {
       httpOptionsBuilder.apiVersion(apiVersion);
-    }
-    if (customHeaders != null) {
-      httpOptionsBuilder.headers(
-          ImmutableMap.<String, String>builder()
-              .putAll(trackingHeaders)
-              .putAll(customHeaders)
-              .buildOrThrow());
     }
     this.httpOptions = httpOptionsBuilder.build();
 
@@ -289,7 +283,9 @@ public class ApigeeLlm extends BaseLlm {
     }
 
     /**
-     * Sets a dictionary of headers to be sent with the request.
+     * Sets a dictionary of headers to be sent with the request. A {@code user-agent} or {@code
+     * x-goog-api-client} value, matched case-insensitively, is kept and extended with the ADK
+     * tracking tags it lacks.
      *
      * @param customHeaders the custom headers.
      * @return this builder.

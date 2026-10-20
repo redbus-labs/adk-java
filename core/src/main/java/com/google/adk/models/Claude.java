@@ -19,6 +19,8 @@ package com.google.adk.models;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.core.Properties;
+import com.anthropic.core.http.Headers;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.Message;
@@ -89,20 +91,50 @@ public class Claude extends BaseLlm {
   private final AnthropicClient anthropicClient;
 
   /**
-   * Constructs a new Claude instance.
+   * Constructs a new Claude instance. Requests sent through {@code anthropicClient} carry ADK's
+   * usage-tracking headers, added to the ones the client already sends.
    *
    * @param modelName The name of the Claude model to use (e.g., "claude-3-opus-20240229").
    * @param anthropicClient The Anthropic API client instance.
    */
   public Claude(String modelName, AnthropicClient anthropicClient) {
     super(modelName);
-    this.anthropicClient = anthropicClient;
+    this.anthropicClient = withTrackingHeaders(anthropicClient);
   }
 
   public Claude(String modelName, AnthropicClient anthropicClient, int maxTokens) {
     super(modelName);
-    this.anthropicClient = anthropicClient;
+    this.anthropicClient = withTrackingHeaders(anthropicClient);
     this.maxTokens = maxTokens;
+  }
+
+  /**
+   * Returns a copy of {@code client} that shares its connections and sends ADK's tracking headers,
+   * extending any the client already sets. A null client, or a test double that returns no copy, is
+   * returned unchanged.
+   */
+  private static @Nullable AnthropicClient withTrackingHeaders(@Nullable AnthropicClient client) {
+    if (client == null) {
+      return null;
+    }
+    AnthropicClient tracked =
+        client.withOptions(
+            options -> {
+              Headers configured = options.build().headers();
+              Map<String, String> current = new HashMap<>();
+              // Start from the SDK's default User-Agent, which it adds only when none is set.
+              current.put(
+                  "user-agent",
+                  client.getClass().getSimpleName() + "/Java " + Properties.getPackageVersion());
+              for (String name : TrackingHeaders.HEADERS.keySet()) {
+                List<String> values = configured.values(name);
+                if (!values.isEmpty()) {
+                  current.put(name, String.join(" ", values));
+                }
+              }
+              TrackingHeaders.mergeInto(current).forEach(options::replaceHeaders);
+            });
+    return tracked != null ? tracked : client;
   }
 
   @Override

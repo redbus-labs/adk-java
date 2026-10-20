@@ -16,6 +16,7 @@
 
 package com.google.adk.models;
 
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
@@ -26,7 +27,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.anthropic.backends.Backend;
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.JsonValue;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.ContentBlockParam;
@@ -46,17 +49,24 @@ import com.anthropic.services.blocking.MessageService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.net.InetAddresses;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
 import java.lang.reflect.Method;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -703,5 +713,83 @@ public final class ClaudeTest {
     List<ContentBlockParam> blocks = messages.get(2).content().asBlockParams();
     assertThat(blocks).hasSize(1);
     assertThat(blocks.get(0).asText().text()).isEqualTo(".");
+  }
+
+  @Test
+  public void generateContent_extendsTheSdkUserAgentWithAdkTrackingHeaders() throws Exception {
+    Headers headers = headersSentThrough(AnthropicOkHttpClient.builder());
+
+    String userAgent = getOnlyElement(headers.get("user-agent"));
+    assertThat(userAgent).startsWith("AnthropicClientImpl/Java ");
+    assertThat(userAgent).endsWith(" " + TrackingHeaders.VALUE);
+    assertThat(headers.get("x-goog-api-client")).containsExactly(TrackingHeaders.VALUE);
+  }
+
+  @Test
+  public void generateContent_extendsTheCallerUserAgentWithAdkTrackingHeaders() throws Exception {
+    Headers headers =
+        headersSentThrough(AnthropicOkHttpClient.builder().putHeader("User-Agent", "my-app/1.0"));
+
+    assertThat(headers.get("user-agent")).containsExactly("my-app/1.0 " + TrackingHeaders.VALUE);
+    assertThat(headers.get("x-goog-api-client")).containsExactly(TrackingHeaders.VALUE);
+  }
+
+  @Test
+  public void constructor_nullClient_doesNotThrow() {
+    assertThat(new Claude("claude-test", (AnthropicClient) null).model()).isEqualTo("claude-test");
+  }
+
+  private static final String MESSAGE_JSON =
+      "{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-test\","
+          + "\"content\":[{\"type\":\"text\",\"text\":\"pong\"}],\"stop_reason\":\"end_turn\","
+          + "\"stop_sequence\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}";
+
+  /**
+   * Sends one request through Claude using a client built from {@code clientBuilder} for a local
+   * server, and returns the headers the server received.
+   */
+  private static Headers headersSentThrough(AnthropicOkHttpClient.Builder clientBuilder)
+      throws Exception {
+    AtomicReference<Headers> requestHeaders = new AtomicReference<>();
+    HttpServer server =
+        HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    server.createContext(
+        "/",
+        exchange -> {
+          requestHeaders.set(exchange.getRequestHeaders());
+          byte[] body = MESSAGE_JSON.getBytes(UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, body.length);
+          try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+          }
+        });
+    server.start();
+    try {
+      String baseUrl =
+          "http://"
+              + InetAddresses.toUriString(server.getAddress().getAddress())
+              + ":"
+              + server.getAddress().getPort();
+      Backend backend =
+          new Backend() {
+            @Override
+            public String baseUrl() {
+              return baseUrl;
+            }
+
+            @Override
+            public void close() {}
+          };
+      Claude model = new Claude("claude-test", clientBuilder.backend(backend).build());
+
+      LlmResponse response =
+          model.generateContent(request(userText("Ping")), /* stream= */ false).blockingFirst();
+
+      assertThat(response.content().get().parts().get().get(0).text()).hasValue("pong");
+      return requestHeaders.get();
+    } finally {
+      server.stop(0);
+    }
   }
 }

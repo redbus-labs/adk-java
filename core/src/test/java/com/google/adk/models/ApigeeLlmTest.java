@@ -331,15 +331,23 @@ public class ApigeeLlmTest {
   }
 
   @Test
-  public void build_withCustomHeadersOverlappingTrackingHeaders_throwsException() {
-    ImmutableMap<String, String> overlappingHeaders = ImmutableMap.of("user-agent", "custom-agent");
-    ApigeeLlm.Builder builder =
+  public void build_chatCompletions_addsTheTrackingTagsCustomHeadersLack() {
+    ImmutableMap<String, String> overlappingHeaders =
+        ImmutableMap.of(
+            "User-Agent", "custom-agent", "x-goog-api-client", "lib/1 google-adk/0.0.1");
+    ApigeeLlm llm =
         ApigeeLlm.builder()
             .modelName("apigee/openai/gpt-4o")
             .proxyUrl(PROXY_URL)
-            .customHeaders(overlappingHeaders);
-    IllegalArgumentException e = assertThrows(IllegalArgumentException.class, builder::build);
-    assertThat(e).hasMessageThat().contains("Multiple entries with same key: user-agent=");
+            .customHeaders(overlappingHeaders)
+            .build();
+
+    assertThat(llm.getHttpOptions().headers().get())
+        .containsExactly(
+            "user-agent",
+            "custom-agent " + TrackingHeaders.VALUE,
+            "x-goog-api-client",
+            "lib/1 google-adk/0.0.1 gl-java/" + JAVA_VERSION.value());
   }
 
   @Test
@@ -426,6 +434,31 @@ public class ApigeeLlmTest {
     for (String name : TrackingHeaders.HEADERS.keySet()) {
       assertThat(headers.get(name)).containsExactly(TrackingHeaders.VALUE);
     }
+  }
+
+  @Test
+  public void generateContent_genAi_extendsACustomUserAgentWithTheAdkTag() throws Exception {
+    Headers headers =
+        headersSentToProxy(
+            "apigee/gemini/v1beta/gemini-test",
+            ImmutableMap.of("User-Agent", "custom-agent"),
+            GENERATE_CONTENT_JSON);
+
+    assertThat(getOnlyElement(headers.get("user-agent")))
+        .endsWith(" custom-agent " + TrackingHeaders.ADK_TAG);
+    assertGenAiTrackingHeaders(headers);
+  }
+
+  @Test
+  public void generateContent_chatCompletions_extendsACustomUserAgent() throws Exception {
+    Headers headers =
+        headersSentToProxy(
+            "apigee/openai/gpt-4o",
+            ImmutableMap.of("User-Agent", "custom-agent"),
+            CHAT_COMPLETION_JSON);
+
+    assertThat(headers.get("user-agent")).containsExactly("custom-agent " + TrackingHeaders.VALUE);
+    assertThat(headers.get("x-goog-api-client")).containsExactly(TrackingHeaders.VALUE);
   }
 
   /**
