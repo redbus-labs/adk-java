@@ -657,7 +657,8 @@ public abstract class BaseLlmFlow implements BaseFlow {
                               .concatMapCompletable(
                                   request -> {
                                     if (request.content().isPresent()) {
-                                      return connection.sendContent(request.content().get());
+                                      return connection.sendContent(
+                                          request.content().get(), request.isPartial());
                                     } else if (request.blob().isPresent()) {
                                       return connection.sendRealtime(request.blob().get());
                                     }

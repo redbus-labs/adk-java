@@ -29,6 +29,8 @@ import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.Callbacks;
 import com.google.adk.agents.InvocationContext;
+import com.google.adk.agents.LiveRequest;
+import com.google.adk.agents.LiveRequestQueue;
 import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.ReadonlyContext;
 import com.google.adk.agents.RunConfig;
@@ -80,6 +82,43 @@ import org.junit.runners.JUnit4;
 /** Unit tests for {@link BaseLlmFlow}. */
 @RunWith(JUnit4.class)
 public final class BaseLlmFlowTest {
+
+  @Test
+  public void runLive_contentForwardsPartialFlagsInOrder() {
+    Content firstContent = Content.fromParts(Part.fromText("first context"));
+    Content secondContent = Content.fromParts(Part.fromText("second context"));
+    Content finalContent = Content.fromParts(Part.fromText("final context"));
+    Content defaultContent = Content.fromParts(Part.fromText("complete input"));
+    Content unsetContent = Content.fromParts(Part.fromText("unset partial"));
+    TestLlm llm = createTestLlm(Flowable::never);
+    LiveRequestQueue queue = new LiveRequestQueue();
+    InvocationContext context =
+        createInvocationContext(createTestAgentBuilder(llm).executor(Runnable::run).build())
+            .toBuilder()
+            .liveRequestQueue(queue)
+            .build();
+    TestSubscriber<Event> subscriber = createBaseLlmFlowWithoutProcessors().runLive(context).test();
+
+    try {
+      queue.content(firstContent, /* partial= */ true);
+      queue.content(secondContent, /* partial= */ true);
+      queue.content(finalContent, /* partial= */ false);
+      queue.content(defaultContent);
+      queue.send(LiveRequest.builder().content(unsetContent).partial(null).build());
+
+      ImmutableList<LiveRequest> sent = llm.getLiveRequestHistory();
+      assertThat(sent.stream().map(request -> request.content().get()).toList())
+          .containsExactly(firstContent, secondContent, finalContent, defaultContent, unsetContent)
+          .inOrder();
+      assertThat(sent.stream().map(LiveRequest::isPartial).toList())
+          .containsExactly(true, true, false, false, false)
+          .inOrder();
+      subscriber.assertNoErrors();
+    } finally {
+      queue.close();
+      subscriber.cancel();
+    }
+  }
 
   @Test
   public void run_singleTextResponse_returnsSingleEvent() {

@@ -249,6 +249,11 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
 
   @Override
   public Completable sendContent(Content content) {
+    return sendContent(content, /* partial= */ false);
+  }
+
+  @Override
+  public Completable sendContent(Content content, boolean partial) {
     Objects.requireNonNull(content, "content cannot be null");
 
     List<FunctionResponse> functionResponses = extractFunctionResponses(content);
@@ -256,7 +261,7 @@ public final class GeminiLlmConnection implements BaseLlmConnection {
       return sendClientContentInternal(
           LiveSendClientContentParameters.builder()
               .turns(ImmutableList.of(content))
-              .turnComplete(true)
+              .turnComplete(!partial)
               .build());
     }
     return sendToolResponseInternal(
