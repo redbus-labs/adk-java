@@ -19,6 +19,7 @@ package com.google.adk.workflow;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
+import com.google.adk.testing.TestNode;
 import com.google.common.collect.ImmutableList;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -32,9 +33,9 @@ public final class GraphTest {
 
   @Test
   public void of_listsEachNodeOnceInTheOrderTheEdgesFirstMentionIt() {
-    Node a = new StubNode("a");
-    Node b = new StubNode("b");
-    Node c = new StubNode("c");
+    Node a = TestNode.of("a");
+    Node b = TestNode.of("b");
+    Node c = TestNode.of("c");
     ImmutableList<Edge> edges =
         ImmutableList.of(
             new Edge(Start.INSTANCE, a), new Edge(a, c), new Edge(a, b), new Edge(b, c));
@@ -47,21 +48,21 @@ public final class GraphTest {
 
   @Test
   public void terminalNodeNames_areTheNodesWithNoOutgoingEdge() {
-    Node a = new StubNode("a");
+    Node a = TestNode.of("a");
 
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, a),
-                new Edge(a, new StubNode("b")),
-                new Edge(a, new StubNode("c"))));
+                new Edge(a, TestNode.of("b")),
+                new Edge(a, TestNode.of("c"))));
 
     assertThat(graph.terminalNodeNames()).containsExactly("b", "c");
   }
 
   @Test
   public void node_returnsTheNodeWithThatName() {
-    Node a = new StubNode("a");
+    Node a = TestNode.of("a");
     Graph graph = Graph.of(ImmutableList.of(new Edge(Start.INSTANCE, a)));
 
     assertThat(graph.node("a")).isSameInstanceAs(a);
@@ -69,7 +70,7 @@ public final class GraphTest {
 
   @Test
   public void node_rejectsAnUnknownName() {
-    Graph graph = Graph.of(ImmutableList.of(new Edge(Start.INSTANCE, new StubNode("a"))));
+    Graph graph = Graph.of(ImmutableList.of(new Edge(Start.INSTANCE, TestNode.of("a"))));
 
     IllegalArgumentException e =
         assertThrows(IllegalArgumentException.class, () -> graph.node("missing"));
@@ -79,26 +80,26 @@ public final class GraphTest {
 
   @Test
   public void nodesTriggeredBy_followsOnlyTheEdgeWithTheEmittedRoute() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("yes_node"), YES),
-                new Edge(router, new StubNode("no_node"), NO)));
+                new Edge(router, TestNode.of("yes_node"), YES),
+                new Edge(router, TestNode.of("no_node"), NO)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(YES))).containsExactly("yes_node");
   }
 
   @Test
   public void nodesTriggeredBy_followsTheEdgeOfEachEmittedRoute() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("yes_node"), YES),
-                new Edge(router, new StubNode("no_node"), NO)));
+                new Edge(router, TestNode.of("yes_node"), YES),
+                new Edge(router, TestNode.of("no_node"), NO)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(NO, YES)))
         .containsExactly("yes_node", "no_node")
@@ -107,25 +108,25 @@ public final class GraphTest {
 
   @Test
   public void nodesTriggeredBy_followsAnEdgeOnAnyOfItsRoutes() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("either"), ImmutableList.of(YES, NO))));
+                new Edge(router, TestNode.of("either"), ImmutableList.of(YES, NO))));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(NO))).containsExactly("either");
   }
 
   @Test
   public void nodesTriggeredBy_followsTheDefaultEdgeWhenNoRouteMatches() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("yes_node"), YES),
-                new Edge(router, new StubNode("fallback"), Route.Default.INSTANCE)));
+                new Edge(router, TestNode.of("yes_node"), YES),
+                new Edge(router, TestNode.of("fallback"), Route.Default.INSTANCE)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(new Route.Tag("other"))))
         .containsExactly("fallback");
@@ -133,13 +134,13 @@ public final class GraphTest {
 
   @Test
   public void nodesTriggeredBy_followsTheDefaultEdgeWhenNoRouteIsEmitted() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("yes_node"), YES),
-                new Edge(router, new StubNode("fallback"), Route.Default.INSTANCE)));
+                new Edge(router, TestNode.of("yes_node"), YES),
+                new Edge(router, TestNode.of("fallback"), Route.Default.INSTANCE)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of())).containsExactly("fallback");
   }
@@ -147,14 +148,14 @@ public final class GraphTest {
   /** Mirrors adk-python's test_get_next_pending_nodes_with_default_route_fan_out. */
   @Test
   public void nodesTriggeredBy_followsEveryDefaultEdgeWhenNoRouteMatches() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("named"), YES),
-                new Edge(router, new StubNode("first"), Route.Default.INSTANCE),
-                new Edge(router, new StubNode("second"), Route.Default.INSTANCE)));
+                new Edge(router, TestNode.of("named"), YES),
+                new Edge(router, TestNode.of("first"), Route.Default.INSTANCE),
+                new Edge(router, TestNode.of("second"), Route.Default.INSTANCE)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(NO)))
         .containsExactly("first", "second")
@@ -163,42 +164,42 @@ public final class GraphTest {
 
   @Test
   public void nodesTriggeredBy_skipsEveryDefaultEdgeWhenARouteMatches() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, router),
-                new Edge(router, new StubNode("named"), YES),
-                new Edge(router, new StubNode("first"), Route.Default.INSTANCE),
-                new Edge(router, new StubNode("second"), Route.Default.INSTANCE)));
+                new Edge(router, TestNode.of("named"), YES),
+                new Edge(router, TestNode.of("first"), Route.Default.INSTANCE),
+                new Edge(router, TestNode.of("second"), Route.Default.INSTANCE)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(YES))).containsExactly("named");
   }
 
   @Test
   public void nodesTriggeredBy_followsUnconditionalEdgesAlongsideTheDefaultEdge() {
-    Node a = new StubNode("a");
+    Node a = TestNode.of("a");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, a),
-                new Edge(a, new StubNode("b")),
-                new Edge(a, new StubNode("c"), YES),
-                new Edge(a, new StubNode("d"), Route.Default.INSTANCE)));
+                new Edge(a, TestNode.of("b")),
+                new Edge(a, TestNode.of("c"), YES),
+                new Edge(a, TestNode.of("d"), Route.Default.INSTANCE)));
 
     assertThat(graph.nodesTriggeredBy("a", ImmutableList.of())).containsExactly("b", "d").inOrder();
   }
 
   @Test
   public void nodesTriggeredBy_followsUnconditionalEdgesAlongsideAMatchedRoute() {
-    Node a = new StubNode("a");
+    Node a = TestNode.of("a");
     Graph graph =
         Graph.of(
             ImmutableList.of(
                 new Edge(Start.INSTANCE, a),
-                new Edge(a, new StubNode("b")),
-                new Edge(a, new StubNode("c"), YES),
-                new Edge(a, new StubNode("d"), Route.Default.INSTANCE)));
+                new Edge(a, TestNode.of("b")),
+                new Edge(a, TestNode.of("c"), YES),
+                new Edge(a, TestNode.of("d"), Route.Default.INSTANCE)));
 
     assertThat(graph.nodesTriggeredBy("a", ImmutableList.of(YES)))
         .containsExactly("b", "c")
@@ -207,8 +208,8 @@ public final class GraphTest {
 
   @Test
   public void nodesTriggeredBy_followsARoutedEdgeBackToAnEarlierNode() {
-    Node a = new StubNode("a");
-    Node b = new StubNode("b");
+    Node a = TestNode.of("a");
+    Node b = TestNode.of("b");
     Graph graph =
         Graph.of(
             ImmutableList.of(new Edge(Start.INSTANCE, a), new Edge(a, b), new Edge(b, a, YES)));
@@ -218,20 +219,20 @@ public final class GraphTest {
 
   @Test
   public void nodesTriggeredBy_returnsNothingWhenNoRoutedEdgeMatches() {
-    Node router = new StubNode("router");
+    Node router = TestNode.of("router");
     Graph graph =
         Graph.of(
             ImmutableList.of(
-                new Edge(Start.INSTANCE, router), new Edge(router, new StubNode("yes_node"), YES)));
+                new Edge(Start.INSTANCE, router), new Edge(router, TestNode.of("yes_node"), YES)));
 
     assertThat(graph.nodesTriggeredBy("router", ImmutableList.of(NO))).isEmpty();
   }
 
   @Test
   public void predecessorsOf_returnsTheSourcesOfTheIncomingEdges() {
-    Node a = new StubNode("a");
-    Node b = new StubNode("b");
-    Node join = new StubNode("join");
+    Node a = TestNode.of("a");
+    Node b = TestNode.of("b");
+    Node join = TestNode.of("join");
     Graph graph =
         Graph.of(
             ImmutableList.of(

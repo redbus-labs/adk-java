@@ -77,6 +77,24 @@ public final class ContextTest {
   }
 
   @Test
+  public void requireNodeState_onCallbackContext_throwsIllegalStateException() {
+    CallbackContext context = new CallbackContext(newInvocationContext(), null);
+
+    assertThrows(IllegalStateException.class, context::requireNodeState);
+  }
+
+  @Test
+  public void nodeMethods_onCallbackContext_throwIllegalStateException() {
+    CallbackContext context = new CallbackContext(newInvocationContext(), null);
+
+    assertThrows(IllegalStateException.class, context::eventAuthor);
+    assertThrows(IllegalStateException.class, () -> context.eventAuthor("author"));
+    assertThrows(IllegalStateException.class, context::output);
+    assertThrows(IllegalStateException.class, context::routes);
+    assertThrows(IllegalStateException.class, () -> context.routes(ImmutableList.of()));
+  }
+
+  @Test
   public void searchMemory_onCallbackContext_findsRememberedEvents() {
     InvocationContext invocationContext = newInvocationContext();
     Event rememberedEvent =

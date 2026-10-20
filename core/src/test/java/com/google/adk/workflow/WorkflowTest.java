@@ -20,6 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.CallbackContext;
+import com.google.adk.testing.TestNode;
 import com.google.adk.testing.TestUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Schema;
@@ -35,8 +36,8 @@ public final class WorkflowTest {
 
   @Test
   public void build_buildsTheGraphFromTheEdges() {
-    Node a = new StubNode("a");
-    Node b = new StubNode("b");
+    Node a = TestNode.of("a");
+    Node b = TestNode.of("b");
     ImmutableList<Edge> edges = ImmutableList.of(new Edge(Start.INSTANCE, a), new Edge(a, b));
 
     Workflow workflow = Workflow.builder().name("flow").edges(edges).build();
@@ -103,9 +104,9 @@ public final class WorkflowTest {
 
   @Test
   public void edges_withVarargs_setsTheEdgesInOrder() {
-    Node a = new StubNode("a");
+    Node a = TestNode.of("a");
     Edge first = new Edge(Start.INSTANCE, a);
-    Edge second = new Edge(a, new StubNode("b"));
+    Edge second = new Edge(a, TestNode.of("b"));
 
     Workflow workflow = Workflow.builder().name("flow").edges(first, second).build();
 
@@ -114,8 +115,8 @@ public final class WorkflowTest {
 
   @Test
   public void edges_withAConsumer_setsTheEdgesItAdds() {
-    Node a = new StubNode("a");
-    Node b = new StubNode("b");
+    Node a = TestNode.of("a");
+    Node b = TestNode.of("b");
 
     Workflow workflow =
         Workflow.builder().name("flow").edges(g -> g.fromStart().then(a).then(b)).build();
@@ -189,7 +190,7 @@ public final class WorkflowTest {
   @Test
   public void aWorkflowCanBeANodeOfAnotherWorkflow() {
     Workflow inner =
-        Workflow.builder().name("inner").edges(new Edge(Start.INSTANCE, new StubNode("a"))).build();
+        Workflow.builder().name("inner").edges(new Edge(Start.INSTANCE, TestNode.of("a"))).build();
 
     Workflow outer =
         Workflow.builder().name("outer").edges(new Edge(Start.INSTANCE, inner)).build();
@@ -200,7 +201,7 @@ public final class WorkflowTest {
   @Test
   public void runNode_failsAsNotSupportedYet() {
     Workflow workflow =
-        Workflow.builder().name("flow").edges(new Edge(Start.INSTANCE, new StubNode("a"))).build();
+        Workflow.builder().name("flow").edges(new Edge(Start.INSTANCE, TestNode.of("a"))).build();
     CallbackContext context =
         new CallbackContext(
             TestUtils.createInvocationContext(TestUtils.createRootAgent()),

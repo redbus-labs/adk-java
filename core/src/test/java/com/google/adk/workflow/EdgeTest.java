@@ -19,6 +19,7 @@ package com.google.adk.workflow;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
+import com.google.adk.testing.TestNode;
 import com.google.common.collect.ImmutableList;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -27,8 +28,8 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class EdgeTest {
 
-  private final Node from = new StubNode("from");
-  private final Node to = new StubNode("to");
+  private final Node from = TestNode.of("from");
+  private final Node to = TestNode.of("to");
 
   @Test
   public void constructor_withoutRoutes_createsAnUnconditionalEdge() {

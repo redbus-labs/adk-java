@@ -14,16 +14,25 @@
  * limitations under the License.
  */
 
-package com.google.adk.workflow;
+package com.google.adk.testing;
 
 import com.google.adk.agents.Context;
+import com.google.adk.workflow.Node;
 import io.reactivex.rxjava3.core.Flowable;
+import java.util.function.BiFunction;
 import org.jspecify.annotations.Nullable;
 
-/** A node that emits nothing, for tests that only need a named node in a graph. */
-record StubNode(String name) implements Node {
+/** A workflow node whose run is given by a function, so a test can declare its node inline. */
+public record TestNode(String name, BiFunction<Context, @Nullable Object, Flowable<?>> body)
+    implements Node {
+
+  /** Returns a node named {@code name} that emits nothing. */
+  public static TestNode of(String name) {
+    return new TestNode(name, (context, nodeInput) -> Flowable.empty());
+  }
+
   @Override
   public Flowable<?> runNode(Context context, @Nullable Object nodeInput) {
-    return Flowable.empty();
+    return body.apply(context, nodeInput);
   }
 }

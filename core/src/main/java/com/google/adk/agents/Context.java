@@ -16,12 +16,16 @@
 
 package com.google.adk.agents;
 
+import com.google.adk.annotations.Experimental;
 import com.google.adk.artifacts.ListArtifactsResponse;
 import com.google.adk.events.EventActions;
 import com.google.adk.events.ToolConfirmation;
 import com.google.adk.memory.SearchMemoryResponse;
 import com.google.adk.sessions.State;
+import com.google.adk.workflow.NodeExecutionState;
+import com.google.adk.workflow.Route;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
@@ -31,12 +35,13 @@ import java.util.Optional;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The context passed to callbacks and tools during an invocation.
+ * The context passed to callbacks, tools, and workflow nodes during an invocation.
  *
  * <p>Agent and model callbacks receive a {@link CallbackContext}, and tools and tool callbacks a
  * {@link com.google.adk.tools.ToolContext}; both extend this class, so a helper that serves both,
  * or a function tool's {@code toolContext} parameter, can take a {@code Context}. {@link
- * #requestConfirmation()} needs a function call ID, which only a tool call has.
+ * #requestConfirmation()} requires a function call ID, which only a tool call has, while {@link
+ * #requireNodeState()} and the other workflow node methods require the context of a workflow node.
  */
 public class Context extends ReadonlyContext {
 
@@ -45,6 +50,7 @@ public class Context extends ReadonlyContext {
 
   private final State state;
   private final @Nullable String eventId;
+  private final @Nullable NodeExecutionState nodeState;
   private Optional<String> functionCallId = Optional.empty();
   private Optional<ToolConfirmation> toolConfirmation = Optional.empty();
 
@@ -59,10 +65,32 @@ public class Context extends ReadonlyContext {
       InvocationContext invocationContext,
       @Nullable EventActions eventActions,
       @Nullable String eventId) {
+    this(invocationContext, eventActions, eventId, /* nodeState= */ null);
+  }
+
+  /**
+   * Creates the context of the workflow node run whose state is {@code nodeState}. Only the
+   * workflow runtime creates a node state.
+   */
+  @Experimental
+  public Context(InvocationContext invocationContext, NodeExecutionState nodeState) {
+    this(
+        invocationContext,
+        /* eventActions= */ null,
+        /* eventId= */ null,
+        Preconditions.checkNotNull(nodeState));
+  }
+
+  private Context(
+      InvocationContext invocationContext,
+      @Nullable EventActions eventActions,
+      @Nullable String eventId,
+      @Nullable NodeExecutionState nodeState) {
     super(invocationContext);
     this.eventActions = eventActions != null ? eventActions : EventActions.builder().build();
     this.state = new State(invocationContext.session().state(), this.eventActions.stateDelta());
     this.eventId = eventId;
+    this.nodeState = nodeState;
   }
 
   /** Returns the delta-aware state of the current context. */
@@ -222,5 +250,69 @@ public class Context extends ReadonlyContext {
         .memoryService()
         .searchMemory(
             invocationContext.session().appName(), invocationContext.session().userId(), query);
+  }
+
+  /**
+   * Returns the state of the workflow node run this context belongs to.
+   *
+   * @throws IllegalStateException if this is not the context of a workflow node.
+   */
+  @Experimental
+  public final NodeExecutionState requireNodeState() {
+    Preconditions.checkState(
+        nodeState != null, "Only the context of a workflow node has a node state.");
+    return nodeState;
+  }
+
+  /**
+   * Returns the author of the events this workflow node emits, or empty to use the node's name.
+   *
+   * @throws IllegalStateException if this is not the context of a workflow node.
+   */
+  @Experimental
+  public final String eventAuthor() {
+    return requireNodeState().eventAuthor();
+  }
+
+  /**
+   * Sets the author of the events this workflow node emits.
+   *
+   * @throws IllegalStateException if this is not the context of a workflow node.
+   */
+  @Experimental
+  public final void eventAuthor(String eventAuthor) {
+    requireNodeState().eventAuthor(eventAuthor);
+  }
+
+  /**
+   * Returns this workflow node's output, or empty if it has produced none.
+   *
+   * @throws IllegalStateException if this is not the context of a workflow node.
+   */
+  @Experimental
+  public final Optional<Object> output() {
+    return requireNodeState().output();
+  }
+
+  /**
+   * Returns the routes this workflow node selected, or empty if it made no routing decision. An
+   * empty list is a decision that selects no route.
+   *
+   * @throws IllegalStateException if this is not the context of a workflow node.
+   */
+  @Experimental
+  public final Optional<ImmutableList<Route>> routes() {
+    return requireNodeState().selectedRoutes();
+  }
+
+  /**
+   * Selects this workflow node's routes, which decide the outgoing edges to follow, replacing any
+   * earlier selection.
+   *
+   * @throws IllegalStateException if this is not the context of a workflow node.
+   */
+  @Experimental
+  public final void routes(List<? extends Route> routes) {
+    requireNodeState().selectRoutes(routes);
   }
 }

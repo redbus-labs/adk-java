@@ -19,6 +19,7 @@ package com.google.adk.workflow;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
+import com.google.adk.testing.TestNode;
 import com.google.common.collect.ImmutableList;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,10 +31,10 @@ import org.junit.runners.JUnit4;
 public final class EdgesBuilderTest {
 
   private final EdgesBuilder builder = new EdgesBuilder();
-  private final Node a = new StubNode("a");
-  private final Node b = new StubNode("b");
-  private final Node c = new StubNode("c");
-  private final Node d = new StubNode("d");
+  private final Node a = TestNode.of("a");
+  private final Node b = TestNode.of("b");
+  private final Node c = TestNode.of("c");
+  private final Node d = TestNode.of("d");
   private final JoinNode join = JoinNode.builder().name("join").build();
 
   @Test
@@ -334,10 +335,10 @@ public final class EdgesBuilderTest {
 
   @Test
   public void build_documentedExample_buildsItsGraph() {
-    Node classify = new StubNode("classifier");
-    Node category = new StubNode("category");
-    Node billing = new StubNode("billing");
-    Node summarize = new StubNode("summary");
+    Node classify = TestNode.of("classifier");
+    Node category = TestNode.of("category");
+    Node billing = TestNode.of("billing");
+    Node summarize = TestNode.of("summary");
 
     builder
         .fromStart()
