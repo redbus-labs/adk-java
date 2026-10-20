@@ -15,10 +15,8 @@
  */
 package com.google.adk.models;
 
-import static com.google.common.base.StandardSystemProperty.JAVA_VERSION;
 import static com.google.common.base.Strings.isNullOrEmpty;
 
-import com.google.adk.Version;
 import com.google.adk.models.chat.ChatCompletionsClient;
 import com.google.adk.models.chat.ChatCompletionsHttpClient;
 import com.google.common.annotations.VisibleForTesting;
@@ -46,17 +44,6 @@ public class ApigeeLlm extends BaseLlm {
   private static final String GOOGLE_GENAI_USE_VERTEXAI_ENV_VARIABLE_NAME =
       "GOOGLE_GENAI_USE_VERTEXAI";
   private static final String APIGEE_PROXY_URL_ENV_VARIABLE_NAME = "APIGEE_PROXY_URL";
-  private static final ImmutableMap<String, String> TRACKING_HEADERS;
-
-  static {
-    final String frameworkLabel = "google-adk/" + Version.JAVA_ADK_VERSION;
-    final String languageLabel = "gl-java/" + JAVA_VERSION.value();
-    final String versionHeaderValue = String.format("%s %s", frameworkLabel, languageLabel);
-    TRACKING_HEADERS =
-        ImmutableMap.of(
-            "x-goog-api-client", versionHeaderValue,
-            "user-agent", versionHeaderValue);
-  }
 
   /** Defines the type of API to be used by the Apigee proxy. */
   public enum ApiType {
@@ -108,9 +95,16 @@ public class ApigeeLlm extends BaseLlm {
               + " APIGEE_PROXY_URL.");
     }
 
+    // Chat completions clients send no language tag, so they get both tags; the genai SDK adds its
+    // own gl-java tag.
+    ImmutableMap<String, String> trackingHeaders =
+        this.apiType == ApiType.CHAT_COMPLETIONS
+            ? TrackingHeaders.HEADERS
+            : TrackingHeaders.GENAI_SDK_HEADERS;
+
     // Build the Client
     HttpOptions.Builder httpOptionsBuilder =
-        HttpOptions.builder().baseUrl(effectiveProxyUrl).headers(TRACKING_HEADERS);
+        HttpOptions.builder().baseUrl(effectiveProxyUrl).headers(trackingHeaders);
     String apiVersion = identifyApiVersion(modelName);
     if (!apiVersion.isEmpty()) {
       httpOptionsBuilder.apiVersion(apiVersion);
@@ -118,7 +112,7 @@ public class ApigeeLlm extends BaseLlm {
     if (customHeaders != null) {
       httpOptionsBuilder.headers(
           ImmutableMap.<String, String>builder()
-              .putAll(TRACKING_HEADERS)
+              .putAll(trackingHeaders)
               .putAll(customHeaders)
               .buildOrThrow());
     }
@@ -134,7 +128,8 @@ public class ApigeeLlm extends BaseLlm {
         apiClientBuilder.vertexAI(true);
       }
       this.apiClient = apiClientBuilder.build();
-      this.geminiDelegate = new Gemini(modelName, apiClient);
+      this.geminiDelegate =
+          new Gemini(modelName, apiClient, /* clientSendsTrackingHeaders= */ true);
       this.chatCompletionsClient = null;
     }
 

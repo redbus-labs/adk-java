@@ -16,9 +16,6 @@
 
 package com.google.adk.models;
 
-import static com.google.common.base.StandardSystemProperty.JAVA_VERSION;
-
-import com.google.adk.Version;
 import com.google.adk.internal.http.HttpClientFactory;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
@@ -60,7 +57,6 @@ import org.slf4j.LoggerFactory;
 public class Gemini extends BaseLlm {
 
   private static final Logger logger = LoggerFactory.getLogger(Gemini.class);
-  private static final ImmutableMap<String, String> TRACKING_HEADERS;
 
   private static OkHttpClient prepareHttpClient(@Nullable ExecutorService executorService) {
     OkHttpClient client =
@@ -75,25 +71,22 @@ public class Gemini extends BaseLlm {
         .build();
   }
 
+  // Every client ADK builds starts here, so each sends ADK's tracking tag.
+  private static Client.Builder adkClientBuilder(@Nullable ExecutorService executorService) {
+    return Client.builder()
+        .httpOptions(HttpOptions.builder().headers(TrackingHeaders.GENAI_SDK_HEADERS).build())
+        .clientOptions(
+            ClientOptions.builder().customHttpClient(prepareHttpClient(executorService)).build());
+  }
+
   private static Client buildApiKeyClient(
       String apiKey, @Nullable ExecutorService executorService) {
-    return Client.builder()
-        .apiKey(apiKey)
-        .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
-        .clientOptions(
-            ClientOptions.builder().customHttpClient(prepareHttpClient(executorService)).build())
-        .build();
+    return adkClientBuilder(executorService).apiKey(apiKey).build();
   }
 
   private static Client buildVertexClient(
       VertexCredentials vertexCredentials, @Nullable ExecutorService executorService) {
-    Client.Builder apiClientBuilder =
-        Client.builder()
-            .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
-            .clientOptions(
-                ClientOptions.builder()
-                    .customHttpClient(prepareHttpClient(executorService))
-                    .build());
+    Client.Builder apiClientBuilder = adkClientBuilder(executorService);
     vertexCredentials.project().ifPresent(apiClientBuilder::project);
     vertexCredentials.location().ifPresent(apiClientBuilder::location);
     vertexCredentials.credentials().ifPresent(apiClientBuilder::credentials);
@@ -101,35 +94,30 @@ public class Gemini extends BaseLlm {
   }
 
   private static Client buildDefaultClient(@Nullable ExecutorService executorService) {
-    return Client.builder()
-        .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
-        .clientOptions(
-            ClientOptions.builder().customHttpClient(prepareHttpClient(executorService)).build())
-        .build();
-  }
-
-  static {
-    String frameworkLabel = "google-adk/" + Version.JAVA_ADK_VERSION;
-    String languageLabel = "gl-java/" + JAVA_VERSION.value();
-    String versionHeaderValue = String.format("%s %s", frameworkLabel, languageLabel);
-
-    TRACKING_HEADERS =
-        ImmutableMap.of(
-            "x-goog-api-client", versionHeaderValue,
-            "user-agent", versionHeaderValue);
+    return adkClientBuilder(executorService).build();
   }
 
   private final Client apiClient;
+  // True when apiClient already sends ADK's tracking tag.
+  private final boolean clientSendsTrackingHeaders;
 
   /**
-   * Constructs a new Gemini instance.
+   * Constructs a new Gemini instance. Each generate request sent through {@code apiClient} carries
+   * ADK's tracking tag, which the genai SDK appends to the client's tracking headers. If the
+   * client's own headers already carry an ADK tag, requests send two because the SDK does not
+   * expose a client's headers.
    *
    * @param modelName The name of the Gemini model to use (e.g., "gemini-2.0-flash").
    * @param apiClient The genai {@link com.google.genai.Client} instance for making API calls.
    */
   public Gemini(String modelName, Client apiClient) {
+    this(modelName, apiClient, /* clientSendsTrackingHeaders= */ false);
+  }
+
+  Gemini(String modelName, Client apiClient, boolean clientSendsTrackingHeaders) {
     super(modelName);
     this.apiClient = Objects.requireNonNull(apiClient, "apiClient cannot be null");
+    this.clientSendsTrackingHeaders = clientSendsTrackingHeaders;
   }
 
   /**
@@ -139,9 +127,10 @@ public class Gemini extends BaseLlm {
    * @param apiKey The Google Gemini API key.
    */
   public Gemini(String modelName, String apiKey) {
-    super(modelName);
-    Objects.requireNonNull(apiKey, "apiKey cannot be null");
-    this.apiClient = buildApiKeyClient(apiKey, null);
+    this(
+        modelName,
+        buildApiKeyClient(Objects.requireNonNull(apiKey, "apiKey cannot be null"), null),
+        /* clientSendsTrackingHeaders= */ true);
   }
 
   /**
@@ -151,9 +140,11 @@ public class Gemini extends BaseLlm {
    * @param vertexCredentials The Vertex AI credentials to access the Gemini model.
    */
   public Gemini(String modelName, VertexCredentials vertexCredentials) {
-    super(modelName);
-    Objects.requireNonNull(vertexCredentials, "vertexCredentials cannot be null");
-    this.apiClient = buildVertexClient(vertexCredentials, null);
+    this(
+        modelName,
+        buildVertexClient(
+            Objects.requireNonNull(vertexCredentials, "vertexCredentials cannot be null"), null),
+        /* clientSendsTrackingHeaders= */ true);
   }
 
   /**
@@ -256,13 +247,16 @@ public class Gemini extends BaseLlm {
 
       if (apiClient != null) {
         return new Gemini(modelName, apiClient);
-      } else if (apiKey != null) {
-        return new Gemini(modelName, buildApiKeyClient(apiKey, httpExecutorService));
-      } else if (vertexCredentials != null) {
-        return new Gemini(modelName, buildVertexClient(vertexCredentials, httpExecutorService));
-      } else {
-        return new Gemini(modelName, buildDefaultClient(httpExecutorService));
       }
+      Client client;
+      if (apiKey != null) {
+        client = buildApiKeyClient(apiKey, httpExecutorService);
+      } else if (vertexCredentials != null) {
+        client = buildVertexClient(vertexCredentials, httpExecutorService);
+      } else {
+        client = buildDefaultClient(httpExecutorService);
+      }
+      return new Gemini(modelName, client, /* clientSendsTrackingHeaders= */ true);
     }
   }
 
@@ -292,6 +286,9 @@ public class Gemini extends BaseLlm {
     logger.trace("Request Contents: {}", llmRequest.contents());
     logger.trace("Request Config: {}", config);
 
+    if (!clientSendsTrackingHeaders) {
+      config = withTrackingHeaders(config);
+    }
     if (stream) {
       logger.debug("Sending streaming generateContent request to model {}", effectiveModelName);
       CompletableFuture<ResponseStream<GenerateContentResponse>> streamFuture =
@@ -314,6 +311,23 @@ public class Gemini extends BaseLlm {
                   .thenApplyAsync(LlmResponse::create))
           .map(response -> withCacheMetadata(response, cacheMetadata));
     }
+  }
+
+  /**
+   * Returns {@code config} with ADK's tracking tag merged into its request headers, which the genai
+   * SDK appends to the client's own.
+   */
+  private static GenerateContentConfig withTrackingHeaders(@Nullable GenerateContentConfig config) {
+    GenerateContentConfig base = config != null ? config : GenerateContentConfig.builder().build();
+    HttpOptions httpOptions = base.httpOptions().orElseGet(() -> HttpOptions.builder().build());
+    return base.toBuilder()
+        .httpOptions(
+            httpOptions.toBuilder()
+                .headers(
+                    TrackingHeaders.mergeIntoGenAiSdkHeaders(
+                        httpOptions.headers().orElse(ImmutableMap.of())))
+                .build())
+        .build();
   }
 
   private static LlmResponse withCacheMetadata(

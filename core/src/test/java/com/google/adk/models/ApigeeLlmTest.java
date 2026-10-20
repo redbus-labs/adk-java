@@ -15,7 +15,11 @@
  */
 package com.google.adk.models;
 
+import static com.google.common.base.StandardSystemProperty.JAVA_VERSION;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assume.assumeNotNull;
 import static org.junit.Assume.assumeTrue;
@@ -28,13 +32,21 @@ import static org.mockito.Mockito.when;
 
 import com.google.adk.models.ApigeeLlm.ApiType;
 import com.google.adk.models.chat.ChatCompletionsClient;
+import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.net.InetAddresses;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpServer;
 import io.reactivex.rxjava3.core.Flowable;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -393,4 +405,95 @@ public class ApigeeLlmTest {
       assertThat(e).hasMessageThat().contains("Invalid model string: " + modelName);
     }
   }
+
+  @Test
+  public void generateContent_genAi_sendsTrackingHeadersOnce() throws Exception {
+    Headers headers =
+        headersSentToProxy(
+            "apigee/gemini/v1beta/gemini-test",
+            /* customHeaders= */ ImmutableMap.of(),
+            GENERATE_CONTENT_JSON);
+
+    assertGenAiTrackingHeaders(headers);
+  }
+
+  @Test
+  public void generateContent_chatCompletions_sendsTrackingHeaders() throws Exception {
+    Headers headers =
+        headersSentToProxy(
+            "apigee/openai/gpt-4o", /* customHeaders= */ ImmutableMap.of(), CHAT_COMPLETION_JSON);
+
+    for (String name : TrackingHeaders.HEADERS.keySet()) {
+      assertThat(headers.get(name)).containsExactly(TrackingHeaders.VALUE);
+    }
+  }
+
+  /**
+   * Sends one request through an {@link ApigeeLlm} for {@code modelName} to a local proxy that
+   * answers with {@code responseJson}, and returns the request headers the proxy received.
+   */
+  private static Headers headersSentToProxy(
+      String modelName, Map<String, String> customHeaders, String responseJson) throws Exception {
+    AtomicReference<Headers> requestHeaders = new AtomicReference<>();
+    HttpServer server =
+        HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    server.createContext(
+        "/",
+        exchange -> {
+          requestHeaders.set(exchange.getRequestHeaders());
+          byte[] body = responseJson.getBytes(UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, body.length);
+          try (OutputStream out = exchange.getResponseBody()) {
+            out.write(body);
+          }
+        });
+    server.start();
+    try {
+      ApigeeLlm.Builder builder =
+          ApigeeLlm.builder()
+              .modelName(modelName)
+              .proxyUrl(
+                  "http://"
+                      + InetAddresses.toUriString(server.getAddress().getAddress())
+                      + ":"
+                      + server.getAddress().getPort());
+      builder.customHeaders(customHeaders);
+      LlmRequest request =
+          LlmRequest.builder()
+              .contents(
+                  ImmutableList.of(
+                      Content.builder().role("user").parts(Part.fromText("hello")).build()))
+              .build();
+
+      builder.build().generateContent(request, /* stream= */ false).blockingSubscribe();
+
+      return requestHeaders.get();
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  /**
+   * Asserts both tracking headers as sent by the genai SDK: each starts with the SDK label,
+   * includes the Java version tag and ADK's tag, and repeats no tag name.
+   */
+  private static void assertGenAiTrackingHeaders(Headers headers) {
+    for (String name : TrackingHeaders.HEADERS.keySet()) {
+      ImmutableList<String> tags =
+          ImmutableList.copyOf(Splitter.on(' ').split(getOnlyElement(headers.get(name))));
+      assertThat(tags.get(0)).startsWith("google-genai-sdk/");
+      assertThat(tags).containsAtLeast("gl-java/" + JAVA_VERSION.value(), TrackingHeaders.ADK_TAG);
+      assertThat(tags.stream().map(tag -> tag.split("/", 2)[0]).collect(toImmutableList()))
+          .containsNoDuplicates();
+    }
+  }
+
+  private static final String GENERATE_CONTENT_JSON =
+      "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hi\"}]},"
+          + "\"finishReason\":\"STOP\"}]}";
+
+  private static final String CHAT_COMPLETION_JSON =
+      "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"},"
+          + "\"finish_reason\":\"stop\"}]}";
 }
