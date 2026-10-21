@@ -32,6 +32,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+/**
+ * Tests for InstructionUtils.
+ *
+ * @author Sandeep Belgavi
+ */
 @RunWith(JUnit4.class)
 public final class InstructionUtilsTest {
 
@@ -115,12 +120,12 @@ public final class InstructionUtilsTest {
   }
 
   @Test
-  public void injectSessionState_missingNonOptionalStateVariable_returnsPlaceholderVerbatim() {
+  public void injectSessionState_missingNonOptionalStateVariable_throwsIllegalArgumentException() {
     String template = "Use the name {user:name} and the id {app:id}.";
 
-    String result = InstructionUtils.injectSessionState(templateContext, template).blockingGet();
-
-    assertThat(result).isEqualTo(template);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> InstructionUtils.injectSessionState(templateContext, template).blockingGet());
   }
 
   @Test

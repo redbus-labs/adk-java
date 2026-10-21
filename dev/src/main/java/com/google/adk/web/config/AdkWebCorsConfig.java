@@ -16,14 +16,22 @@
 
 package com.google.adk.web.config;
 
+import jakarta.servlet.DispatcherType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.web.server.autoconfigure.servlet.ForwardedHeaderFilterCustomizer;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
+import org.springframework.web.filter.ForwardedHeaderFilter;
 
 /**
  * Configuration class for setting up Cross-Origin Resource Sharing (CORS) in the ADK Web
@@ -39,6 +47,9 @@ import org.springframework.web.filter.CorsFilter;
  *   <li>{@link CorsConfigurationSource}: Configures CORS settings such as allowed origins, methods,
  *       headers, credentials, and max age.
  *   <li>{@link CorsFilter}: Applies the CORS configuration to incoming requests.
+ *   <li>{@link ForwardedHeaderFilter}: Applies reverse proxy headers to the URL of every request,
+ *       so the same-origin checks see the URL the browser used.
+ *   <li>{@code OriginGuardFilter}: Rejects requests from pages rebound onto this machine by DNS.
  * </ul>
  */
 @Configuration
@@ -50,10 +61,10 @@ public class AdkWebCorsConfig {
   public CorsConfigurationSource corsConfigurationSource(AdkWebCorsProperties corsProperties) {
     if (corsProperties.origins().contains("*")) {
       logger.warn(
-          "CORS is configured to allow all origins (\"*\"), which is insecure and intended for"
-              + " local development only. This also applies to the /run_live WebSocket endpoint."
-              + " Set 'adk.web.cors.origins' to an explicit allowlist to restrict which origins"
-              + " may call the server.");
+          "CORS is configured to allow all origins (\"*\"), so any website open in a browser can"
+              + " call this server, including the /run_live WebSocket endpoint. Set"
+              + " 'adk.web.cors.origins' to an explicit allowlist to restrict which origins may"
+              + " call the server.");
     }
 
     CorsConfiguration configuration = new CorsConfiguration();
@@ -73,5 +84,33 @@ public class AdkWebCorsConfig {
   @Bean
   public CorsFilter corsFilter(CorsConfigurationSource corsConfigurationSource) {
     return new CorsFilter(corsConfigurationSource);
+  }
+
+  @Bean
+  OriginGuardFilter originGuardFilter(
+      AdkWebCorsProperties corsProperties, @Value("${server.address:}") String serverAddress) {
+    return new OriginGuardFilter(corsProperties.origins(), serverAddress);
+  }
+
+  /**
+   * Makes {@code server.forward-headers-strategy=framework} the default, so same-origin checks see
+   * the URL the browser used behind a TLS-terminating proxy. Registered like Spring Boot's own
+   * filter, which then backs off; set the property to {@code native} or {@code none} to opt out.
+   */
+  @Bean
+  @ConditionalOnProperty(
+      name = "server.forward-headers-strategy",
+      havingValue = "framework",
+      matchIfMissing = true)
+  FilterRegistrationBean<ForwardedHeaderFilter> adkForwardedHeaderFilter(
+      ObjectProvider<ForwardedHeaderFilterCustomizer> customizers) {
+    ForwardedHeaderFilter filter = new ForwardedHeaderFilter();
+    customizers.orderedStream().forEach(customizer -> customizer.customize(filter));
+    FilterRegistrationBean<ForwardedHeaderFilter> registration =
+        new FilterRegistrationBean<>(filter);
+    registration.setDispatcherTypes(
+        DispatcherType.REQUEST, DispatcherType.ASYNC, DispatcherType.ERROR);
+    registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+    return registration;
   }
 }

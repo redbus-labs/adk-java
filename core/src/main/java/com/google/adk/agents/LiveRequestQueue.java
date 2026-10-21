@@ -38,7 +38,17 @@ public final class LiveRequestQueue {
   }
 
   public void content(Content content) {
-    processor.onNext(LiveRequest.builder().content(content).build());
+    content(content, /* partial= */ false);
+  }
+
+  /**
+   * Sends content to the model, optionally as a partial update that leaves the current turn open.
+   *
+   * @param content the content to send
+   * @param partial whether this content is a partial update that does not complete the current turn
+   */
+  public void content(Content content, boolean partial) {
+    processor.onNext(LiveRequest.builder().content(content).partial(partial).build());
   }
 
   public void realtime(Blob blob) {

@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADK Java Workflow Node & Graph Architecture Guide</title>
+    <style>
+        :root {
+            --primary: #1a73e8;
+            --primary-dark: #1557b0;
+            --secondary: #34a853;
+            --warning: #fbbc04;
+            --danger: #ea4335;
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --bg-card-hover: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --code-bg: #090d16;
+            --accent-cyan: #38bdf8;
+            --accent-purple: #c084fc;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 0;
+            margin: 0;
+        }
+
+        header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        nav.toc {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+
+        nav.toc h2 {
+            font-size: 1.2rem;
+            color: var(--accent-cyan);
+            margin-bottom: 1rem;
+        }
+
+        nav.toc ul {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 0.75rem;
+        }
+
+        nav.toc a {
+            color: var(--text-main);
+            text-decoration: none;
+            transition: color 0.2s;
+            font-weight: 500;
+        }
+
+        nav.toc a:hover {
+            color: var(--accent-cyan);
+        }
+
+        section {
+            margin-bottom: 3.5rem;
+        }
+
+        h2.section-title {
+            font-size: 1.8rem;
+            color: var(--accent-cyan);
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.2s, background-color 0.2s;
+        }
+
+        .card:hover {
+            background-color: var(--bg-card-hover);
+            transform: translateY(-2px);
+        }
+
+        .card h3 {
+            font-size: 1.25rem;
+            color: var(--accent-purple);
+            margin-bottom: 0.75rem;
+        }
+
+        .card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .badge-core { background-color: rgba(56, 189, 248, 0.2); color: var(--accent-cyan); }
+        .badge-graph { background-color: rgba(192, 132, 252, 0.2); color: var(--accent-purple); }
+        .badge-success { background-color: rgba(52, 168, 83, 0.2); color: var(--secondary); }
+
+        pre {
+            background-color: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            overflow-x: auto;
+            font-family: "Fira Code", Monaco, Consolas, "Courier New", monospace;
+            font-size: 0.9rem;
+            color: #e2e8f0;
+            margin: 1rem 0;
+            line-height: 1.5;
+        }
+
+        code {
+            font-family: "Fira Code", Monaco, Consolas, "Courier New", monospace;
+            color: var(--accent-cyan);
+            background-color: rgba(56, 189, 248, 0.1);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        table.comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            background-color: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        table.comparison-table th, table.comparison-table td {
+            padding: 1rem 1.25rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        table.comparison-table th {
+            background-color: #0f172a;
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        table.comparison-table tr:hover {
+            background-color: var(--bg-card-hover);
+        }
+
+        .diagram-container {
+            background-color: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            margin: 1.5rem 0;
+        }
+
+        .svg-diagram {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .highlight-box {
+            background-color: rgba(56, 189, 248, 0.08);
+            border-left: 4px solid var(--accent-cyan);
+            border-radius: 0 8px 8px 0;
+            padding: 1.25rem;
+            margin: 1.5rem 0;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>ADK Java: Workflow Node & Graph Architecture</h1>
+        <p>A Comprehensive Technical Guide to Composable Agent Workflows, Graph Orchestration, Framework Comparison, and Migration Strategies in ADK Java 1.12+</p>
+    </header>
+
+    <div class="container">
+
+        <nav class="toc">
+            <h2>Table of Contents</h2>
+            <ul>
+                <li><a href="#core-architecture">1. Core Architectural Shift: BaseAgent as BaseNode</a></li>
+                <li><a href="#graph-components">2. Key Workflow Graph Components</a></li>
+                <li><a href="#visual-workflow">3. Workflow Graph Visual Models</a></li>
+                <li><a href="#framework-comparison">4. Comparison with Other Frameworks</a></li>
+                <li><a href="#migration-guide">5. Easy Migration & Adaptation Guide</a></li>
+                <li><a href="#architectural-concerns">6. Architectural Concerns & Best Practices</a></li>
+            </ul>
+        </nav>
+
+        <!-- SECTION 1 -->
+        <section id="core-architecture">
+            <h2 class="section-title">1. Core Architectural Shift: BaseAgent as BaseNode</h2>
+
+            <div class="highlight-box">
+                <strong>Key Architectural Insight:</strong> In ADK Java 1.12+, <code>BaseAgent</code> extends <code>BaseNode</code>, which implements the <code>Node</code> interface.
+                This foundational shift unifies standalone agents and graph execution nodes into a single, uniform type hierarchy.
+            </div>
+
+            <div class="card-grid">
+                <div class="card">
+                    <span class="badge badge-core">Unified Concept</span>
+                    <h3>Agents Are Workflow Nodes</h3>
+                    <p>Every <code>LlmAgent</code>, custom agent, or sub-agent is natively a <code>Node</code>. You can execute any agent standalone via <code>Runner</code> or plug it directly into a complex directed graph without writing wrappers or adapters.</p>
+                </div>
+                <div class="card">
+                    <span class="badge badge-graph">Recursive Composability</span>
+                    <h3>Workflows Are Nodes Too</h3>
+                    <p><code>Workflow</code> extends <code>BaseNode</code>. A complete workflow graph is itself a <code>Node</code>. This enables sub-workflows inside workflows to arbitrary depth with clean encapsulation.</p>
+                </div>
+                <div class="card">
+                    <span class="badge badge-success">Reactive Streaming</span>
+                    <h3>RxJava Event Pipeline</h3>
+                    <p>Node execution is driven by RxJava 3 <code>Flowable&lt;?&gt;</code> streams, allowing async, non-blocking execution, streaming tool output, partial tokens, and backpressure handling.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2 -->
+        <section id="graph-components">
+            <h2 class="section-title">2. Key Workflow Graph Components</h2>
+
+            <div class="card-grid">
+                <div class="card">
+                    <h3><code>Node</code> & <code>BaseNode</code></h3>
+                    <p>Defines units of work within a workflow graph. Supports input/output/state schemas, timeouts, retry configurations, and rerun controls on session resume.</p>
+                </div>
+                <div class="card">
+                    <h3><code>Graph</code> & <code>Edge</code></h3>
+                    <p>Represents the directed acyclic or cyclic execution graph. Edges connect predecessor nodes to successor nodes with deterministic scheduling.</p>
+                </div>
+                <div class="card">
+                    <h3><code>EdgesBuilder</code></h3>
+                    <p>Provides a fluent DSL for building workflow connections: <code>edges.from(start).to(researcher).from(researcher).to(writer)</code>.</p>
+                </div>
+                <div class="card">
+                    <h3><code>Start</code></h3>
+                    <p>Special entry node designating the initial entry point of a workflow graph.</p>
+                </div>
+                <div class="card">
+                    <h3><code>JoinNode</code></h3>
+                    <p>Fan-in synchronization node that waits for all predecessor nodes to complete before executing, collecting outputs as a map keyed by node name.</p>
+                </div>
+                <div class="card">
+                    <h3><code>NodeRunner</code></h3>
+                    <p>Orchestrates execution of individual nodes or sub-graphs, managing state transitions, events, and invocation context.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 3 -->
+        <section id="visual-workflow">
+            <h2 class="section-title">3. Workflow Graph Visual Models</h2>
+
+            <p style="color: var(--text-muted); margin-bottom: 1rem;">
+                ADK Java supports complex execution topological patterns, including linear pipelines, parallel fan-out/fan-in joins, and conditional routing.
+            </p>
+
+            <div class="diagram-container">
+                <svg class="svg-diagram" width="800" height="240" viewBox="0 0 800 240" xmlns="http://www.w3.org/2000/svg">
+                    <style>
+                        .node-rect { fill: #1e293b; stroke: #38bdf8; stroke-width: 2; rx: 8; }
+                        .node-special { fill: #312e81; stroke: #c084fc; stroke-width: 2; rx: 8; }
+                        .node-join { fill: #064e3b; stroke: #34a853; stroke-width: 2; rx: 8; }
+                        .node-text { fill: #f8fafc; font-family: sans-serif; font-size: 14px; font-weight: bold; text-anchor: middle; }
+                        .sub-text { fill: #94a3b8; font-family: sans-serif; font-size: 11px; text-anchor: middle; }
+                        .arrow { stroke: #38bdf8; stroke-width: 2; marker-end: url(#arrowhead); }
+                    </style>
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#38bdf8"/>
+                        </marker>
+                    </defs>
+
+                    <!-- Start Node -->
+                    <rect x="30" y="90" width="100" height="60" class="node-special" />
+                    <text x="80" y="120" class="node-text">Start</text>
+                    <text x="80" y="136" class="sub-text">(Entry Point)</text>
+
+                    <!-- Arrow Start to Agent A & Agent B -->
+                    <path d="M 130 120 L 180 70 L 220 70" class="arrow" />
+                    <path d="M 130 120 L 180 170 L 220 170" class="arrow" />
+
+                    <!-- Parallel Agent A -->
+                    <rect x="220" y="40" width="150" height="60" class="node-rect" />
+                    <text x="295" y="70" class="node-text">ResearchAgent</text>
+                    <text x="295" y="86" class="sub-text">(Parallel Node 1)</text>
+
+                    <!-- Parallel Agent B -->
+                    <rect x="220" y="140" width="150" height="60" class="node-rect" />
+                    <text x="295" y="170" class="node-text">DataFetcherAgent</text>
+                    <text x="295" y="186" class="sub-text">(Parallel Node 2)</text>
+
+                    <!-- Arrows to JoinNode -->
+                    <path d="M 370 70 L 420 70 L 460 120" class="arrow" />
+                    <path d="M 370 170 L 420 170 L 460 120" class="arrow" />
+
+                    <!-- Join Node -->
+                    <rect x="460" y="90" width="130" height="60" class="node-join" />
+                    <text x="525" y="120" class="node-text">JoinNode</text>
+                    <text x="525" y="136" class="sub-text">(Fan-in Barrier)</text>
+
+                    <!-- Arrow Join to Synthesizer -->
+                    <path d="M 590 120 L 640 120" class="arrow" />
+
+                    <!-- Final Agent -->
+                    <rect x="640" y="90" width="130" height="60" class="node-rect" />
+                    <text x="705" y="120" class="node-text">WriterAgent</text>
+                    <text x="705" y="136" class="sub-text">(Terminal Node)</text>
+                </svg>
+            </div>
+        </section>
+
+        <!-- SECTION 4 -->
+        <section id="framework-comparison">
+            <h2 class="section-title">4. Framework Comparison Matrix</h2>
+
+            <p style="color: var(--text-muted);">
+                Comparing ADK Java Workflow Graphs against other major AI agent orchestration frameworks:
+            </p>
+
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Feature / Dimension</th>
+                        <th>ADK Java 1.12+ Workflows</th>
+                        <th>LangGraph (Python/JS)</th>
+                        <th>Spring AI</th>
+                        <th>LlamaIndex Workflows</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Primary Paradigm</strong></td>
+                        <td>Type-safe Reactive DAG / Graph (RxJava 3)</td>
+                        <td>StateGraph with Channels / Dicts</td>
+                        <td>Fluent Spring Bean Pipelines</td>
+                        <td>Event-Driven Python Decorators</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Agent Unification</strong></td>
+                        <td><code>BaseAgent</code> extends <code>BaseNode</code> (Zero-wrapper)</td>
+                        <td>Nodes wrap functions or agents explicitly</td>
+                        <td>ChatClient / Advisers wrapper model</td>
+                        <td>Step functions decorated with <code>@step</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Type Safety & Schema</strong></td>
+                        <td>Compile-time Java generics + GenAI <code>Schema</code> validation</td>
+                        <td>Pydantic / TypedDict dynamic schemas</td>
+                        <td>Java PoJos & Spring Converters</td>
+                        <td>Pydantic event models</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Parallelism & Fan-In</strong></td>
+                        <td>Built-in <code>JoinNode</code> & <code>maxConcurrency</code> settings</td>
+                        <td>Fan-out edges + reducer state channels</td>
+                        <td>Requires custom CompletableFuture handling</td>
+                        <td>Event listening step fans</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Streaming & Backpressure</strong></td>
+                        <td>Native RxJava 3 <code>Flowable</code> backpressure & event streams</td>
+                        <td>Async generators / SSE wrappers</td>
+                        <td>Spring WebFlux <code>Flux</code></td>
+                        <td>Async Python generators</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Session & State Persistence</strong></td>
+                        <td>Integrated with ADK <code>BaseSessionService</code> & Artifact Store</td>
+                        <td>Checkpointers (Sqlite / Postgres)</td>
+                        <td>Spring Session / JDBC stores</td>
+                        <td>Context storage dictionary</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- SECTION 5 -->
+        <section id="migration-guide">
+            <h2 class="section-title">5. Easy Migration & Adaptation Guide</h2>
+
+            <p style="color: var(--text-muted); margin-bottom: 1rem;">
+                Adapting existing ADK agents to Workflow Graphs requires <strong>zero changes</strong> to agent class definitions.
+            </p>
+
+            <h3>Building a Workflow Graph in Java</h3>
+            <pre><code>// 1. Create your standard ADK agents (no code changes needed!)
+LlmAgent researchAgent = LlmAgent.builder()
+    .name("ResearchAgent")
+    .model("gemini-2.5-flash")
+    .instruction("Research topic and provide findings.")
+    .build();
+
+LlmAgent writerAgent = LlmAgent.builder()
+    .name("WriterAgent")
+    .model("gemini-2.5-pro")
+    .instruction("Summarize research findings into a polished report.")
+    .build();
+
+// 2. Build the workflow graph using EdgesBuilder
+Workflow researchWorkflow = Workflow.builder()
+    .name("ResearchAndWriteWorkflow")
+    .description("Multi-step research and writing workflow")
+    .addEdges(edges -> edges
+        .from(Start.INSTANCE).to(researchAgent)
+        .from(researchAgent).to(writerAgent))
+    .build();
+
+// 3. Execute the workflow via Runner or NodeRunner
+Runner runner = Runner.builder()
+    .agent(researchWorkflow)
+    .sessionService(sessionService)
+    .build();
+
+runner.runAsync("my-app", "user-123", "Write a summary on quantum computing")
+    .blockingSubscribe(event -> System.out.println(event));</code></pre>
+
+            <h3>Parallel Processing with Fan-In Join</h3>
+            <pre><code>JoinNode joinNode = JoinNode.builder()
+    .name("SyncBarrier")
+    .build();
+
+Workflow parallelWorkflow = Workflow.builder()
+    .name("ParallelAnalysisWorkflow")
+    .addEdges(edges -> edges
+        .from(Start.INSTANCE).to(researchAgent)
+        .from(Start.INSTANCE).to(dataAgent)
+        .from(researchAgent).to(joinNode)
+        .from(dataAgent).to(joinNode)
+        .from(joinNode).to(writerAgent))
+    .build();</code></pre>
+        </section>
+
+        <!-- SECTION 6 -->
+        <section id="architectural-concerns">
+            <h2 class="section-title">6. Architectural Concerns & Best Practices</h2>
+
+            <div class="card-grid">
+                <div class="card">
+                    <h3>Deterministic Scheduling</h3>
+                    <p>Node scheduling order in <code>Graph</code> is strictly deterministic based on edge declaration order. This guarantees reproducible execution across environments.</p>
+                </div>
+                <div class="card">
+                    <h3>Resilience & Retry Policies</h3>
+                    <p>Each node supports a custom <code>NodeConfig</code> with <code>RetryConfig</code> for exponential backoff, maximum retry attempts, and execution timeout limits.</p>
+                </div>
+                <div class="card">
+                    <h3>State Isolation & Concurrency</h3>
+                    <p>Session state is synchronized across node boundaries. Parallel nodes operate on immutable snapshots or synchronized maps to prevent state corruption.</p>
+                </div>
+                <div class="card">
+                    <h3>Hot Reloading & Registry</h3>
+                    <p>Workflows registered via <code>ComponentRegistry</code> work seamlessly with ADK Dev Web Server hot-reloading for rapid interactive debugging.</p>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <footer>
+        <p>Generated for Redbus Labs — ADK Java Architecture Guide | Date: October 21, 2026</p>
+    </footer>
+
+</body>
+</html>

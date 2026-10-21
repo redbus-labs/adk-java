@@ -16,12 +16,7 @@
 
 package com.google.adk.models;
 
-import static com.google.common.base.StandardSystemProperty.JAVA_VERSION;
-
-import com.google.adk.Version;
 import com.google.adk.internal.http.HttpClientFactory;
-import com.google.adk.models.GeminiContinuation.ResumeRequest;
-import com.google.adk.models.GeminiContinuation.StreamedOutput;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -40,16 +35,12 @@ import com.google.genai.types.LiveConnectConfig;
 import com.google.genai.types.Part;
 import com.google.genai.types.PartialArg;
 import io.reactivex.rxjava3.core.Flowable;
-import java.lang.reflect.Method;
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import okhttp3.OkHttpClient;
@@ -66,11 +57,6 @@ import org.slf4j.LoggerFactory;
 public class Gemini extends BaseLlm {
 
   private static final Logger logger = LoggerFactory.getLogger(Gemini.class);
-  private static final ImmutableMap<String, String> TRACKING_HEADERS;
-
-  /** The google-genai setter for automatic continuation, or null on releases without it. */
-  private static final @Nullable Method automaticContinuationSetter =
-      findAutomaticContinuationSetter();
 
   private static OkHttpClient prepareHttpClient(@Nullable ExecutorService executorService) {
     OkHttpClient client =
@@ -85,25 +71,22 @@ public class Gemini extends BaseLlm {
         .build();
   }
 
+  // Every client ADK builds starts here, so each sends ADK's tracking tag.
+  private static Client.Builder adkClientBuilder(@Nullable ExecutorService executorService) {
+    return Client.builder()
+        .httpOptions(HttpOptions.builder().headers(TrackingHeaders.GENAI_SDK_HEADERS).build())
+        .clientOptions(
+            ClientOptions.builder().customHttpClient(prepareHttpClient(executorService)).build());
+  }
+
   private static Client buildApiKeyClient(
       String apiKey, @Nullable ExecutorService executorService) {
-    return Client.builder()
-        .apiKey(apiKey)
-        .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
-        .clientOptions(
-            ClientOptions.builder().customHttpClient(prepareHttpClient(executorService)).build())
-        .build();
+    return adkClientBuilder(executorService).apiKey(apiKey).build();
   }
 
   private static Client buildVertexClient(
       VertexCredentials vertexCredentials, @Nullable ExecutorService executorService) {
-    Client.Builder apiClientBuilder =
-        Client.builder()
-            .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
-            .clientOptions(
-                ClientOptions.builder()
-                    .customHttpClient(prepareHttpClient(executorService))
-                    .build());
+    Client.Builder apiClientBuilder = adkClientBuilder(executorService);
     vertexCredentials.project().ifPresent(apiClientBuilder::project);
     vertexCredentials.location().ifPresent(apiClientBuilder::location);
     vertexCredentials.credentials().ifPresent(apiClientBuilder::credentials);
@@ -111,35 +94,30 @@ public class Gemini extends BaseLlm {
   }
 
   private static Client buildDefaultClient(@Nullable ExecutorService executorService) {
-    return Client.builder()
-        .httpOptions(HttpOptions.builder().headers(TRACKING_HEADERS).build())
-        .clientOptions(
-            ClientOptions.builder().customHttpClient(prepareHttpClient(executorService)).build())
-        .build();
-  }
-
-  static {
-    String frameworkLabel = "google-adk/" + Version.JAVA_ADK_VERSION;
-    String languageLabel = "gl-java/" + JAVA_VERSION.value();
-    String versionHeaderValue = String.format("%s %s", frameworkLabel, languageLabel);
-
-    TRACKING_HEADERS =
-        ImmutableMap.of(
-            "x-goog-api-client", versionHeaderValue,
-            "user-agent", versionHeaderValue);
+    return adkClientBuilder(executorService).build();
   }
 
   private final Client apiClient;
+  // True when apiClient already sends ADK's tracking tag.
+  private final boolean clientSendsTrackingHeaders;
 
   /**
-   * Constructs a new Gemini instance.
+   * Constructs a new Gemini instance. Each generate request sent through {@code apiClient} carries
+   * ADK's tracking tag, which the genai SDK appends to the client's tracking headers. If the
+   * client's own headers already carry an ADK tag, requests send two because the SDK does not
+   * expose a client's headers.
    *
    * @param modelName The name of the Gemini model to use (e.g., "gemini-2.5-flash").
    * @param apiClient The genai {@link com.google.genai.Client} instance for making API calls.
    */
   public Gemini(String modelName, Client apiClient) {
+    this(modelName, apiClient, /* clientSendsTrackingHeaders= */ false);
+  }
+
+  Gemini(String modelName, Client apiClient, boolean clientSendsTrackingHeaders) {
     super(modelName);
     this.apiClient = Objects.requireNonNull(apiClient, "apiClient cannot be null");
+    this.clientSendsTrackingHeaders = clientSendsTrackingHeaders;
   }
 
   /**
@@ -149,9 +127,10 @@ public class Gemini extends BaseLlm {
    * @param apiKey The Google Gemini API key.
    */
   public Gemini(String modelName, String apiKey) {
-    super(modelName);
-    Objects.requireNonNull(apiKey, "apiKey cannot be null");
-    this.apiClient = buildApiKeyClient(apiKey, null);
+    this(
+        modelName,
+        buildApiKeyClient(Objects.requireNonNull(apiKey, "apiKey cannot be null"), null),
+        /* clientSendsTrackingHeaders= */ true);
   }
 
   /**
@@ -161,9 +140,11 @@ public class Gemini extends BaseLlm {
    * @param vertexCredentials The Vertex AI credentials to access the Gemini model.
    */
   public Gemini(String modelName, VertexCredentials vertexCredentials) {
-    super(modelName);
-    Objects.requireNonNull(vertexCredentials, "vertexCredentials cannot be null");
-    this.apiClient = buildVertexClient(vertexCredentials, null);
+    this(
+        modelName,
+        buildVertexClient(
+            Objects.requireNonNull(vertexCredentials, "vertexCredentials cannot be null"), null),
+        /* clientSendsTrackingHeaders= */ true);
   }
 
   /**
@@ -266,169 +247,100 @@ public class Gemini extends BaseLlm {
 
       if (apiClient != null) {
         return new Gemini(modelName, apiClient);
-      } else if (apiKey != null) {
-        return new Gemini(modelName, buildApiKeyClient(apiKey, httpExecutorService));
-      } else if (vertexCredentials != null) {
-        return new Gemini(modelName, buildVertexClient(vertexCredentials, httpExecutorService));
-      } else {
-        return new Gemini(modelName, buildDefaultClient(httpExecutorService));
       }
+      Client client;
+      if (apiKey != null) {
+        client = buildApiKeyClient(apiKey, httpExecutorService);
+      } else if (vertexCredentials != null) {
+        client = buildVertexClient(vertexCredentials, httpExecutorService);
+      } else {
+        client = buildDefaultClient(httpExecutorService);
+      }
+      return new Gemini(modelName, client, /* clientSendsTrackingHeaders= */ true);
     }
   }
 
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
-    llmRequest =
+    LlmRequest preparedRequest =
         GeminiUtil.prepareGenenerateContentRequest(
             llmRequest, !apiClient.vertexAI(), /* stripThoughts= */ false);
-    GenerateContentConfig config = withoutAutomaticContinuation(llmRequest.config().orElse(null));
-    String effectiveModelName = llmRequest.model().orElse(model());
+    String effectiveModelName = preparedRequest.model().orElse(model());
+    if (preparedRequest.cacheConfig().isEmpty()) {
+      return sendRequest(effectiveModelName, preparedRequest, stream, /* cacheMetadata= */ null);
+    }
+    return new GeminiContextCacheManager(apiClient, effectiveModelName)
+        .handleContextCaching(preparedRequest)
+        .flatMapPublisher(
+            cached -> sendRequest(effectiveModelName, cached.request(), stream, cached.metadata()));
+  }
+
+  /** Sends the request, and puts {@code cacheMetadata}, if any, on the final response. */
+  private Flowable<LlmResponse> sendRequest(
+      String effectiveModelName,
+      LlmRequest llmRequest,
+      boolean stream,
+      @Nullable CacheMetadata cacheMetadata) {
+    GenerateContentConfig config = llmRequest.config().orElse(null);
 
     logger.trace("Request Contents: {}", llmRequest.contents());
     logger.trace("Request Config: {}", config);
 
-    List<Content> contents = llmRequest.contents();
+    if (!clientSendsTrackingHeaders) {
+      config = withTrackingHeaders(config);
+    }
     if (stream) {
       logger.debug("Sending streaming generateContent request to model {}", effectiveModelName);
       CompletableFuture<ResponseStream<GenerateContentResponse>> streamFuture =
-          apiClient.async.models.generateContentStream(effectiveModelName, contents, config);
+          apiClient.async.models.generateContentStream(
+              effectiveModelName, llmRequest.contents(), config);
+
       return Flowable.defer(
           () ->
-              streamResumingPauses(
-                  effectiveModelName, new GeminiContinuation(contents, config), streamFuture));
+              new StreamingResponseAggregator()
+                  .process(
+                      Flowable.fromFuture(streamFuture).flatMapIterable(iterable -> iterable),
+                      cacheMetadata));
     } else {
       logger.debug("Sending generateContent request to model {}", effectiveModelName);
-      CompletableFuture<GenerateContentResponse> responseFuture =
-          apiClient.async.models.generateContent(effectiveModelName, contents, config);
-      return Flowable.defer(
-          () ->
-              generateResumingPauses(
-                  effectiveModelName, new GeminiContinuation(contents, config), responseFuture));
+      return Flowable.fromFuture(
+              apiClient
+                  .async
+                  .models
+                  .generateContent(effectiveModelName, llmRequest.contents(), config)
+                  .thenApplyAsync(LlmResponse::create))
+          .map(response -> withCacheMetadata(response, cacheMetadata));
     }
+  }
+
+  /**
+   * Returns {@code config} with ADK's tracking tag merged into its request headers, which the genai
+   * SDK appends to the client's own.
+   */
+  private static GenerateContentConfig withTrackingHeaders(@Nullable GenerateContentConfig config) {
+    GenerateContentConfig base = config != null ? config : GenerateContentConfig.builder().build();
+    HttpOptions httpOptions = base.httpOptions().orElseGet(() -> HttpOptions.builder().build());
+    return base.toBuilder()
+        .httpOptions(
+            httpOptions.toBuilder()
+                .headers(
+                    TrackingHeaders.mergeIntoGenAiSdkHeaders(
+                        httpOptions.headers().orElse(ImmutableMap.of())))
+                .build())
+        .build();
+  }
+
+  private static LlmResponse withCacheMetadata(
+      LlmResponse response, @Nullable CacheMetadata cacheMetadata) {
+    return cacheMetadata == null
+        ? response
+        : response.toBuilder().cacheMetadata(cacheMetadata).build();
   }
 
   @VisibleForTesting
   static Flowable<LlmResponse> processRawResponses(Flowable<GenerateContentResponse> rawResponses) {
-    return Flowable.defer(() -> new StreamingResponseAggregator().process(rawResponses));
-  }
-
-  /**
-   * Returns {@code config} with google-genai's automatic continuation turned off, because ADK
-   * resumes paused generations itself. Calls the setter by reflection because ADK also builds
-   * against google-genai releases without it.
-   */
-  private static @Nullable GenerateContentConfig withoutAutomaticContinuation(
-      @Nullable GenerateContentConfig config) {
-    if (automaticContinuationSetter == null) {
-      return config;
-    }
-    GenerateContentConfig.Builder builder =
-        config == null ? GenerateContentConfig.builder() : config.toBuilder();
-    try {
-      automaticContinuationSetter.invoke(builder, false);
-    } catch (ReflectiveOperationException e) {
-      // The setter is a public builder method, so it is accessible and does not throw.
-      throw new AssertionError(e);
-    }
-    return builder.build();
-  }
-
-  private static @Nullable Method findAutomaticContinuationSetter() {
-    try {
-      return GenerateContentConfig.Builder.class.getMethod("automaticContinuation", boolean.class);
-    } catch (NoSuchMethodException e) {
-      return null;
-    }
-  }
-
-  /**
-   * Returns the final response of a generation, sending another request each time the model pauses.
-   * Repeats instead of recursing, so a generation resumed many times keeps a flat stack.
-   */
-  private Flowable<LlmResponse> generateResumingPauses(
-      String modelName,
-      GeminiContinuation continuation,
-      CompletableFuture<GenerateContentResponse> firstResponse) {
-    Deque<CompletableFuture<GenerateContentResponse>> responses = new ArrayDeque<>();
-    responses.add(firstResponse);
-    return Flowable.defer(() -> Flowable.fromFuture(responses.remove()))
-        .mapOptional(response -> completeOrResume(modelName, continuation, response, responses))
-        .repeatUntil(responses::isEmpty);
-  }
-
-  /**
-   * Returns the final response of the generation, or empty after queueing the request to resume it.
-   */
-  private Optional<LlmResponse> completeOrResume(
-      String modelName,
-      GeminiContinuation continuation,
-      GenerateContentResponse response,
-      Deque<CompletableFuture<GenerateContentResponse>> responses) {
-    LlmResponse llmResponse = LlmResponse.create(response);
-    Optional<ResumeRequest> next =
-        continuation.advance(
-            GeminiContinuation.resumeToken(response),
-            llmResponse.content().flatMap(Content::parts).orElse(ImmutableList.of()),
-            llmResponse.usageMetadata().orElse(null));
-    if (next.isEmpty()) {
-      return Optional.of(continuation.complete(llmResponse));
-    }
-    responses.add(
-        apiClient.async.models.generateContent(
-            modelName, next.get().contents(), next.get().config()));
-    return Optional.empty();
-  }
-
-  /**
-   * Streams a generation, sending another request each time the model pauses, and sums the usage of
-   * all requests on the final response. Repeats instead of recursing, so a generation resumed many
-   * times keeps a flat stack.
-   */
-  private Flowable<LlmResponse> streamResumingPauses(
-      String modelName,
-      GeminiContinuation continuation,
-      CompletableFuture<ResponseStream<GenerateContentResponse>> firstStream) {
-    Deque<CompletableFuture<ResponseStream<GenerateContentResponse>>> streams = new ArrayDeque<>();
-    streams.add(firstStream);
-    StreamingResponseAggregator aggregator = new StreamingResponseAggregator();
-    return Flowable.defer(() -> streamRequest(modelName, continuation, streams))
-        .repeatUntil(streams::isEmpty)
-        .concatMap(aggregator::processRawResponse)
-        .concatWith(
-            Flowable.defer(
-                () -> aggregator.processFinalResponse().map(continuation::withSummedUsage)));
-  }
-
-  /**
-   * Streams the chunks of one request, then queues the request that resumes the generation, if any.
-   */
-  private Flowable<GenerateContentResponse> streamRequest(
-      String modelName,
-      GeminiContinuation continuation,
-      Deque<CompletableFuture<ResponseStream<GenerateContentResponse>>> streams) {
-    StreamedOutput output = new StreamedOutput(continuation);
-    return Flowable.fromFuture(streams.remove())
-        .flatMapIterable(stream -> stream)
-        .mapOptional(output::record)
-        .doOnComplete(() -> queueResume(modelName, continuation, output, streams));
-  }
-
-  /**
-   * Records {@code output} in {@code continuation} and queues the request that resumes the
-   * generation, if any.
-   */
-  private void queueResume(
-      String modelName,
-      GeminiContinuation continuation,
-      StreamedOutput output,
-      Deque<CompletableFuture<ResponseStream<GenerateContentResponse>>> streams) {
-    continuation
-        .advance(output.token(), output.parts(), output.usage())
-        .ifPresent(
-            next ->
-                streams.add(
-                    apiClient.async.models.generateContentStream(
-                        modelName, next.contents(), next.config())));
+    return Flowable.defer(
+        () -> new StreamingResponseAggregator().process(rawResponses, /* cacheMetadata= */ null));
   }
 
   @Override
@@ -456,7 +368,7 @@ public class Gemini extends BaseLlm {
     return apiClient.async.live.connect(modelName, config).thenApply(GenAiLiveTransport::new);
   }
 
-  static final class StreamingResponseAggregator {
+  private static final class StreamingResponseAggregator {
     private final List<Part> accumulatedSequence = new ArrayList<>();
     private final StringBuilder currentTextBuffer = new StringBuilder();
     // Always reassigned in accumulateParts() before it is read; the initializer is never observed.
@@ -467,7 +379,7 @@ public class Gemini extends BaseLlm {
      * and nothing else worth keeping. Compared by rebuilding rather than against a single literal,
      * so a terminator that also carries an explicit {@code thought=false} is still recognised.
      */
-    static boolean isStreamTerminator(Part part) {
+    private static boolean isStreamTerminator(Part part) {
       if (!part.text().map(String::isEmpty).orElse(false)) {
         return false;
       }
@@ -490,12 +402,18 @@ public class Gemini extends BaseLlm {
     private String currentFcId = null;
 
     /**
-     * Processes a stream of raw responses, emitting partial and aggregated {@link LlmResponse}s.
+     * Processes a stream of raw responses, emitting partial and aggregated {@link LlmResponse}s,
+     * and puts {@code cacheMetadata}, if any, on the aggregated response.
      */
-    private Flowable<LlmResponse> process(Flowable<GenerateContentResponse> rawResponses) {
+    private Flowable<LlmResponse> process(
+        Flowable<GenerateContentResponse> rawResponses, @Nullable CacheMetadata cacheMetadata) {
       return rawResponses
           .concatMap(this::processRawResponse)
-          .concatWith(Flowable.defer(this::processFinalResponse));
+          .concatWith(
+              Flowable.defer(
+                  () ->
+                      processFinalResponse()
+                          .map(response -> withCacheMetadata(response, cacheMetadata))));
     }
 
     /**
@@ -527,8 +445,10 @@ public class Gemini extends BaseLlm {
       // If the chunk has no text or function calls (e.g. metadata-only or empty), we suppress it
       // during streaming so it doesn't emit an empty partial response.
       // Exception: If this is a standalone empty chunk in an otherwise completely empty stream
-      // (and not a STOP chunk), we emit it directly as a non-partial empty response.
+      // (and not a STOP chunk), we emit it directly as a non-partial empty response, unless more
+      // of the stream follows it.
       if (!isStop(currentProcessedLlmResponse)
+          && !continuesStream(rawResponse)
           && accumulatedSequence.isEmpty()
           && currentTextBuffer.isEmpty()) {
         return Flowable.just(currentProcessedLlmResponse.toBuilder().partial(null).build());
@@ -813,6 +733,20 @@ public class Gemini extends BaseLlm {
           finalResponseBuilder
               .content(Content.builder().role("model").parts(accumulatedSequence).build())
               .build());
+    }
+
+    /**
+     * Returns whether more of the stream follows this chunk: it carries a continuation token but no
+     * finish reason, like a pause whose finish reason the SDK clears before resuming it.
+     */
+    private static boolean continuesStream(GenerateContentResponse response) {
+      return response
+          .candidates()
+          .flatMap(candidates -> candidates.stream().findFirst())
+          .filter(candidate -> candidate.finishReason().isEmpty())
+          .flatMap(Candidate::continuationToken)
+          .filter(token -> token.length > 0)
+          .isPresent();
     }
 
     /** Checks whether the response finish reason indicates the stream has finished with STOP. */

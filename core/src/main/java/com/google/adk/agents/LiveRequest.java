@@ -46,6 +46,21 @@ public abstract class LiveRequest extends JsonBaseModel {
   public abstract Optional<Content> content();
 
   /**
+   * Returns whether {@link #content()} is a partial update that leaves the current turn open.
+   *
+   * <p>Defaults to false, so content sends complete the turn unless marked as partial.
+   *
+   * @return An optional boolean indicating whether the content is a partial turn update.
+   */
+  @JsonProperty("partial")
+  public abstract Optional<Boolean> partial();
+
+  /** Extracts boolean value from the partial field or returns false if unset. */
+  public boolean isPartial() {
+    return partial().orElse(false);
+  }
+
+  /**
    * Returns the blob of the request.
    *
    * <p>If set, send the blob to the model in realtime mode.
@@ -83,6 +98,9 @@ public abstract class LiveRequest extends JsonBaseModel {
     @JsonProperty("content")
     public abstract Builder content(@Nullable Content content);
 
+    @JsonProperty("partial")
+    public abstract Builder partial(@Nullable Boolean partial);
+
     @JsonProperty("blob")
     public abstract Builder blob(@Nullable Blob blob);
 
@@ -103,7 +121,7 @@ public abstract class LiveRequest extends JsonBaseModel {
   }
 
   public static Builder builder() {
-    return new AutoValue_LiveRequest.Builder().close(false);
+    return new AutoValue_LiveRequest.Builder().close(false).partial(false);
   }
 
   public abstract Builder toBuilder();

@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.annotations.Experimental;
+import com.google.adk.models.CacheMetadata;
 import com.google.adk.platform.UuidProvider;
 import com.google.adk.workflow.NodeInfo;
 import com.google.common.collect.ImmutableList;
@@ -44,7 +45,11 @@ import java.util.Optional;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
-/** Represents an event in a session. */
+/**
+ * Represents an event in a session.
+ *
+ * @author Sandeep Belgavi
+ */
 @JsonDeserialize(builder = Event.Builder.class)
 public class Event extends JsonBaseModel {
 
@@ -70,6 +75,7 @@ public class Event extends JsonBaseModel {
   private @Nullable Transcription outputTranscription;
   private @Nullable Object output;
   private @Nullable NodeInfo nodeInfo;
+  private @Nullable CacheMetadata cacheMetadata;
   private long timestamp;
 
   private Event() {}
@@ -341,6 +347,19 @@ public class Event extends JsonBaseModel {
     this.nodeInfo = nodeInfo;
   }
 
+  /**
+   * Context cache state of the LLM response this event carries. The next request of the same agent
+   * reads it to reuse or refresh the cache.
+   */
+  @JsonProperty("cacheMetadata")
+  public Optional<CacheMetadata> cacheMetadata() {
+    return Optional.ofNullable(cacheMetadata);
+  }
+
+  public void setCacheMetadata(@Nullable CacheMetadata cacheMetadata) {
+    this.cacheMetadata = cacheMetadata;
+  }
+
   /** The timestamp of the event. */
   @JsonProperty("timestamp")
   public long timestamp() {
@@ -452,6 +471,7 @@ public class Event extends JsonBaseModel {
     private @Nullable Transcription outputTranscription;
     private @Nullable Object output;
     private @Nullable NodeInfo nodeInfo;
+    private @Nullable CacheMetadata cacheMetadata;
     private @Nullable Long timestamp;
 
     @JsonCreator
@@ -645,6 +665,13 @@ public class Event extends JsonBaseModel {
       return this;
     }
 
+    @CanIgnoreReturnValue
+    @JsonProperty("cacheMetadata")
+    public Builder cacheMetadata(@Nullable CacheMetadata value) {
+      this.cacheMetadata = value;
+      return this;
+    }
+
     public Event build() {
       Event event = new Event();
       event.setId(id);
@@ -671,6 +698,7 @@ public class Event extends JsonBaseModel {
       event.setOutputTranscription(outputTranscription);
       event.setOutput(output);
       event.setNodeInfo(nodeInfo);
+      event.setCacheMetadata(cacheMetadata);
       return event;
     }
   }
@@ -709,6 +737,7 @@ public class Event extends JsonBaseModel {
         .outputTranscription(this.outputTranscription)
         .output(this.output)
         .nodeInfo(this.nodeInfo)
+        .cacheMetadata(this.cacheMetadata)
         .timestamp(this.timestamp);
   }
 
@@ -742,7 +771,8 @@ public class Event extends JsonBaseModel {
         && Objects.equals(inputTranscription, other.inputTranscription)
         && Objects.equals(outputTranscription, other.outputTranscription)
         && Objects.equals(output, other.output)
-        && Objects.equals(nodeInfo, other.nodeInfo);
+        && Objects.equals(nodeInfo, other.nodeInfo)
+        && Objects.equals(cacheMetadata, other.cacheMetadata);
   }
 
   @Override
@@ -775,6 +805,7 @@ public class Event extends JsonBaseModel {
         outputTranscription,
         output,
         nodeInfo,
+        cacheMetadata,
         timestamp);
   }
 }

@@ -5,7 +5,7 @@
   <parent>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk-parent</artifactId>
-    <version>1.11.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+    <version>1.12.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
   </parent>
 
   <artifactId>google-adk-a2a</artifactId>
@@ -29,7 +29,7 @@
     <junit4.version>4.13.2</junit4.version>
     <!-- Load mockito-core as a startup -javaagent so the inline mock maker does not rely on
          runtime self-attachment, which newer JDKs block. -->
-    <mockito.javaagent.arg>-javaagent:${org.mockito:mockito-core:jar}</mockito.javaagent.arg>
+    <mockito.javaagent.arg>"-javaagent:${org.mockito:mockito-core:jar}"</mockito.javaagent.arg>
   </properties>
 
   <dependencies>

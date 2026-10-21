@@ -783,7 +783,8 @@ public final class ChatCompletionsRequest {
 
   /**
    * Lowercases the {@code type} names in a raw schema, which {@link #schemaNormalizerModule} only
-   * does for typed schemas. ADK's own MCP export sends genai's uppercase names, such as "OBJECT".
+   * does for typed schemas. MCP servers built with older ADK Java releases send genai's uppercase
+   * names, such as "OBJECT".
    *
    * @param node The schema node to adjust in place.
    */

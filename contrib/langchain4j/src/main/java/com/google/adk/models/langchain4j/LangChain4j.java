@@ -57,6 +57,7 @@ import dev.langchain4j.model.TokenCountEstimator;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.request.ToolChoice;
 import dev.langchain4j.model.chat.request.json.JsonArraySchema;
 import dev.langchain4j.model.chat.request.json.JsonBooleanSchema;
@@ -100,6 +101,7 @@ public abstract class LangChain4j extends BaseLlm {
 
   public abstract ObjectMapper objectMapper();
 
+  @Nullable
   public abstract String modelName();
 
   @Nullable
@@ -126,7 +128,33 @@ public abstract class LangChain4j extends BaseLlm {
 
     public abstract Builder modelName(String modelName);
 
-    public abstract LangChain4j build();
+    abstract @Nullable ChatModel chatModel();
+
+    abstract @Nullable StreamingChatModel streamingChatModel();
+
+    abstract @Nullable String modelName();
+
+    abstract LangChain4j autoBuild();
+
+    public LangChain4j build() {
+      if (modelName() == null) {
+        String name = chatModel() == null ? null : nameOf(chatModel().defaultRequestParameters());
+        if (name == null && streamingChatModel() != null) {
+          name = nameOf(streamingChatModel().defaultRequestParameters());
+        }
+        if (name == null) {
+          throw new IllegalStateException(
+              "Set modelName(), or use a ChatModel or StreamingChatModel whose"
+                  + " defaultRequestParameters() declare a model name");
+        }
+        modelName(name);
+      }
+      return autoBuild();
+    }
+
+    private static @Nullable String nameOf(@Nullable ChatRequestParameters parameters) {
+      return parameters == null ? null : parameters.modelName();
+    }
   }
 
   public LangChain4j(ChatModel chatModel) {

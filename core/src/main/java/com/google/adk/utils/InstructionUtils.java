@@ -29,7 +29,11 @@ import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Utility methods for handling instruction templates. */
+/**
+ * Utility methods for handling instruction templates.
+ *
+ * @author Sandeep Belgavi
+ */
 public final class InstructionUtils {
 
   private static final Pattern INSTRUCTION_PLACEHOLDER_PATTERN =
@@ -193,9 +197,9 @@ public final class InstructionUtils {
     } else if (optional) {
       return Single.just("");
     } else {
-      // Graceful fallback: if variable is not in state, preserve placeholder verbatim instead of
-      // crashing
-      return Single.just(placeholder);
+      return Single.error(
+          new IllegalArgumentException(
+              String.format("Context variable not found: `%s`.", cleanVarName)));
     }
   }
 

@@ -16,14 +16,21 @@
 
 package com.google.adk.models;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.core.Properties;
+import com.anthropic.core.http.Headers;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.MessageParam.Role;
+import com.anthropic.models.messages.RedactedThinkingBlockParam;
 import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.ThinkingBlock;
+import com.anthropic.models.messages.ThinkingBlockParam;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolChoice;
 import com.anthropic.models.messages.ToolChoiceAuto;
@@ -32,6 +39,7 @@ import com.anthropic.models.messages.ToolUnion;
 import com.anthropic.models.messages.ToolUseBlockParam;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.adk.JsonBaseModel;
+import com.google.common.base.Utf8;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.*;
@@ -44,6 +52,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,20 +91,50 @@ public class Claude extends BaseLlm {
   private final AnthropicClient anthropicClient;
 
   /**
-   * Constructs a new Claude instance.
+   * Constructs a new Claude instance. Requests sent through {@code anthropicClient} carry ADK's
+   * usage-tracking headers, added to the ones the client already sends.
    *
    * @param modelName The name of the Claude model to use (e.g., "claude-3-opus-20240229").
    * @param anthropicClient The Anthropic API client instance.
    */
   public Claude(String modelName, AnthropicClient anthropicClient) {
     super(modelName);
-    this.anthropicClient = anthropicClient;
+    this.anthropicClient = withTrackingHeaders(anthropicClient);
   }
 
   public Claude(String modelName, AnthropicClient anthropicClient, int maxTokens) {
     super(modelName);
-    this.anthropicClient = anthropicClient;
+    this.anthropicClient = withTrackingHeaders(anthropicClient);
     this.maxTokens = maxTokens;
+  }
+
+  /**
+   * Returns a copy of {@code client} that shares its connections and sends ADK's tracking headers,
+   * extending any the client already sets. A null client, or a test double that returns no copy, is
+   * returned unchanged.
+   */
+  private static @Nullable AnthropicClient withTrackingHeaders(@Nullable AnthropicClient client) {
+    if (client == null) {
+      return null;
+    }
+    AnthropicClient tracked =
+        client.withOptions(
+            options -> {
+              Headers configured = options.build().headers();
+              Map<String, String> current = new HashMap<>();
+              // Start from the SDK's default User-Agent, which it adds only when none is set.
+              current.put(
+                  "user-agent",
+                  client.getClass().getSimpleName() + "/Java " + Properties.getPackageVersion());
+              for (String name : TrackingHeaders.HEADERS.keySet()) {
+                List<String> values = configured.values(name);
+                if (!values.isEmpty()) {
+                  current.put(name, String.join(" ", values));
+                }
+              }
+              TrackingHeaders.mergeInto(current).forEach(options::replaceHeaders);
+            });
+    return tracked != null ? tracked : client;
   }
 
   @Override
@@ -104,6 +143,8 @@ public class Claude extends BaseLlm {
     List<MessageParam> messages =
         llmRequest.contents().stream()
             .map(this::contentToAnthropicMessageParam)
+            // Anthropic rejects empty messages, e.g. a turn whose parts were all dropped.
+            .filter(message -> !message.content().asBlockParams().isEmpty())
             .collect(Collectors.toList());
 
     List<ToolUnion> tools = ImmutableList.of();
@@ -163,20 +204,85 @@ public class Claude extends BaseLlm {
   }
 
   private MessageParam contentToAnthropicMessageParam(Content content) {
-    return MessageParam.builder()
-        .role(toClaudeRole(content.role().orElse("")))
-        .contentOfBlockParams(
-            content.parts().orElse(ImmutableList.of()).stream()
-                .map(this::partToAnthropicMessageBlock)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList()))
-        .build();
+    Role role = toClaudeRole(content.role().orElse(""));
+    List<Part> parts = content.parts().orElse(ImmutableList.of());
+    List<ContentBlockParam> blocks =
+        parts.stream()
+            .map(this::partToAnthropicMessageBlock)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+    // Keep a user turn of only empty text as ".", or a last assistant turn would be prefill.
+    if (blocks.isEmpty()
+        && role.equals(Role.USER)
+        && parts.stream().anyMatch(Claude::isEmptyTextPart)) {
+      blocks =
+          ImmutableList.of(ContentBlockParam.ofText(TextBlockParam.builder().text(".").build()));
+    }
+    return MessageParam.builder().role(role).contentOfBlockParams(blocks).build();
   }
 
-  private ContentBlockParam partToAnthropicMessageBlock(Part part) {
-    if (part.text().isPresent()) {
-      return ContentBlockParam.ofText(TextBlockParam.builder().text(part.text().get()).build());
-    } else if (part.functionCall().isPresent()) {
+  /** Whether a part has any of the fields ADK Python counts as content. */
+  private static boolean hasContentFields(Part part) {
+    return part.functionCall().isPresent()
+        || part.functionResponse().isPresent()
+        || part.inlineData().isPresent()
+        || part.fileData().isPresent()
+        || part.executableCode().isPresent()
+        || part.codeExecutionResult().isPresent()
+        || part.toolCall().isPresent()
+        || part.toolResponse().isPresent()
+        || part.audioTranscription().isPresent();
+  }
+
+  /** Whether a non-thought part carries a signature and nothing to send, as in ADK Python. */
+  private static boolean isContentFreeSignature(Part part) {
+    return part.thoughtSignature().map(signature -> signature.length > 0).orElse(false)
+        && !part.thought().orElse(false)
+        && part.text().map(String::isEmpty).orElse(true)
+        && !hasContentFields(part);
+  }
+
+  /** Whether a part carries only empty text, which Anthropic rejects; mirrors ADK Python. */
+  private static boolean isEmptyTextPart(Part part) {
+    return part.text().map(String::isEmpty).orElse(false)
+        && part.thoughtSignature().map(signature -> signature.length == 0).orElse(true)
+        && !hasContentFields(part);
+  }
+
+  private @Nullable ContentBlockParam partToAnthropicMessageBlock(Part part) {
+    if (isContentFreeSignature(part)) {
+      logger.warn("Dropping a thought signature from another model.");
+      return null;
+    }
+    if (isEmptyTextPart(part)) {
+      return null;
+    }
+    if (part.thought().orElse(false)
+        && part.functionCall().isEmpty()
+        && part.functionResponse().isEmpty()) {
+      // Signatures this class stores are UTF-8; a binary one (e.g. Gemini's) is not Claude's.
+      Optional<String> signature =
+          part.thoughtSignature()
+              .filter(bytes -> bytes.length > 0 && Utf8.isWellFormed(bytes))
+              .map(bytes -> new String(bytes, UTF_8));
+      if (signature.isPresent()) {
+        // Unlike ADK Python, empty text (display "omitted") stays thinking, not redacted_thinking.
+        return part.text().isPresent()
+            ? ContentBlockParam.ofThinking(
+                ThinkingBlockParam.builder()
+                    .thinking(part.text().get())
+                    .signature(signature.get())
+                    .build())
+            : ContentBlockParam.ofRedactedThinking(
+                RedactedThinkingBlockParam.builder().data(signature.get()).build());
+      }
+      // Other thoughts go out as text (ADK Python sends thinking), or are dropped without text.
+      if (part.text().map(String::isEmpty).orElse(true)) {
+        return null;
+      }
+    }
+    // Unlike ADK Python, a call or response is always sent, even on a thought or beside text.
+    if (part.functionCall().isPresent()) {
       return ContentBlockParam.ofToolUse(
           ToolUseBlockParam.builder()
               .id(part.functionCall().get().id().orElse(""))
@@ -205,6 +311,8 @@ public class Claude extends BaseLlm {
               .content(content)
               .isError(false)
               .build());
+    } else if (part.text().isPresent()) {
+      return ContentBlockParam.ofText(TextBlockParam.builder().text(part.text().get()).build());
     }
     throw new UnsupportedOperationException("Not supported yet.");
   }
@@ -386,6 +494,19 @@ public class Claude extends BaseLlm {
                           ._input()
                           .convert(new TypeReference<Map<String, Object>>() {}))
                   .build())
+          .build();
+    } else if (block.isThinking()) {
+      ThinkingBlock thinking = block.asThinking();
+      Part.Builder part = Part.builder().text(thinking.thinking()).thought(true);
+      if (!thinking.signature().isEmpty()) {
+        part.thoughtSignature(thinking.signature().getBytes(UTF_8));
+      }
+      return part.build();
+    } else if (block.isRedactedThinking()) {
+      // Keep the encrypted data in thoughtSignature so the block can be sent back unchanged.
+      return Part.builder()
+          .thought(true)
+          .thoughtSignature(block.asRedactedThinking().data().getBytes(UTF_8))
           .build();
     }
     throw new UnsupportedOperationException("Not supported yet.");

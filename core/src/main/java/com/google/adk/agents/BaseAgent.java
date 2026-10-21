@@ -33,6 +33,7 @@ import com.google.adk.telemetry.Instrumentation.AgentInvocation;
 import com.google.adk.telemetry.Tracing;
 import com.google.adk.utils.AgentEnums.AgentOrigin;
 import com.google.adk.workflow.BaseNode;
+import com.google.adk.workflow.NodeExecutionState;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.DoNotCall;
@@ -269,16 +270,21 @@ public abstract class BaseAgent extends BaseNode {
    * instance.
    *
    * @param parentContext Parent context to copy.
-   * @return new context with updated branch name.
+   * @param keepBranch Whether to keep the parent's branch instead of appending this agent's name.
+   * @return the new context for this agent.
    */
-  private InvocationContext createInvocationContext(InvocationContext parentContext) {
+  private InvocationContext createInvocationContext(
+      InvocationContext parentContext, boolean keepBranch) {
     InvocationContext.Builder builder = parentContext.toBuilder();
-    builder.agent(this);
-    // Check for branch to be truthy (not None, not empty string),
-    parentContext
-        .branch()
-        .filter(s -> !s.isEmpty())
-        .ifPresent(branch -> builder.branch(branch + "." + name()));
+    // An agent's context runs that agent, not the node that its parent context ran.
+    builder.agent(this).node(null);
+    if (!keepBranch) {
+      // Check for branch to be truthy (not None, not empty string),
+      parentContext
+          .branch()
+          .filter(s -> !s.isEmpty())
+          .ifPresent(branch -> builder.branch(branch + "." + name()));
+    }
     return builder.build();
   }
 
@@ -289,24 +295,26 @@ public abstract class BaseAgent extends BaseNode {
    * @return stream of agent-generated events.
    */
   public Flowable<Event> runAsync(InvocationContext parentContext) {
-    return runWithCallbacks(parentContext, this::runAsyncImpl);
+    return runWithCallbacks(parentContext, /* keepBranch= */ false, this::runAsyncImpl);
   }
 
   /**
    * Runs the agent with the given implementation.
    *
    * @param parentContext Parent context to inherit.
+   * @param keepBranch Whether to keep the parent's branch instead of appending this agent's name.
    * @param runImplementation The agent-specific logic to run.
    * @return stream of agent-generated events.
    */
   private Flowable<Event> runWithCallbacks(
       InvocationContext parentContext,
+      boolean keepBranch,
       Function<InvocationContext, Flowable<Event>> runImplementation) {
     return Flowable.using(
         () -> {
           Context otelContext = Context.current();
           return Instrumentation.recordAgentInvocation(
-              createInvocationContext(parentContext), this, otelContext);
+              createInvocationContext(parentContext, keepBranch), this, otelContext);
         },
         agentInvocation -> {
           InvocationContext invocationContext = agentInvocation.getCtx();
@@ -445,7 +453,7 @@ public abstract class BaseAgent extends BaseNode {
    * @return stream of agent-generated events.
    */
   public Flowable<Event> runLive(InvocationContext parentContext) {
-    return runWithCallbacks(parentContext, this::runLiveImpl);
+    return runWithCallbacks(parentContext, /* keepBranch= */ false, this::runLiveImpl);
   }
 
   /**
@@ -488,14 +496,26 @@ public abstract class BaseAgent extends BaseNode {
   }
 
   /**
-   * Runs this agent as a workflow node through its {@link #runAsync} lifecycle, including its
-   * callbacks. The node input is not used.
+   * Runs this agent as a workflow node, on the node's branch so the nodes after it see its events.
+   * It runs the callbacks and {@link #runAsyncImpl} that {@link #runAsync} runs, but does not call
+   * an override of {@link #runAsync}. The node input is not used, and each event's author is copied
+   * into the node state so that the agent's events keep their own authors instead of an inherited
+   * author or the node's name.
+   *
+   * @throws IllegalStateException if {@code context} is not the context of a workflow node.
    */
   @Experimental
   @Override
   public Flowable<Event> runNode(
       com.google.adk.agents.Context context, @Nullable Object nodeInput) {
-    return runAsync(context.invocationContext());
+    NodeExecutionState nodeState = context.requireNodeState();
+    return runWithCallbacks(context.invocationContext(), /* keepBranch= */ true, this::runAsyncImpl)
+        .doOnNext(
+            event -> {
+              if (!isNullOrEmpty(event.author())) {
+                nodeState.eventAuthor(event.author());
+              }
+            });
   }
 
   /**

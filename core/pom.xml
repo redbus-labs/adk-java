@@ -20,7 +20,7 @@
   <parent>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk-parent</artifactId>
-    <version>1.11.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+    <version>1.12.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
   </parent>
 
   <artifactId>google-adk</artifactId>
@@ -30,7 +30,7 @@
   <properties>
     <!-- Load mockito-core as a startup -javaagent so the inline mock maker does not rely on
          runtime self-attachment, which newer JDKs block. -->
-    <mockito.javaagent.arg>-javaagent:${org.mockito:mockito-core:jar}</mockito.javaagent.arg>
+    <mockito.javaagent.arg>"-javaagent:${org.mockito:mockito-core:jar}"</mockito.javaagent.arg>
   </properties>
 
   <dependencies>
@@ -405,11 +405,25 @@
               <goal>test</goal>
             </goals>
             <configuration>
-              <test>ApigeeLlmTest#build_withoutProxyUrl_readsFromEnvironment</test>
+              <test>ApigeeLlmTest#build_withoutProxyUrlAndEnvVarSet_readsFromEnvironment</test>
               <environmentVariables>
                 <GOOGLE_API_KEY>api-key</GOOGLE_API_KEY>
                 <!-- runs a second variant of the test method -->
                 <APIGEE_PROXY_URL>proxy-url</APIGEE_PROXY_URL>
+              </environmentVariables>
+            </configuration>
+          </execution>
+          <execution>
+            <id>gemini-tracking-headers</id>
+            <goals>
+              <goal>test</goal>
+            </goals>
+            <configuration>
+              <test>GeminiTrackingHeadersTest#generateContent_adkBuiltRegistryClient_sendsTrackingHeaders, GeminiTrackingHeadersTest#generateContent_adkBuiltVertexCredentialsClient_sendsTrackingHeaders</test>
+              <!-- these tests read the API key from the environment -->
+              <environmentVariables>
+                <GOOGLE_API_KEY>api-key</GOOGLE_API_KEY>
+                <GOOGLE_GENAI_USE_VERTEXAI>false</GOOGLE_GENAI_USE_VERTEXAI>
               </environmentVariables>
             </configuration>
           </execution>

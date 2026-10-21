@@ -310,7 +310,7 @@ public final class VertexAiSessionService implements BaseSessionService {
               if (!userId.equals(ownerUserId)) {
                 return Completable.error(
                     new SecurityException(
-                        "Session " + sessionId + " does not belong to user " + userId + "."));
+                        "The requested session does not belong to the requesting user."));
               }
               return client.deleteSession(reasoningEngineId, sessionId);
             });
@@ -345,9 +345,7 @@ public final class VertexAiSessionService implements BaseSessionService {
 
     if (!matcher.matches()) {
       throw new IllegalArgumentException(
-          "App name "
-              + appName
-              + " is not valid. It should either be the full"
+          "The app name is not valid. It should either be the full"
               + " ReasoningEngine resource name, or the reasoning engine id.");
     }
 
@@ -363,11 +361,7 @@ public final class VertexAiSessionService implements BaseSessionService {
   static void validateSessionId(String sessionId) {
     if (sessionId == null || !SESSION_ID_PATTERN.matcher(sessionId).matches()) {
       throw new IllegalArgumentException(
-          "Invalid session id: "
-              + sessionId
-              + ". It must match "
-              + SESSION_ID_PATTERN.pattern()
-              + ".");
+          "Invalid session id. It must match " + SESSION_ID_PATTERN.pattern() + ".");
     }
   }
 

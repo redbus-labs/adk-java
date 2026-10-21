@@ -32,18 +32,13 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * With {@code adk.web.backend-url} set, the entry redirect carries the gateway's path prefix on its
  * own, so a deployment behind a path-stripping proxy needs nothing forwarded from the proxy. The
- * property governs the path only: host and scheme still come from forwarded headers wherever the
- * operator has enabled {@code server.forward-headers-strategy}.
+ * property governs the path only: host and scheme still come from forwarded headers unless the
+ * operator sets {@code server.forward-headers-strategy=none}.
  */
 public class BackendUrlRedirectTest {
 
   @Nested
-  @SpringBootTest(
-      properties = {
-        "adk.web.backend-url=https://gw.example.com/my-app",
-        // Enable ForwardedHeaderFilter so X-Forwarded-* headers reach the servlet request.
-        "server.forward-headers-strategy=framework"
-      })
+  @SpringBootTest(properties = "adk.web.backend-url=https://gw.example.com/my-app")
   @AutoConfigureMockMvc
   class ConfiguredWithTheFilter {
 
@@ -83,14 +78,17 @@ public class BackendUrlRedirectTest {
   }
 
   @Nested
-  @SpringBootTest(properties = "adk.web.backend-url=https://gw.example.com/my-app")
+  @SpringBootTest(
+      properties = {
+        "adk.web.backend-url=https://gw.example.com/my-app",
+        "server.forward-headers-strategy=none"
+      })
   @AutoConfigureMockMvc
   class ConfiguredWithoutTheFilter {
 
     @Test
-    public void devUiEntryPoint_forwardedHeaders_reachNothingUnderTheShippedStrategy(
+    public void devUiEntryPoint_forwardedHeaders_reachNothingWithTheFilterOff(
         @Autowired MockMvc mockMvc) throws Exception {
-      // With forward-headers-strategy unset (default), forwarded headers are ignored.
       mockMvc
           .perform(
               get("/")
@@ -137,7 +135,7 @@ public class BackendUrlRedirectTest {
   }
 
   @Nested
-  @SpringBootTest
+  @SpringBootTest(properties = "server.forward-headers-strategy=none")
   @AutoConfigureMockMvc
   class UnconfiguredWithoutTheFilter {
 
@@ -155,7 +153,6 @@ public class BackendUrlRedirectTest {
     @ValueSource(strings = {"/", "/dev-ui"})
     public void devUiEntryPoints_withForwardedHeaders_shouldStillRedirectWithoutAPrefix(
         String path, @Autowired MockMvc mockMvc) throws Exception {
-      // By default forward-headers-strategy is unset, so forwarded headers are ignored.
       mockMvc
           .perform(
               get(path)

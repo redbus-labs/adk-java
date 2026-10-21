@@ -25,6 +25,7 @@ import com.google.adk.events.Event;
 import com.google.adk.telemetry.Metrics;
 import com.google.adk.testing.TestBaseAgent;
 import com.google.adk.testing.TestCallback;
+import com.google.adk.testing.TestNode;
 import com.google.adk.testing.TestUtils;
 import com.google.adk.workflow.Node;
 import com.google.common.collect.ImmutableList;
@@ -408,31 +409,18 @@ public final class BaseAgentTest {
   }
 
   @Test
-  public void runNode_runsAgentWithItsCallbacks() {
-    var runAsyncImpl = TestCallback.<Void>returningEmpty();
-    Content runAsyncImplContent = Content.fromParts(Part.fromText("main_output"));
-    Content afterCallbackContent = Content.fromParts(Part.fromText("after_callback_output"));
-    var beforeCallback = TestCallback.<Content>returningEmpty();
-    var afterCallback = TestCallback.returning(afterCallbackContent);
-    TestBaseAgent agent =
-        new TestBaseAgent(
-            TEST_AGENT_NAME,
-            TEST_AGENT_DESCRIPTION,
-            ImmutableList.of(beforeCallback.asBeforeAgentCallback()),
-            ImmutableList.of(afterCallback.asAfterAgentCallback()),
-            runAsyncImpl.asRunAsyncImplSupplier(runAsyncImplContent));
-    Context context =
-        new CallbackContext(TestUtils.createInvocationContext(agent), /* eventActions= */ null);
-    Node node = agent;
+  public void runAsync_underAnInvocationOfANode_runsWithoutTheNode() {
+    TestBaseAgent agent = TestUtils.createSubAgent(TEST_AGENT_NAME);
+    Node node = TestNode.of("root");
+    InvocationContext parentContext =
+        TestUtils.createInvocationContext(agent).toBuilder()
+            .agent(new NodeViewAgent(node))
+            .node(node)
+            .build();
 
-    List<Event> results =
-        node.runNode(context, /* nodeInput= */ "unused").cast(Event.class).toList().blockingGet();
+    agent.runAsync(parentContext).blockingSubscribe();
 
-    assertThat(results).hasSize(2);
-    assertThat(results.get(0).content()).hasValue(runAsyncImplContent);
-    assertThat(results.get(1).content()).hasValue(afterCallbackContent);
-    assertThat(beforeCallback.wasCalled()).isTrue();
-    assertThat(runAsyncImpl.wasCalled()).isTrue();
+    assertThat(agent.getLastInvocationContext().node()).isEmpty();
   }
 
   @Test
@@ -478,6 +466,26 @@ public final class BaseAgentTest {
     assertThat(results).hasSize(1);
     assertThat(results.get(0).content()).hasValue(runLiveImplContent);
     assertThat(runLiveCallback.wasCalled()).isTrue();
+  }
+
+  @Test
+  public void runNode_withoutANodeContext_throwsBeforeRunningTheAgent() {
+    var beforeCallback = TestCallback.<Content>returningEmpty();
+    var runAsyncImpl = TestCallback.<Void>returningEmpty();
+    TestBaseAgent agent =
+        new TestBaseAgent(
+            TEST_AGENT_NAME,
+            TEST_AGENT_DESCRIPTION,
+            ImmutableList.of(beforeCallback.asBeforeAgentCallback()),
+            /* afterAgentCallbacks= */ ImmutableList.of(),
+            runAsyncImpl.asRunAsyncImplSupplier(Content.fromParts(Part.fromText("main_output"))));
+    CallbackContext context =
+        new CallbackContext(TestUtils.createInvocationContext(agent), /* eventActions= */ null);
+
+    assertThrows(IllegalStateException.class, () -> agent.runNode(context, /* nodeInput= */ null));
+
+    assertThat(beforeCallback.wasCalled()).isFalse();
+    assertThat(runAsyncImpl.wasCalled()).isFalse();
   }
 
   @Test
