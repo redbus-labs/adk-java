@@ -42,6 +42,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 /**
  * Tests for the browser origins allowed to call the REST API and open the {@code /run_live}
@@ -61,17 +62,21 @@ final class AdkWebServerCorsTest {
     @ValueSource(strings = {REMOTE_ORIGIN, "http://localhost:4200"})
     public void restApi_fromOtherOrigin_isRejected(String origin, @Autowired MockMvc mockMvc)
         throws Exception {
+      // The DNS-rebinding guard does not apply to requests over the network, so CORS decides.
       mockMvc
-          .perform(get("/list-apps").header(ORIGIN, origin))
+          .perform(get("/list-apps").header(ORIGIN, origin).with(overNetwork()))
           .andExpect(status().isForbidden())
           .andExpect(header().doesNotExist(ACCESS_CONTROL_ALLOW_ORIGIN));
     }
 
     @Test
     public void restApi_fromSameOrigin_isAllowed(@Autowired MockMvc mockMvc) throws Exception {
-      // Same-origin requests skip the origin list, so the bundled UI works from any host name.
+      // Same-origin requests skip the origin list, so any host name on the network works.
       mockMvc
-          .perform(get("http://devbox:8000/list-apps").header(ORIGIN, "http://devbox:8000"))
+          .perform(
+              get("http://devbox:8000/list-apps")
+                  .header(ORIGIN, "http://devbox:8000")
+                  .with(overNetwork()))
           .andExpect(status().isOk());
     }
 
@@ -82,7 +87,8 @@ final class AdkWebServerCorsTest {
           .perform(
               get("http://app.example.com/list-apps")
                   .header("X-Forwarded-Proto", "https")
-                  .header(ORIGIN, "https://app.example.com"))
+                  .header(ORIGIN, "https://app.example.com")
+                  .with(overNetwork()))
           .andExpect(status().isOk());
     }
 
@@ -93,7 +99,8 @@ final class AdkWebServerCorsTest {
           .perform(
               get("http://app.example.com/list-apps")
                   .header("X-Forwarded-Proto", "https")
-                  .header(ORIGIN, REMOTE_ORIGIN))
+                  .header(ORIGIN, REMOTE_ORIGIN)
+                  .with(overNetwork()))
           .andExpect(status().isForbidden());
     }
 
@@ -105,7 +112,8 @@ final class AdkWebServerCorsTest {
           .perform(
               get("http://app.example.com/list-apps")
                   .header("X-Forwarded-Proto", "https")
-                  .header(ORIGIN, "http://app.example.com"))
+                  .header(ORIGIN, "http://app.example.com")
+                  .with(overNetwork()))
           .andExpect(status().isForbidden());
     }
 
@@ -115,7 +123,8 @@ final class AdkWebServerCorsTest {
           .perform(
               options("/apps/test-app/users/test-user/sessions/test-session")
                   .header(ORIGIN, REMOTE_ORIGIN)
-                  .header(ACCESS_CONTROL_REQUEST_METHOD, "DELETE"))
+                  .header(ACCESS_CONTROL_REQUEST_METHOD, "DELETE")
+                  .with(overNetwork()))
           .andExpect(status().isForbidden())
           .andExpect(header().doesNotExist(ACCESS_CONTROL_ALLOW_ORIGIN));
     }
@@ -133,12 +142,13 @@ final class AdkWebServerCorsTest {
 
     @Test
     public void runLive_behindTlsProxy_completesHandshake(@LocalServerPort int port) {
+      // A same-machine TLS proxy at https://127.0.0.1; only forwarded headers make this match.
       WebSocket.Builder handshake =
           httpClient
               .newWebSocketBuilder()
-              .header(ORIGIN, "https://app.example.com")
+              .header(ORIGIN, "https://127.0.0.1")
               .header("X-Forwarded-Proto", "https")
-              .header("X-Forwarded-Host", "app.example.com");
+              .header("X-Forwarded-Host", "127.0.0.1");
 
       connect(port, handshake).abort();
     }
@@ -150,6 +160,20 @@ final class AdkWebServerCorsTest {
               .newWebSocketBuilder()
               .header(ORIGIN, "http://localhost:" + port)
               .header("X-Forwarded-Proto", "https");
+
+      assertHandshakeForbidden(port, handshake);
+    }
+
+    @Test
+    public void runLive_reboundOriginBehindHostRewritingProxy_isRejected(
+        @LocalServerPort int port) {
+      // A rebound page reaching a same-machine proxy that forwards the page's own host.
+      WebSocket.Builder handshake =
+          httpClient
+              .newWebSocketBuilder()
+              .header(ORIGIN, "https://evil.example")
+              .header("X-Forwarded-Proto", "https")
+              .header("X-Forwarded-Host", "evil.example");
 
       assertHandshakeForbidden(port, handshake);
     }
@@ -166,12 +190,13 @@ final class AdkWebServerCorsTest {
           .perform(
               get("http://app.example.com/list-apps")
                   .header("X-Forwarded-Proto", "https")
-                  .header(ORIGIN, "https://app.example.com"))
+                  .header(ORIGIN, "https://app.example.com")
+                  .with(overNetwork()))
           .andExpect(status().isForbidden());
     }
   }
 
-  /** With the CORS filter mapped away from /run_live, only the handshake's origin check runs. */
+  /** With the CORS filter mapped away from /run_live, the handshake's own origin check decides. */
   @Nested
   @SpringBootTest(
       webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -184,8 +209,9 @@ final class AdkWebServerCorsTest {
     }
 
     @Test
-    public void runLive_fromRemoteOrigin_isRejected(@LocalServerPort int port) {
-      assertHandshakeForbidden(port, REMOTE_ORIGIN);
+    public void runLive_fromOtherLocalPort_isRejected(@LocalServerPort int port) {
+      // A loopback origin passes the DNS-rebinding guard, so only the handshake check refuses it.
+      assertHandshakeForbidden(port, "http://localhost:4200");
     }
   }
 
@@ -211,7 +237,8 @@ final class AdkWebServerCorsTest {
           .perform(
               get("http://app.example.com/list-apps")
                   .header("X-Forwarded-Proto", "https")
-                  .header(ORIGIN, "https://app.example.com"))
+                  .header(ORIGIN, "https://app.example.com")
+                  .with(overNetwork()))
           .andExpect(status().isOk());
     }
 
@@ -222,7 +249,8 @@ final class AdkWebServerCorsTest {
 
     @Test
     public void runLive_fromUnlistedOrigin_isRejected(@LocalServerPort int port) {
-      assertHandshakeForbidden(port, REMOTE_ORIGIN);
+      // A loopback origin passes the DNS-rebinding guard, so the configured list must refuse it.
+      assertHandshakeForbidden(port, "http://localhost:4200");
     }
   }
 
@@ -245,6 +273,14 @@ final class AdkWebServerCorsTest {
     public void runLive_fromRemoteOrigin_completesHandshake(@LocalServerPort int port) {
       openRunLive(port, REMOTE_ORIGIN).abort();
     }
+  }
+
+  /** Delivers a MockMvc request on a routable address, as a LAN host or remote proxy does. */
+  private static RequestPostProcessor overNetwork() {
+    return request -> {
+      request.setLocalAddr("10.0.0.5");
+      return request;
+    };
   }
 
   private static WebSocket openRunLive(int port, String origin) {

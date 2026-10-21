@@ -20,6 +20,7 @@ import jakarta.servlet.DispatcherType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.server.autoconfigure.servlet.ForwardedHeaderFilterCustomizer;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -48,6 +49,7 @@ import org.springframework.web.filter.ForwardedHeaderFilter;
  *   <li>{@link CorsFilter}: Applies the CORS configuration to incoming requests.
  *   <li>{@link ForwardedHeaderFilter}: Applies reverse proxy headers to the URL of every request,
  *       so the same-origin checks see the URL the browser used.
+ *   <li>{@code OriginGuardFilter}: Rejects requests from pages rebound onto this machine by DNS.
  * </ul>
  */
 @Configuration
@@ -82,6 +84,12 @@ public class AdkWebCorsConfig {
   @Bean
   public CorsFilter corsFilter(CorsConfigurationSource corsConfigurationSource) {
     return new CorsFilter(corsConfigurationSource);
+  }
+
+  @Bean
+  OriginGuardFilter originGuardFilter(
+      AdkWebCorsProperties corsProperties, @Value("${server.address:}") String serverAddress) {
+    return new OriginGuardFilter(corsProperties.origins(), serverAddress);
   }
 
   /**

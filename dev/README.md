@@ -59,9 +59,21 @@ adk.web.cors.origins=http://localhost:4200
 ```
 
 Behind a reverse proxy, the same-origin check uses the URL that the proxy
-reports in forwarded headers, so the dev UI keeps working behind a proxy that
-terminates TLS. A proxy on a non-default port must include the port in its
-forwarded headers. List the external origin in `adk.web.cors.origins` if the
-proxy does not report the external URL, or if it reports `ws` or `wss` as the
-scheme of WebSocket requests (as Traefik does). Avoid `*`: it lets any website
-open in your browser call the server.
+reports in forwarded headers, so the dev UI keeps working behind a proxy on
+another machine that terminates TLS. A proxy on a non-default port must include
+the port in its forwarded headers. List the external origin in
+`adk.web.cors.origins` if the proxy does not report the external URL, or if it
+reports `ws` or `wss` as the scheme of WebSocket requests (as Traefik does).
+Avoid `*`: it lets any website open in your browser call the server.
+
+### DNS rebinding
+
+The server also blocks pages that resolve their own domain to this machine. When
+`server.address` is a loopback address (the default for `mvn google-adk:web`),
+it rejects a non-loopback `Host`. On a request that arrives over loopback, it
+rejects a non-loopback `Origin`. Origins in `adk.web.cors.origins`, and their
+hosts, are exempt. A UI reached over loopback under another name, through a
+same-machine proxy or a hosts-file alias, therefore needs its origin listed. `*`
+turns both checks off. `AdkWebServer.start()` and `main()` do not set
+`server.address`, so set `server.address=127.0.0.1` there to turn on the `Host`
+check.

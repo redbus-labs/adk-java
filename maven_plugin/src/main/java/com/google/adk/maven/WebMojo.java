@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -82,8 +83,8 @@ import org.springframework.context.ConfigurableApplicationContext;
  *
  * <h2>Web Interface</h2>
  *
- * <p>Once started, ADK Web UI is available at {@code http://host:port} where users can interact
- * with available agents.
+ * <p>Once started, ADK Web UI is available at {@code http://host:port}, or at {@code
+ * http://localhost:port} for a loopback or wildcard host.
  *
  * @author Google ADK Team
  */
@@ -255,7 +256,7 @@ public class WebMojo extends AbstractMojo {
       applicationContext = app.run(new String[0]);
 
       getLog().info("🎉 ADK Web Server started successfully!");
-      getLog().info("🌐 Web UI available at: http://" + host + ":" + port);
+      getLog().info("🌐 Web UI available at: http://" + displayHost(host) + ":" + port);
       getLog().info("⏹️  Press Ctrl+C to stop the server...");
       getLog().info("");
 
@@ -548,5 +549,13 @@ public class WebMojo extends AbstractMojo {
     } catch (Exception e) {
       getLog().warn("Error clearing system properties", e);
     }
+  }
+
+  /**
+   * Returns localhost for loopback and wildcard hosts, like ADK Go: the server rejects Origin
+   * http://0.0.0.0 over loopback, and http://::1:8000 is not a valid URL.
+   */
+  private static String displayHost(String host) {
+    return Set.of("127.0.0.1", "::1", "0.0.0.0", "::").contains(host) ? "localhost" : host;
   }
 }

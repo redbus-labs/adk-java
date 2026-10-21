@@ -257,7 +257,7 @@ instruction: |
 Once the server starts, open your browser to:
 - Default: http://localhost:8000
 - Custom port: http://localhost:{port}
-- External access: http://0.0.0.0:{port} (if using -Dhost=0.0.0.0)
+- With -Dhost=0.0.0.0: http://localhost:{port}, or the machine's address
 
 The web UI provides:
 - Interactive chat interface with your agents
