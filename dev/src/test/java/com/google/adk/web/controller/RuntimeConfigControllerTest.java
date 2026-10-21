@@ -41,12 +41,7 @@ public class RuntimeConfigControllerTest {
   private static final String CONFIG = "/dev-ui/assets/config/runtime-config.json";
 
   @Nested
-  @SpringBootTest(
-      properties = {
-        "adk.web.backend-url=https://gw.example.com/my-app",
-        // Enable ForwardedHeaderFilter so X-Forwarded-* headers reach the servlet request.
-        "server.forward-headers-strategy=framework"
-      })
+  @SpringBootTest(properties = "adk.web.backend-url=https://gw.example.com/my-app")
   @AutoConfigureMockMvc
   class ConfiguredWithTheFilter {
 
@@ -92,7 +87,7 @@ public class RuntimeConfigControllerTest {
   }
 
   @Nested
-  @SpringBootTest
+  @SpringBootTest(properties = "server.forward-headers-strategy=none")
   @AutoConfigureMockMvc
   class UnconfiguredWithoutTheFilter {
 
@@ -111,7 +106,7 @@ public class RuntimeConfigControllerTest {
   }
 
   @Nested
-  @SpringBootTest(properties = "server.forward-headers-strategy=framework")
+  @SpringBootTest
   @AutoConfigureMockMvc
   class UnconfiguredWithTheFilter {
 

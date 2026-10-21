@@ -29,12 +29,12 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Verifies that when {@code adk.web.backend-url} is unset and {@code
- * server.forward-headers-strategy=framework} is enabled, Spring's {@code ForwardedHeaderFilter}
- * applies {@code Forwarded} and {@code X-Forwarded-*} headers to the entry redirects. When {@code
- * adk.web.backend-url} is set, its path prefix takes precedence over {@code X-Forwarded-Prefix}.
+ * Verifies that when {@code adk.web.backend-url} is unset, Spring's {@code ForwardedHeaderFilter},
+ * on by default, applies {@code Forwarded} and {@code X-Forwarded-*} headers to the entry
+ * redirects. When {@code adk.web.backend-url} is set, its path prefix takes precedence over {@code
+ * X-Forwarded-Prefix}.
  */
-@SpringBootTest(properties = "server.forward-headers-strategy=framework")
+@SpringBootTest
 @AutoConfigureMockMvc
 final class AdkWebServerProxyRedirectTest {
 

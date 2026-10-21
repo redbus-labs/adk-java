@@ -35,7 +35,33 @@ a relative path like `/my-app` cannot be used. If the application also sets
 instead of prepending the context path or `X-Forwarded-Prefix`.
 
 When `adk.web.backend-url` is unset, `/` and `/dev-ui` redirect to `/dev-ui/`
-and the bundled `backendUrl` value is preserved. If you instead enable
-`server.forward-headers-strategy=framework`, make sure your reverse proxy strips
-or overwrites incoming `Forwarded` and `X-Forwarded-*` headers from untrusted
-clients.
+and the bundled `backendUrl` value is preserved.
+
+The server applies `Forwarded` and `X-Forwarded-*` headers to the request URL by
+default, as with `server.forward-headers-strategy=framework`. Make sure your
+reverse proxy strips or overwrites these headers from untrusted clients. Set
+`server.forward-headers-strategy=none` to ignore them, or `native` to let the
+web server handle them instead. Behind a proxy that terminates TLS, keep them
+on: with `none`, a page served over plain HTTP under the same host name passes
+the same-origin check.
+
+## Cross-origin requests
+
+By default, the REST API and the `/run_live` WebSocket accept only same-origin
+requests. The dev UI served by the server itself is same-origin and needs no
+configuration.
+
+To allow other origins, for example a UI served by a separate development
+server, set `adk.web.cors.origins` to a comma-separated list of origins:
+
+```properties
+adk.web.cors.origins=http://localhost:4200
+```
+
+Behind a reverse proxy, the same-origin check uses the URL that the proxy
+reports in forwarded headers, so the dev UI keeps working behind a proxy that
+terminates TLS. A proxy on a non-default port must include the port in its
+forwarded headers. List the external origin in `adk.web.cors.origins` if the
+proxy does not report the external URL, or if it reports `ws` or `wss` as the
+scheme of WebSocket requests (as Traefik does). Avoid `*`: it lets any website
+open in your browser call the server.
