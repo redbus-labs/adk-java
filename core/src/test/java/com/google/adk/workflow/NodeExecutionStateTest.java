@@ -27,7 +27,7 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public final class NodeExecutionStateTest {
 
-  private static final NodeRunner.EventSink SINK = event -> Completable.complete();
+  private static final NodeRunner.EventSink SINK = (event, nodeFailure) -> Completable.complete();
 
   @Test
   public void build_withoutANode_throwsIllegalStateException() {

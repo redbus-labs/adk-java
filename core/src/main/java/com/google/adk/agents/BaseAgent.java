@@ -276,7 +276,8 @@ public abstract class BaseAgent extends BaseNode {
   private InvocationContext createInvocationContext(
       InvocationContext parentContext, boolean keepBranch) {
     InvocationContext.Builder builder = parentContext.toBuilder();
-    builder.agent(this);
+    // An agent's context runs that agent, not the node that its parent context ran.
+    builder.agent(this).node(null);
     if (!keepBranch) {
       // Check for branch to be truthy (not None, not empty string),
       parentContext

@@ -32,16 +32,23 @@ import com.google.genai.types.FinishReason;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.processors.FlowableProcessor;
+import io.reactivex.rxjava3.processors.UnicastProcessor;
+import io.reactivex.rxjava3.subjects.CompletableSubject;
 import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
 /**
  * The runner for one workflow node. It stamps every emitted event with its author, node path, and
  * branch before forwarding it, and records the node's output, routes, interrupts, and failure on
- * the node state of the returned context.
+ * the node state of the returned context. {@link #runRoot} runs a node as the root of an
+ * invocation.
  */
 @Experimental
-final class NodeRunner {
+public final class NodeRunner {
 
   /** Sink that receives the events of a workflow run. */
   @Experimental
@@ -49,10 +56,11 @@ final class NodeRunner {
 
     /**
      * Sends {@code event} and returns a {@link Completable} that completes once the event is
-     * processed. The Completable must not fail; a consumer that cannot process an event stops the
-     * run by canceling it.
+     * processed. When {@code nodeFailure} is not null, {@code event} is the error event of a node
+     * that failed with {@code nodeFailure}. The Completable must not fail; a consumer that cannot
+     * process an event stops the run by canceling it.
      */
-    Completable send(Event event);
+    Completable send(Event event, @Nullable Exception nodeFailure);
   }
 
   private final Node node;
@@ -88,6 +96,77 @@ final class NodeRunner {
   /** Returns a builder for a runner of one node. */
   static Builder builder() {
     return new Builder();
+  }
+
+  /**
+   * Runs {@code node} as the root of {@code context} on the invocation's user content, passing each
+   * event through {@code processEvent} in order; only {@link com.google.adk.runner.Runner} should
+   * call this method. The node is asked for its next event, and its failure is signaled, only after
+   * the previous non-partial event is processed and emitted, so a failure follows the error event
+   * that reports it. If processing an event fails with an exception, the failures reported by
+   * unprocessed error events are attached to it as suppressed.
+   */
+  @Experimental
+  public static Flowable<Event> runRoot(
+      Node node,
+      InvocationContext context,
+      Function<? super Event, ? extends Single<Event>> processEvent) {
+    checkNotNull(node);
+    checkNotNull(context);
+    checkNotNull(processEvent);
+    return Flowable.defer(
+        () -> {
+          FlowableProcessor<QueuedEvent> queue =
+              UnicastProcessor.<QueuedEvent>create().toSerialized();
+          Queue<Exception> unprocessedFailures = new ConcurrentLinkedQueue<>();
+          EventSink sink =
+              (event, nodeFailure) -> {
+                CompletableSubject processed = CompletableSubject.create();
+                if (nodeFailure != null) {
+                  unprocessedFailures.add(nodeFailure);
+                }
+                queue.onNext(new QueuedEvent(event, processed, nodeFailure));
+                return event.partial().orElse(false) ? Completable.complete() : processed;
+              };
+          Completable nodeRun =
+              builder()
+                  .node(node)
+                  .invocationContext(context)
+                  .eventSink(sink)
+                  .build()
+                  .run(context.userContent().orElse(null))
+                  .doOnSuccess(
+                      nodeContext ->
+                          nodeContext
+                              .requireNodeState()
+                              .failure()
+                              .ifPresentOrElse(queue::onError, queue::onComplete))
+                  .doOnError(queue::onError)
+                  .ignoreElement()
+                  .onErrorComplete();
+          return queue
+              .concatMap(
+                  queued ->
+                      processEvent
+                          .apply(queued.event())
+                          .doOnError(
+                              error -> {
+                                // As in Kotlin, keep the failures of unprocessed error events.
+                                if (error instanceof Exception) {
+                                  unprocessedFailures.forEach(error::addSuppressed);
+                                }
+                              })
+                          .toFlowable()
+                          // The node proceeds only after the caller receives the processed event.
+                          .doAfterNext(
+                              unused -> {
+                                if (queued.nodeFailure() != null) {
+                                  unprocessedFailures.remove(queued.nodeFailure());
+                                }
+                                queued.processed().onComplete();
+                              }))
+              .mergeWith(nodeRun);
+        });
   }
 
   /**
@@ -190,7 +269,7 @@ final class NodeRunner {
       Event stamped = stamp(messageAsOutput ? event.toBuilder().output(null).build() : event);
       Event outgoing = stamped.partial().orElse(false) ? stamped : withPendingDeltas(stamped);
       return eventSink
-          .send(outgoing)
+          .send(outgoing, /* nodeFailure= */ null)
           .doOnComplete(
               () -> {
                 if (outgoing.output().isPresent() || messageAsOutput) {
@@ -219,7 +298,7 @@ final class NodeRunner {
                               .build())
                       .build()));
       return eventSink
-          .send(event)
+          .send(event, /* nodeFailure= */ null)
           .doOnComplete(
               () -> {
                 if (pendingOutput) {
@@ -243,7 +322,7 @@ final class NodeRunner {
                       .errorCode(new FinishReason(errorTypeName(failure)))
                       .errorMessage(nullToEmpty(failure.getMessage()))
                       .build()));
-      return eventSink.send(errorEvent).doOnComplete(() -> nodeState.failure(failure));
+      return eventSink.send(errorEvent, failure).doOnComplete(() -> nodeState.failure(failure));
     }
 
     /**
@@ -289,6 +368,13 @@ final class NodeRunner {
           .timestamp(eventContext.now().toEpochMilli());
     }
   }
+
+  /**
+   * An event queued for the runner, paired with the signal that completes once the caller receives
+   * the event and, for an error event, with the failure it reports.
+   */
+  private record QueuedEvent(
+      Event event, CompletableSubject processed, @Nullable Exception nodeFailure) {}
 
   /** Appends a {@code name@runId} segment to {@code base}, joined by {@code separator}. */
   static String appendSegment(@Nullable String base, String name, String runId, char separator) {

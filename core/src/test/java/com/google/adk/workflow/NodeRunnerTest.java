@@ -37,8 +37,11 @@ import com.google.genai.types.FinishReason;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.observers.TestObserver;
 import io.reactivex.rxjava3.subjects.CompletableSubject;
+import io.reactivex.rxjava3.subjects.SingleSubject;
+import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.util.ArrayList;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
@@ -54,15 +57,17 @@ public final class NodeRunnerTest {
 
   private final List<Event> sentEvents = new ArrayList<>();
   private final NodeRunner.EventSink recordingSink =
-      event -> Completable.fromAction(() -> sentEvents.add(event));
+      (event, nodeFailure) -> Completable.fromAction(() -> sentEvents.add(event));
   private final List<CompletableSubject> acknowledgements = new ArrayList<>();
   private final NodeRunner.EventSink acknowledgingSink =
-      event -> {
+      (event, nodeFailure) -> {
         sentEvents.add(event);
         CompletableSubject acknowledgement = CompletableSubject.create();
         acknowledgements.add(acknowledgement);
         return acknowledgement;
       };
+  private final List<Event> eventsInProcessing = new ArrayList<>();
+  private final List<SingleSubject<Event>> processings = new ArrayList<>();
 
   @Test
   public void run_stampsTheEventWithTheNodeNamePathAndInvocation() {
@@ -677,6 +682,139 @@ public final class NodeRunnerTest {
     assertThrows(IllegalStateException.class, builder::build);
   }
 
+  @Test
+  public void runRoot_asksForTheNextEventOnlyAfterTheCallerReceivesTheProcessedEvent() {
+    List<Event> emitted = new ArrayList<>();
+    Node node =
+        new TestNode(
+            "pair",
+            (ctx, input) ->
+                Flowable.just(
+                        newEvent().content(MESSAGE).build(), newEvent().content(MESSAGE).build())
+                    .doOnNext(emitted::add));
+
+    TestSubscriber<Event> subscriber = TestSubscriber.create(/* initialRequested= */ 0);
+
+    NodeRunner.runRoot(node, invocationContext(/* branch= */ null), this::holdProcessing)
+        .subscribe(subscriber);
+    finishProcessing(0);
+    int emittedBeforeTheCallerReceivesTheFirstEvent = emitted.size();
+    subscriber.request(1);
+    int emittedAfterTheCallerReceivesTheFirstEvent = emitted.size();
+    finishProcessing(1);
+    subscriber.request(1);
+
+    assertThat(emittedBeforeTheCallerReceivesTheFirstEvent).isEqualTo(1);
+    assertThat(emittedAfterTheCallerReceivesTheFirstEvent).isEqualTo(2);
+    subscriber.assertValueCount(2).assertComplete();
+  }
+
+  @Test
+  public void runRoot_signalsTheNodeFailureOnlyAfterItsErrorEventIsProcessed() {
+    IllegalStateException failure = new IllegalStateException("node failed");
+    Node node = new TestNode("boom", (ctx, input) -> Flowable.error(failure));
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(node, invocationContext(/* branch= */ null), this::holdProcessing)
+            .test();
+    subscriber.assertEmpty();
+    finishProcessing(0);
+
+    assertThat(getOnlyElement(subscriber.values()).errorCode()).hasValue(ILLEGAL_STATE);
+    subscriber.assertError(failure);
+  }
+
+  @Test
+  public void runRoot_processingTheErrorEventFails_keepsTheNodeFailureAsSuppressed() {
+    IllegalStateException nodeFailure = new IllegalStateException("node failed");
+    IllegalArgumentException processingFailure = new IllegalArgumentException("append failed");
+    Node node = new TestNode("boom", (ctx, input) -> Flowable.error(nodeFailure));
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(
+                node,
+                invocationContext(/* branch= */ null),
+                event ->
+                    event.errorCode().isPresent()
+                        ? Single.error(processingFailure)
+                        : Single.just(event))
+            .test();
+
+    subscriber.assertError(processingFailure);
+    assertThat(processingFailure.getSuppressed()).asList().containsExactly(nodeFailure);
+  }
+
+  @Test
+  public void runRoot_processingAPartialEventFails_keepsTheQueuedNodeFailureAsSuppressed() {
+    IllegalStateException nodeFailure = new IllegalStateException("node failed");
+    IllegalArgumentException processingFailure = new IllegalArgumentException("plugin failed");
+    Node node =
+        new TestNode(
+            "streamer",
+            (ctx, input) ->
+                Flowable.just(newEvent().content(MESSAGE).partial(true).build())
+                    .concatWith(Flowable.error(nodeFailure)));
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(node, invocationContext(/* branch= */ null), this::holdProcessing)
+            .test();
+    processings.get(0).onError(processingFailure);
+
+    subscriber.assertError(processingFailure);
+    assertThat(processingFailure.getSuppressed()).asList().containsExactly(nodeFailure);
+  }
+
+  @Test
+  public void runRoot_emitsTheEventThatProcessingReturns() {
+    Node node =
+        new TestNode("solo", (ctx, input) -> Flowable.just(newEvent().content(MESSAGE).build()));
+    Event replacement = newEvent().author("plugin").content(MESSAGE).build();
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(
+                node, invocationContext(/* branch= */ null), event -> Single.just(replacement))
+            .test();
+
+    subscriber.assertComplete();
+    assertThat(getOnlyElement(subscriber.values())).isSameInstanceAs(replacement);
+  }
+
+  @Test
+  public void runRoot_errorFromTheNode_failsTheRunWithoutAnErrorEvent() {
+    AssertionError fatal = new AssertionError("fatal");
+    Node node = new TestNode("fatal", (ctx, input) -> Flowable.error(fatal));
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(node, invocationContext(/* branch= */ null), this::holdProcessing)
+            .test();
+
+    subscriber.assertError(fatal);
+    assertThat(eventsInProcessing).isEmpty();
+  }
+
+  @Test
+  public void runRoot_partialEvent_doesNotHoldBackTheNode() {
+    List<Event> emitted = new ArrayList<>();
+    Node node =
+        new TestNode(
+            "streamer",
+            (ctx, input) ->
+                Flowable.just(
+                        newEvent().content(MESSAGE).partial(true).build(),
+                        newEvent().content(MESSAGE).build())
+                    .doOnNext(emitted::add));
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(node, invocationContext(/* branch= */ null), this::holdProcessing)
+            .test();
+    int emittedWhileThePartialEventIsProcessed = emitted.size();
+    finishProcessing(0);
+    finishProcessing(1);
+
+    assertThat(emittedWhileThePartialEventIsProcessed).isEqualTo(2);
+    subscriber.assertValueCount(2).assertComplete();
+  }
+
   @CanIgnoreReturnValue
   private Context runAtRoot(Node node) {
     return rootRunner(node, recordingSink).run(/* nodeInput= */ null).blockingGet();
@@ -688,6 +826,17 @@ public final class NodeRunnerTest {
         .invocationContext(invocationContext(/* branch= */ null))
         .eventSink(eventSink)
         .build();
+  }
+
+  private Single<Event> holdProcessing(Event event) {
+    eventsInProcessing.add(event);
+    SingleSubject<Event> processing = SingleSubject.create();
+    processings.add(processing);
+    return processing;
+  }
+
+  private void finishProcessing(int index) {
+    processings.get(index).onSuccess(eventsInProcessing.get(index));
   }
 
   private Context runUnderParent(Node node, boolean useSubBranch, @Nullable String overrideBranch) {

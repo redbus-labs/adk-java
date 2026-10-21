@@ -25,7 +25,9 @@ import com.google.adk.events.Event;
 import com.google.adk.telemetry.Metrics;
 import com.google.adk.testing.TestBaseAgent;
 import com.google.adk.testing.TestCallback;
+import com.google.adk.testing.TestNode;
 import com.google.adk.testing.TestUtils;
+import com.google.adk.workflow.Node;
 import com.google.common.collect.ImmutableList;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
@@ -404,6 +406,21 @@ public final class BaseAgentTest {
     assertThat(runAsyncImpl.wasCalled()).isTrue();
     assertThat(afterCallback1.wasCalled()).isTrue();
     assertThat(afterCallback2.wasCalled()).isFalse();
+  }
+
+  @Test
+  public void runAsync_underAnInvocationOfANode_runsWithoutTheNode() {
+    TestBaseAgent agent = TestUtils.createSubAgent(TEST_AGENT_NAME);
+    Node node = TestNode.of("root");
+    InvocationContext parentContext =
+        TestUtils.createInvocationContext(agent).toBuilder()
+            .agent(new NodeViewAgent(node))
+            .node(node)
+            .build();
+
+    agent.runAsync(parentContext).blockingSubscribe();
+
+    assertThat(agent.getLastInvocationContext().node()).isEmpty();
   }
 
   @Test
