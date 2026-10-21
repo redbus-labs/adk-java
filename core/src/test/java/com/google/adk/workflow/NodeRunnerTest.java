@@ -172,6 +172,21 @@ public final class NodeRunnerTest {
   }
 
   @Test
+  public void run_asItsParentsOutput_listsBothNodePathsAsItsOutputFor() {
+    NodeRunner.builder()
+        .node(new TestNode("worker", (ctx, input) -> Flowable.just("done")))
+        .parent(parentContext())
+        .runId("2")
+        .useAsOutput(true)
+        .build()
+        .run(/* nodeInput= */ null)
+        .blockingSubscribe();
+
+    assertThat(getOnlyElement(sentEvents).nodeInfo().map(NodeInfo::outputFor))
+        .hasValue(ImmutableList.of("root@1/worker@2", "root@1"));
+  }
+
+  @Test
   public void run_underAParent_inheritsItsEventAuthor() {
     Context parent = parentContext();
     parent.requireNodeState().eventAuthor("custom-agent");
@@ -762,6 +777,57 @@ public final class NodeRunnerTest {
 
     subscriber.assertError(processingFailure);
     assertThat(processingFailure.getSuppressed()).asList().containsExactly(nodeFailure);
+  }
+
+  @Test
+  public void runRoot_processingAnErrorEventFails_keepsEveryQueuedSiblingFailureAsSuppressed() {
+    IllegalStateException aFailure = new IllegalStateException("a failed");
+    IllegalStateException bFailure = new IllegalStateException("b failed");
+    IllegalArgumentException processingFailure = new IllegalArgumentException("append failed");
+    Workflow workflow =
+        Workflow.builder()
+            .name("wf")
+            .edges(
+                new Edge(
+                    Start.INSTANCE, new TestNode("a", (ctx, input) -> Flowable.error(aFailure))),
+                new Edge(
+                    Start.INSTANCE, new TestNode("b", (ctx, input) -> Flowable.error(bFailure))))
+            .build();
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(workflow, invocationContext(/* branch= */ null), this::holdProcessing)
+            .test();
+    processings.get(0).onError(processingFailure);
+
+    subscriber.assertError(processingFailure);
+    assertThat(processingFailure.getSuppressed()).asList().containsExactly(aFailure, bFailure);
+  }
+
+  @Test
+  public void runRoot_processingANonErrorEventFails_keepsAQueuedSiblingFailureAsSuppressed() {
+    IllegalStateException bFailure = new IllegalStateException("b failed");
+    IllegalArgumentException processingFailure = new IllegalArgumentException("append failed");
+    Workflow workflow =
+        Workflow.builder()
+            .name("wf")
+            .edges(
+                new Edge(
+                    Start.INSTANCE,
+                    new TestNode(
+                        "a", (ctx, input) -> Flowable.just(newEvent().content(MESSAGE).build()))),
+                new Edge(
+                    Start.INSTANCE, new TestNode("b", (ctx, input) -> Flowable.error(bFailure))))
+            .build();
+
+    TestSubscriber<Event> subscriber =
+        NodeRunner.runRoot(workflow, invocationContext(/* branch= */ null), this::holdProcessing)
+            .test();
+    Event inProcessing = getOnlyElement(eventsInProcessing);
+    processings.get(0).onError(processingFailure);
+
+    assertThat(inProcessing.errorCode()).isEmpty();
+    subscriber.assertError(processingFailure);
+    assertThat(processingFailure.getSuppressed()).asList().containsExactly(bFailure);
   }
 
   @Test

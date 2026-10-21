@@ -16,17 +16,22 @@
 
 package com.google.adk.runner;
 
+import static com.google.adk.testing.TestUtils.createTestAgentBuilder;
+import static com.google.adk.testing.TestUtils.createTestLlm;
+import static com.google.adk.testing.TestUtils.createTextLlmResponse;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Iterables.getLast;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static java.util.stream.Collectors.joining;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.BaseAgent;
 import com.google.adk.agents.CallbackContext;
 import com.google.adk.agents.InvocationContext;
 import com.google.adk.agents.LiveRequestQueue;
+import com.google.adk.agents.LlmAgent;
 import com.google.adk.agents.NodeViewAgent;
 import com.google.adk.agents.RunConfig;
 import com.google.adk.apps.App;
@@ -38,9 +43,14 @@ import com.google.adk.plugins.Plugin;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.adk.testing.TestBaseAgent;
+import com.google.adk.testing.TestLlm;
 import com.google.adk.testing.TestNode;
+import com.google.adk.testing.TestUtils;
+import com.google.adk.workflow.Edge;
 import com.google.adk.workflow.Node;
 import com.google.adk.workflow.NodeInfo;
+import com.google.adk.workflow.Start;
+import com.google.adk.workflow.Workflow;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.genai.types.Content;
@@ -142,6 +152,101 @@ public final class RunnerRootNodeTest {
     assertThat(event.output()).hasValue("echoed");
     assertThat(getLast(saved.immutableEvents()).id()).isEqualTo(event.id());
     assertThat(saved.state()).containsEntry("durable", "saved");
+  }
+
+  @Test
+  public void runAsync_workflowRoot_runsItsGraphAndPersistsEveryEvent() {
+    Node first = new TestNode("first", (context, input) -> Flowable.just("one"));
+    Node second = new TestNode("second", (context, input) -> Flowable.just("two"));
+    Workflow workflow =
+        Workflow.builder()
+            .name("flow")
+            .edges(new Edge(Start.INSTANCE, first), new Edge(first, second))
+            .build();
+    Runner runner = runner(workflow);
+    Session session = newSession(runner);
+
+    List<Event> events =
+        runner.runAsync(USER_ID, session.id(), USER_MESSAGE).toList().blockingGet();
+
+    Session saved = reload(runner, session);
+    assertThat(
+            events.stream()
+                .map(event -> event.nodeInfo().map(NodeInfo::path))
+                .collect(toImmutableList()))
+        .containsExactly(Optional.of("flow@1/first@1"), Optional.of("flow@1/second@1"))
+        .inOrder();
+    assertThat(events.stream().map(Event::author).collect(toImmutableList()))
+        .containsExactly("flow", "flow");
+    assertThat(ids(saved.immutableEvents())).containsAtLeastElementsIn(ids(events)).inOrder();
+  }
+
+  @Test
+  public void runAsync_agentNodesOnASubBranch_showTheLaterAgentTheEarlierAgentsReply() {
+    TestLlm firstModel = createTestLlm(createTextLlmResponse("from first"));
+    TestLlm secondModel = createTestLlm(createTextLlmResponse("from second"));
+    LlmAgent first = createTestAgentBuilder(firstModel).name("first").build();
+    LlmAgent second = createTestAgentBuilder(secondModel).name("second").build();
+    Workflow workflow =
+        Workflow.builder()
+            .name("flow")
+            .edges(
+                new Edge(Start.INSTANCE, first),
+                new Edge(Start.INSTANCE, TestNode.of("sibling")),
+                new Edge(first, second))
+            .build();
+    Runner runner = runner(workflow);
+    Session session = newSession(runner);
+
+    runner.runAsync(USER_ID, session.id(), USER_MESSAGE).blockingSubscribe();
+
+    String secondRequestText =
+        secondModel.getLastRequest().contents().stream()
+            .map(TestUtils::formatContent)
+            .collect(joining("\n"));
+    assertThat(secondRequestText).contains("from first");
+  }
+
+  @Test
+  public void close_workflowRoot_closesTheAgentsInItsGraphAndNestedWorkflows() {
+    List<String> closed = new ArrayList<>();
+    BaseAgent outerAgent = closeRecordingAgent("outer_agent", closed);
+    BaseAgent innerAgent = closeRecordingAgent("inner_agent", closed);
+    Workflow inner =
+        Workflow.builder().name("inner").edges(new Edge(Start.INSTANCE, innerAgent)).build();
+    Workflow workflow =
+        Workflow.builder()
+            .name("flow")
+            .edges(new Edge(Start.INSTANCE, outerAgent), new Edge(outerAgent, inner))
+            .build();
+
+    runner(workflow).close().blockingAwait();
+
+    assertThat(closed).containsExactly("outer_agent", "inner_agent");
+  }
+
+  @Test
+  public void close_workflowRoot_closesAGraphAgentThatIsAlsoASubAgentOnce() {
+    List<String> closed = new ArrayList<>();
+    BaseAgent helper = closeRecordingAgent("helper", closed);
+    BaseAgent coordinator =
+        new TestBaseAgent(
+            "coordinator", "An agent.", Flowable::empty, ImmutableList.of(helper), null, null) {
+          @Override
+          public Completable close() {
+            closed.add(name());
+            return super.close();
+          }
+        };
+    Workflow workflow =
+        Workflow.builder()
+            .name("flow")
+            .edges(new Edge(Start.INSTANCE, coordinator), new Edge(coordinator, helper))
+            .build();
+
+    runner(workflow).close().blockingAwait();
+
+    assertThat(closed).containsExactly("coordinator", "helper");
   }
 
   @Test
@@ -533,6 +638,16 @@ public final class RunnerRootNodeTest {
         .sessionService()
         .getSession(APP_NAME, USER_ID, session.id(), Optional.empty())
         .blockingGet();
+  }
+
+  private static BaseAgent closeRecordingAgent(String name, List<String> closed) {
+    return new TestBaseAgent(name, "An agent.", null, null, Flowable::empty) {
+      @Override
+      public Completable close() {
+        closed.add(name());
+        return Completable.complete();
+      }
+    };
   }
 
   private static Node failingNode(Exception failure) {

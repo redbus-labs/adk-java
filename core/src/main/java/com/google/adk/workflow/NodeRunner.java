@@ -26,7 +26,6 @@ import com.google.adk.agents.InvocationContext;
 import com.google.adk.annotations.Experimental;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
-import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.genai.types.FinishReason;
 import io.reactivex.rxjava3.core.Completable;
@@ -68,6 +67,7 @@ public final class NodeRunner {
   private final EventSink eventSink;
   private final @Nullable Context parent;
   private final String runId;
+  private final boolean useAsOutput;
   private final boolean useSubBranch;
   private final @Nullable String overrideBranch;
 
@@ -89,6 +89,7 @@ public final class NodeRunner {
     this.node = builder.node;
     this.parent = builder.parent;
     this.runId = builder.runId;
+    this.useAsOutput = builder.useAsOutput;
     this.useSubBranch = builder.useSubBranch;
     this.overrideBranch = builder.overrideBranch;
   }
@@ -185,6 +186,7 @@ public final class NodeRunner {
                       .eventSink(eventSink)
                       .parent(parent)
                       .runId(runId)
+                      .useAsOutput(useAsOutput)
                       .build());
           return new Activation(context).run(nodeInput).toSingleDefault(context);
         });
@@ -355,8 +357,7 @@ public final class NodeRunner {
           .nodeInfo(
               nodeInfo.toBuilder()
                   .path(nodeState.nodePath())
-                  .outputFor(
-                      carriesOutput ? ImmutableList.of(nodeState.nodePath()) : nodeInfo.outputFor())
+                  .outputFor(carriesOutput ? nodeState.outputFor() : nodeInfo.outputFor())
                   .build())
           .build();
     }
@@ -419,6 +420,7 @@ public final class NodeRunner {
     private @Nullable EventSink eventSink;
     private @Nullable Context parent;
     private String runId = "1";
+    private boolean useAsOutput;
     private boolean useSubBranch;
     private @Nullable String overrideBranch;
 
@@ -456,6 +458,16 @@ public final class NodeRunner {
     @CanIgnoreReturnValue
     Builder runId(String runId) {
       this.runId = checkNotNull(runId);
+      return this;
+    }
+
+    /**
+     * Sets whether the node's output is also its parent's output, as when a terminal node produces
+     * the output of its workflow.
+     */
+    @CanIgnoreReturnValue
+    Builder useAsOutput(boolean useAsOutput) {
+      this.useAsOutput = useAsOutput;
       return this;
     }
 

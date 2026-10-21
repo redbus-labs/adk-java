@@ -16,6 +16,7 @@
 
 package com.google.adk.workflow;
 
+import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.testing.TestNode;
@@ -50,5 +51,18 @@ public final class NodeExecutionStateTest {
         NodeExecutionState.builder().node(TestNode.of("worker")).eventSink(SINK);
 
     assertThrows(IllegalStateException.class, builder::build);
+  }
+
+  @Test
+  public void outputFor_useAsOutputWithoutAParent_containsOnlyItsOwnPath() {
+    NodeExecutionState state =
+        NodeExecutionState.builder()
+            .node(TestNode.of("worker"))
+            .eventSink(SINK)
+            .runId("1")
+            .useAsOutput(true)
+            .build();
+
+    assertThat(state.outputFor()).containsExactly("worker@1");
   }
 }

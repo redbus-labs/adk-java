@@ -25,8 +25,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
@@ -43,6 +45,8 @@ public final class NodeExecutionState {
   private final @Nullable Context parent;
   private final String runId;
   private final String nodePath;
+  private final ImmutableList<String> outputFor;
+  private final Map<String, Integer> childRunCounts = new HashMap<>();
   private String eventAuthor;
   private final Set<String> interruptIds = new LinkedHashSet<>();
   private @Nullable Object output;
@@ -66,6 +70,10 @@ public final class NodeExecutionState {
             node.name(),
             runId,
             /* separator= */ '/');
+    this.outputFor =
+        builder.useAsOutput && parentState != null
+            ? ImmutableList.<String>builder().add(nodePath).addAll(parentState.outputFor).build()
+            : ImmutableList.of(nodePath);
     this.eventAuthor = parentState == null ? "" : parentState.eventAuthor;
   }
 
@@ -156,6 +164,19 @@ public final class NodeExecutionState {
     return eventSink;
   }
 
+  /**
+   * Returns the paths of the nodes that use this run's output as their output, starting with this
+   * run's path.
+   */
+  ImmutableList<String> outputFor() {
+    return outputFor;
+  }
+
+  /** Returns the next run ID for a child node named {@code name}, counting from {@code "1"}. */
+  String nextChildRunId(String name) {
+    return String.valueOf(childRunCounts.merge(name, 1, Integer::sum));
+  }
+
   /** Returns whether an event has carried the node's output. */
   boolean outputEmitted() {
     return outputEmitted;
@@ -194,6 +215,7 @@ public final class NodeExecutionState {
     private NodeRunner.@Nullable EventSink eventSink;
     private @Nullable Context parent;
     private @Nullable String runId;
+    private boolean useAsOutput;
 
     private Builder() {}
 
@@ -225,6 +247,13 @@ public final class NodeExecutionState {
     @CanIgnoreReturnValue
     Builder runId(String runId) {
       this.runId = checkNotNull(runId);
+      return this;
+    }
+
+    /** Sets whether this run's output is also its parent's output. */
+    @CanIgnoreReturnValue
+    Builder useAsOutput(boolean useAsOutput) {
+      this.useAsOutput = useAsOutput;
       return this;
     }
 

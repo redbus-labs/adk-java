@@ -56,8 +56,10 @@ import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.FunctionTool;
 import com.google.adk.utils.CollectionUtils;
+import com.google.adk.workflow.Edge;
 import com.google.adk.workflow.Node;
 import com.google.adk.workflow.NodeRunner;
+import com.google.adk.workflow.Workflow;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.MapMaker;
@@ -81,6 +83,7 @@ import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -474,8 +477,40 @@ public class Runner {
   public Completable close() {
     List<Completable> completables = new ArrayList<>();
     completables.add(agent.close());
+    if (node != null) {
+      Set<BaseAgent> nodeAgents = new LinkedHashSet<>();
+      collectAgents(node, nodeAgents);
+      // Closing an agent closes its sub-agents, so skip agents whose ancestor is closed here.
+      nodeAgents.stream()
+          .filter(nodeAgent -> !hasAncestorIn(nodeAgent, nodeAgents))
+          .forEach(nodeAgent -> completables.add(nodeAgent.close()));
+    }
     completables.add(this.pluginManager.close());
     return Completable.mergeDelayError(completables);
+  }
+
+  /** Adds the agents that {@code node} runs, through its own graph and nested workflows. */
+  private static void collectAgents(Node node, Set<BaseAgent> agents) {
+    if (node instanceof BaseAgent agent) {
+      agents.add(agent);
+    } else if (node instanceof Workflow workflow) {
+      for (Edge edge : workflow.edges()) {
+        collectAgents(edge.from(), agents);
+        collectAgents(edge.to(), agents);
+      }
+    }
+  }
+
+  /** Returns whether {@code agents} contains an ancestor of {@code agent}. */
+  private static boolean hasAncestorIn(BaseAgent agent, Set<BaseAgent> agents) {
+    for (BaseAgent ancestor = agent.parentAgent();
+        ancestor != null;
+        ancestor = ancestor.parentAgent()) {
+      if (agents.contains(ancestor)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
