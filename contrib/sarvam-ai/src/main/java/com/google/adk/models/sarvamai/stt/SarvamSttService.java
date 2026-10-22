@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.models.sarvamai.SarvamAiConfig;
 import com.google.adk.models.sarvamai.SarvamAiException;
+import com.google.adk.models.sarvamai.audio.Pcm16Audio;
 import com.google.adk.transcription.ServiceHealth;
 import com.google.adk.transcription.ServiceType;
 import com.google.adk.transcription.TranscriptionConfig;
@@ -130,6 +131,20 @@ public final class SarvamSttService implements TranscriptionService {
     } catch (Exception e) {
       throw new TranscriptionException("STT transcription failed", e);
     }
+  }
+
+  /**
+   * Transcribes signed, little-endian PCM16 after adding a WAV container.
+   *
+   * <p>The caller supplies the actual audio format; this method does not guess whether arbitrary
+   * bytes are PCM. Use {@link #transcribe} for audio that already has a WAV container. The STT
+   * model remains configurable through {@link SarvamAiConfig.Builder#sttModel}, including
+   * saaras:v4.
+   */
+  public TranscriptionResult transcribePcm16(
+      byte[] pcm, int sampleRate, int channels, TranscriptionConfig requestConfig)
+      throws TranscriptionException {
+    return transcribe(Pcm16Audio.toWav(pcm, sampleRate, channels), requestConfig);
   }
 
   @Override
