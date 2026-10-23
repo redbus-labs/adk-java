@@ -127,9 +127,9 @@ public class OpenAiBaseLM extends BaseLlm {
 
                       cfg.temperature().ifPresent(t -> payload.addProperty("temperature", t));
                       cfg.topP().ifPresent(p -> payload.addProperty("top_p", p));
-                      //System.out.println(maxTokens);
+                      // System.out.println(maxTokens);
                       maxTokens = cfg.maxOutputTokens().filter(m -> m > 0).orElse(2048);
-                     // System.out.println(maxTokens);
+                      // System.out.println(maxTokens);
                       payload.addProperty("max_tokens", maxTokens);
                     });
 
@@ -170,28 +170,97 @@ public class OpenAiBaseLM extends BaseLlm {
                 StringBuilder textContent = new StringBuilder();
                 JsonArray toolCalls = new JsonArray();
                 List<JsonObject> toolResponseMessages = new ArrayList<>();
-                JsonArray imageParts = new JsonArray();
+                JsonArray multimodalContentParts = new JsonArray();
+                boolean hasMedia = false;
 
                 for (Part p : content.parts().get()) {
                   if (p.text().isPresent()) {
-                    textContent.append(p.text().get());
+                    String txt = p.text().get();
+                    textContent.append(txt);
+                    JsonObject textPart = new JsonObject();
+                    textPart.addProperty("type", "text");
+                    textPart.addProperty("text", txt);
+                    multimodalContentParts.add(textPart);
                   }
 
-                  // Multimodal / Inline Image Handling
-                  p.inlineData()
-                      .ifPresent(
-                          blob -> {
-                            if (blob.data().isPresent()) {
-                              String mime = blob.mimeType().orElse("image/jpeg");
-                              String b64 = Base64.getEncoder().encodeToString(blob.data().get());
-                              JsonObject imgObj = new JsonObject();
-                              imgObj.addProperty("type", "image_url");
-                              JsonObject urlObj = new JsonObject();
-                              urlObj.addProperty("url", "data:" + mime + ";base64," + b64);
-                              imgObj.add("image_url", urlObj);
-                              imageParts.add(imgObj);
-                            }
-                          });
+                  // Multimodal / Inline Media Handling (Image, Audio, Video)
+                  if (p.inlineData().isPresent()) {
+                    var blob = p.inlineData().get();
+                    if (blob.data().isPresent()) {
+                      hasMedia = true;
+                      String mime = blob.mimeType().orElse("image/jpeg").toLowerCase(Locale.ROOT);
+                      String b64 = Base64.getEncoder().encodeToString(blob.data().get());
+
+                      if (mime.startsWith("audio/")) {
+                        String format = mime.substring(6);
+                        int semi = format.indexOf(';');
+                        if (semi > 0) {
+                          format = format.substring(0, semi);
+                        }
+                        if ("mpeg".equals(format)) {
+                          format = "mp3";
+                        } else if ("x-wav".equals(format) || "wave".equals(format)) {
+                          format = "wav";
+                        } else if ("x-m4a".equals(format) || "mp4".equals(format)) {
+                          format = "m4a";
+                        }
+                        JsonObject audioPart = new JsonObject();
+                        audioPart.addProperty("type", "input_audio");
+                        JsonObject inputAudioObj = new JsonObject();
+                        inputAudioObj.addProperty("data", b64);
+                        inputAudioObj.addProperty("format", format);
+                        audioPart.add("input_audio", inputAudioObj);
+                        multimodalContentParts.add(audioPart);
+                      } else if (mime.startsWith("video/")) {
+                        JsonObject videoPart = new JsonObject();
+                        videoPart.addProperty("type", "video_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", "data:" + mime + ";base64," + b64);
+                        videoPart.add("video_url", urlObj);
+                        multimodalContentParts.add(videoPart);
+                      } else {
+                        JsonObject imgObj = new JsonObject();
+                        imgObj.addProperty("type", "image_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", "data:" + mime + ";base64," + b64);
+                        imgObj.add("image_url", urlObj);
+                        multimodalContentParts.add(imgObj);
+                      }
+                    }
+                  }
+
+                  // Multimodal / File URI Media Handling (Image, Audio, Video URLs)
+                  if (p.fileData().isPresent()) {
+                    var fileData = p.fileData().get();
+                    if (fileData.fileUri().isPresent()) {
+                      hasMedia = true;
+                      String uri = fileData.fileUri().get();
+                      String mime =
+                          fileData.mimeType().orElse("image/jpeg").toLowerCase(Locale.ROOT);
+                      if (mime.startsWith("audio/")) {
+                        JsonObject audioPart = new JsonObject();
+                        audioPart.addProperty("type", "audio_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", uri);
+                        audioPart.add("audio_url", urlObj);
+                        multimodalContentParts.add(audioPart);
+                      } else if (mime.startsWith("video/")) {
+                        JsonObject videoPart = new JsonObject();
+                        videoPart.addProperty("type", "video_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", uri);
+                        videoPart.add("video_url", urlObj);
+                        multimodalContentParts.add(videoPart);
+                      } else {
+                        JsonObject imgPart = new JsonObject();
+                        imgPart.addProperty("type", "image_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", uri);
+                        imgPart.add("image_url", urlObj);
+                        multimodalContentParts.add(imgPart);
+                      }
+                    }
+                  }
 
                   // Assistant Tool Calls
                   if (p.functionCall().isPresent()) {
@@ -252,20 +321,11 @@ public class OpenAiBaseLM extends BaseLlm {
 
                 boolean hasText = textContent.length() > 0;
                 boolean hasToolCalls = toolCalls.size() > 0;
-                boolean hasImages = imageParts.size() > 0;
 
-                if (hasImages) {
+                if (hasMedia) {
                   JsonObject msg = new JsonObject();
                   msg.addProperty("role", role);
-                  JsonArray contentArray = new JsonArray();
-                  if (hasText) {
-                    JsonObject textObj = new JsonObject();
-                    textObj.addProperty("type", "text");
-                    textObj.addProperty("text", textContent.toString());
-                    contentArray.add(textObj);
-                  }
-                  imageParts.forEach(contentArray::add);
-                  msg.add("content", contentArray);
+                  msg.add("content", multimodalContentParts);
                   if (hasToolCalls) {
                     msg.add("tool_calls", toolCalls);
                   }
