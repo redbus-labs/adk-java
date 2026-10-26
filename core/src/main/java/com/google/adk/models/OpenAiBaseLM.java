@@ -40,6 +40,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -59,8 +61,11 @@ public class OpenAiBaseLM extends BaseLlm {
   protected String baseUrl;
   protected String apiKey;
 
+  // Max context tokens limit for this provider/model
+  protected Integer maxContextTokens = null;
+
   // Prompt truncation defaults (equivalent to extra_body in OpenAI python SDK)
-  // -1 clips to the model's max context length
+  // -1 clips to the model's max context length, 0 disables truncation params
   protected Integer truncatePromptTokens = -1;
   // "left" drops the oldest tokens/messages from the front, keeping recent history
   protected String truncationSide = "left";
@@ -73,6 +78,21 @@ public class OpenAiBaseLM extends BaseLlm {
     super(modelName);
     this.baseUrl = baseUrl != null ? baseUrl.replaceAll("/+$", "") : "";
     this.apiKey = apiKey;
+  }
+
+  public Integer getMaxContextTokens() {
+    return maxContextTokens;
+  }
+
+  public void setMaxContextTokens(Integer maxContextTokens) {
+    this.maxContextTokens = maxContextTokens;
+  }
+
+  /** Fluent helper to configure max context tokens (also sets truncatePromptTokens). */
+  public OpenAiBaseLM withMaxContextTokens(Integer maxContextTokens) {
+    this.maxContextTokens = maxContextTokens;
+    this.truncatePromptTokens = maxContextTokens;
+    return this;
   }
 
   public Integer getTruncatePromptTokens() {
@@ -109,11 +129,11 @@ public class OpenAiBaseLM extends BaseLlm {
             payload.addProperty("max_tokens", 1024);
 
             // --- Default Prompt Truncation for vLLM / OpenAI-compatible backends ---
-            if (truncatePromptTokens != null) {
+            if (truncatePromptTokens != null && truncatePromptTokens != 0) {
               payload.addProperty("truncate_prompt_tokens", truncatePromptTokens);
-            }
-            if (truncationSide != null && !truncationSide.isEmpty()) {
-              payload.addProperty("truncation_side", truncationSide);
+              if (truncationSide != null && !truncationSide.isEmpty()) {
+                payload.addProperty("truncation_side", truncationSide);
+              }
             }
 
             // Forward Generation Config
@@ -829,5 +849,45 @@ public class OpenAiBaseLM extends BaseLlm {
             },
             err -> System.err.println("\nRequest Failed: " + err.getMessage()),
             () -> System.out.println("\n[Test Complete]"));
+
+    // Image testing
+    // 1. Initialize client with a Vision-capable model
+    // Note: The model running on vLLM/Ollama MUST be a vision model (e.g. Qwen2-VL,
+    // Llama-3.2-Vision, PaliGemma)
+    llm = new OpenAiBaseLM(modelId, vllmBaseUrl, "sk-dummy");
+
+    // 2. Read local image file as bytes
+    byte[] imageBytes =
+        Files.readAllBytes(
+            Path.of("C:\\Users\\..\\Pictures\\Screenshots\\Screenshot 2024-11-13 112737.png"));
+
+    // 3. Create content with both text and the image part
+    userContent =
+        com.google.genai.types.Content.builder()
+            .role("user")
+            .parts(
+                List.of(
+                    com.google.genai.types.Part.fromText(
+                        "What is shown in this picture? Be concise."),
+                    com.google.genai.types.Part.fromBytes(imageBytes, "image/png")))
+            .build();
+
+    request = com.google.adk.models.LlmRequest.builder().contents(List.of(userContent)).build();
+
+    // 4. Send request
+    llm.generateContent(request, false)
+        .blockingSubscribe(
+            resp -> {
+              resp.content()
+                  .flatMap(com.google.genai.types.Content::parts)
+                  .ifPresent(
+                      parts -> {
+                        for (com.google.genai.types.Part p : parts) {
+                          p.text().ifPresent(System.out::println);
+                        }
+                      });
+            },
+            err -> System.err.println("Error: " + err.getMessage()),
+            () -> System.out.println("\n[DONE]"));
   }
 }

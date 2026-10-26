@@ -174,24 +174,19 @@ public class OllamaBaseLM extends BaseLlm implements IDecisionModel {
                       ? "assistant"
                       : "user");
 
-              // Additional override work to add function response
+              // Additional override work to add inline media data
               if (item.parts().isPresent()) {
                 var parts = item.parts().get();
-
-                // Ensure index 1 exists
-                if (parts.size() > 1) {
-                  var part = parts.get(1);
-
+                JSONArray images = new JSONArray();
+                for (Part part : parts) {
                   if (part.inlineData().isPresent() && part.inlineData().get().data().isPresent()) {
-
                     byte[] inlineImageData = part.inlineData().get().data().get();
-
                     String imgBase64 = toBase64String(inlineImageData);
-
-                    JSONArray images = new JSONArray();
                     images.put(imgBase64);
-                    messageQuantum.put("images", images);
                   }
+                }
+                if (images.length() > 0) {
+                  messageQuantum.put("images", images);
                 }
               }
 
@@ -389,6 +384,21 @@ public class OllamaBaseLM extends BaseLlm implements IDecisionModel {
                   item.role().get().equals("model") || item.role().get().equals("assistant")
                       ? "assistant"
                       : "user");
+
+              if (item.parts().isPresent()) {
+                var parts = item.parts().get();
+                JSONArray images = new JSONArray();
+                for (Part part : parts) {
+                  if (part.inlineData().isPresent() && part.inlineData().get().data().isPresent()) {
+                    byte[] inlineImageData = part.inlineData().get().data().get();
+                    String imgBase64 = toBase64String(inlineImageData);
+                    images.put(imgBase64);
+                  }
+                }
+                if (images.length() > 0) {
+                  messageQuantum.put("images", images);
+                }
+              }
 
               if (item.parts().get().get(0).functionResponse().isPresent()) {
                 messageQuantum.put(
