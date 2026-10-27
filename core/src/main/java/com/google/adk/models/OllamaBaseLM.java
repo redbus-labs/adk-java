@@ -310,7 +310,8 @@ public class OllamaBaseLM extends BaseLlm implements IDecisionModel {
     boolean LAST_RESP_TOOl_EXECUTED =
         Iterables.getLast(Iterables.getLast(contents).parts().get()).functionResponse().isPresent();
 
-    GenerateContentConfig config = llmRequest.config().get();
+    GenerateContentConfig config =
+        llmRequest.config().orElseGet(() -> GenerateContentConfig.builder().build());
     JSONObject agentresponse =
         callLLMChat(
             config,
