@@ -16,19 +16,26 @@
 
 package com.google.adk.models.failover;
 
+import com.google.adk.agents.InvocationContext;
 import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.failover.SessionRoutingStore.Assignment;
+import com.google.adk.models.failover.SessionRoutingStore.SessionRoutingKey;
 import com.google.common.base.Suppliers;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A {@link BaseLlm} decorator that wraps a primary model plus an ordered list of fallback models
@@ -37,9 +44,11 @@ import java.util.function.Supplier;
  * <p>Key properties:
  *
  * <ul>
- *   <li><b>Zero happy-path latency.</b> The primary model's {@code Flowable} is returned with only
- *       lightweight operators attached; fallbacks are attempted lazily and only on a classified,
- *       retryable failure or timeout.
+ *   <li><b>Session routing.</b> Two shared caches retain logical agent/session offsets for ten
+ *       minutes. New sessions use a 95/5 primary/fallback split while the primary is healthy and a
+ *       5/95 split while it is unhealthy. A successful failover pins the session to that fallback.
+ *   <li><b>Lazy failover.</b> After the session's starting model, further fallbacks are attempted
+ *       lazily on a classified, retryable failure or timeout.
  *   <li><b>Transparent to all agents.</b> Because it implements {@link BaseLlm}, any {@code
  *       LlmAgent} (including those inside {@code SequentialAgent}, {@code ParallelAgent}, {@code
  *       LoopAgent} or custom orchestrators) gets failover simply by resolving to a {@code
@@ -55,8 +64,14 @@ import java.util.function.Supplier;
  */
 public class FailoverLlm extends BaseLlm {
 
+  private static final Logger logger = LoggerFactory.getLogger(FailoverLlm.class);
+
   private final List<Supplier<BaseLlm>> chain;
   private final FailoverConfig config;
+  private final String routingAgentName;
+  private final Supplier<String> routingChainId;
+
+  private record SessionRoute(SessionRoutingKey key, Assignment assignment) {}
 
   /** Builds a failover chain from already-instantiated models. */
   public FailoverLlm(BaseLlm primary, BaseLlm... fallbacks) {
@@ -76,6 +91,15 @@ public class FailoverLlm extends BaseLlm {
    * @param config failover tuning.
    */
   public FailoverLlm(List<Supplier<BaseLlm>> chain, FailoverConfig config) {
+    this(chain, config, null, null);
+  }
+
+  /** Builds a wrapper with stable logical identity supplied by application wiring. */
+  public FailoverLlm(
+      List<Supplier<BaseLlm>> chain,
+      FailoverConfig config,
+      String routingAgentName,
+      String routingChainId) {
     super(primaryModelName(chain));
     List<Supplier<BaseLlm>> memoized = new ArrayList<>(chain.size());
     for (Supplier<BaseLlm> supplier : chain) {
@@ -83,6 +107,20 @@ public class FailoverLlm extends BaseLlm {
     }
     this.chain = memoized;
     this.config = config == null ? FailoverConfig.defaults() : config;
+    this.routingAgentName = routingAgentName;
+    this.routingChainId =
+        routingChainId == null
+            ? Suppliers.memoize(
+                    () -> {
+                      List<String> specs = new ArrayList<>();
+                      for (int index = 0; index < this.chain.size(); index++) {
+                        BaseLlm candidate = resolve(index);
+                        specs.add(candidate.getClass().getName() + ":" + candidate.model());
+                      }
+                      return SessionRoutingStore.chainId(specs);
+                    })
+                ::get
+            : () -> routingChainId;
   }
 
   public static Builder builder() {
@@ -91,12 +129,103 @@ public class FailoverLlm extends BaseLlm {
 
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
-    return attempt(0, llmRequest, stream);
+    return generateContent(llmRequest, stream, null);
   }
 
-  private Flowable<LlmResponse> attempt(int index, LlmRequest llmRequest, boolean stream) {
+  public Flowable<LlmResponse> generateContent(
+      LlmRequest llmRequest, boolean stream, InvocationContext context) {
+    return Flowable.defer(
+        () -> {
+          if (chain.size() == 1) return attempt(0, llmRequest, stream, context, null);
+          SessionRoutingKey key = routingKey(context);
+          if (key == null) return attempt(0, llmRequest, stream, context, null);
+          Assignment assignment = sessionOffset(key);
+          SessionRoute route = new SessionRoute(key, assignment);
+          return attemptModel(assignment.offset(), llmRequest, stream, context, true, route);
+        });
+  }
+
+  private Assignment sessionOffset(SessionRoutingKey key) {
+    return config
+        .sessionRoutingStore()
+        .getOrAssign(
+            key,
+            () -> config.circuitBreaker().map(b -> b.isHealthy(safeModelName(0))).orElse(true));
+  }
+
+  private SessionRoutingKey routingKey(InvocationContext context) {
+    String sessionId = routingSessionId(context);
+    if (sessionId == null) return null;
+    String agentName =
+        routingAgentName != null
+            ? routingAgentName
+            : context.agent() == null ? model() : context.agent().name();
+    return new SessionRoutingKey(
+        Objects.toString(context.session().appName(), ""),
+        sessionId,
+        agentName,
+        routingChainId.get());
+  }
+
+  private static String routingSessionId(InvocationContext context) {
+    if (context == null || context.session() == null) {
+      return null;
+    }
+    Object mriSessionId = context.session().state().get("mriSessionId");
+    if (mriSessionId instanceof String id && !id.isBlank()) {
+      return id;
+    }
+    String id = context.session().id();
+    return id == null || id.isBlank() ? null : id;
+  }
+
+  private Flowable<LlmResponse> attempt(
+      int index,
+      LlmRequest llmRequest,
+      boolean stream,
+      InvocationContext context,
+      SessionRoute route) {
+    return Flowable.defer(() -> attemptModel(index, llmRequest, stream, context, false, route));
+  }
+
+  private Flowable<LlmResponse> attemptModel(
+      int index,
+      LlmRequest llmRequest,
+      boolean stream,
+      InvocationContext context,
+      boolean sessionAssigned,
+      SessionRoute route) {
     final int attemptIndex = index;
+    final String attemptModel = safeModelName(attemptIndex);
+
+    final DragonflyCircuitBreaker breaker = config.circuitBreaker().orElse(null);
+    if (breaker != null) {
+      if (!sessionAssigned && !breaker.isHealthy(attemptModel)) {
+        boolean hasNext = attemptIndex + 1 < chain.size();
+        if (hasNext) {
+          return attempt(attemptIndex + 1, llmRequest, stream, context, route);
+        } else {
+          LlmError cbError =
+              LlmError.builder(attemptModel)
+                  .category(LlmFailureCategory.UNAVAILABLE)
+                  .message("Model skipped because its circuit is open: " + attemptModel)
+                  .build();
+          LlmCallMetrics.recordExhausted(cbError, model(), chain.size());
+          IllegalStateException unavailable =
+              new IllegalStateException(
+                  "All models in failover chain are exhausted or inactive (circuit breaker open): "
+                      + attemptModel);
+          LlmCallMetrics.recordUnavailable(context, unavailable);
+          return Flowable.error(unavailable);
+        }
+      }
+    }
+
+    final String attemptId = UUID.randomUUID().toString();
+    final AtomicBoolean failed = new AtomicBoolean(false);
+    final AtomicBoolean receivedResponse = new AtomicBoolean(false);
     final BaseLlm attemptLlm = resolve(attemptIndex);
+    LlmCallMetrics.recordAttemptStart(context, attemptLlm.model());
 
     // IMPORTANT: Ensure the per-attempt request's model name matches the model being invoked.
     //
@@ -114,8 +243,6 @@ public class FailoverLlm extends BaseLlm {
     Flowable<LlmResponse> flow =
         Flowable.defer(() -> attemptLlm.generateContent(attemptRequest, stream));
 
-    final String attemptModel = safeModelName(attemptIndex);
-
     // 1) Convert in-band error responses (errorCode set) into exceptions so they share the failover
     // path with thrown errors. Also stamp modelVersion when the provider omits it (Azure/Bedrock)
     // so downstream token logging (rae_tokens) records the model that actually ran.
@@ -123,10 +250,16 @@ public class FailoverLlm extends BaseLlm {
         flow.map(
             response -> {
               LlmErrorClassifier.classifyInBand(attemptModel, response)
-                  .filter(config::shouldFailover)
                   .ifPresent(
                       error -> {
-                        throw new InBandFailureException(error);
+                        if (config.shouldFailover(error)) {
+                          throw new InBandFailureException(error);
+                        }
+                        if (failed.compareAndSet(false, true)) {
+                          recordOutcome(breaker, attemptModel, attemptId, false);
+                          LlmCallMetrics.recordFailure(error, attemptIndex, model());
+                          LlmCallMetrics.recordAttemptFailure(context, error);
+                        }
                       });
               if (response.modelVersion().map(String::isBlank).orElse(true)) {
                 return response.toBuilder().modelVersion(attemptModel).build();
@@ -149,8 +282,6 @@ public class FailoverLlm extends BaseLlm {
       flow = flow.timeout(config.attemptTimeout().toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    // 4) Record fallback success exactly once for non-primary attempts (attached before failover so
-    // it only fires for this model's own emissions).
     if (attemptIndex > 0) {
       AtomicBoolean recorded = new AtomicBoolean(false);
       flow =
@@ -162,6 +293,22 @@ public class FailoverLlm extends BaseLlm {
               });
     }
 
+    // Recovery requires a whole successful attempt, not a partial chunk or cancelled stream.
+    flow =
+        flow.doOnNext(response -> receivedResponse.set(true))
+            .doOnComplete(
+                () -> {
+                  if (receivedResponse.get() && !failed.get()) {
+                    if (attemptIndex > 0 && route != null) {
+                      config
+                          .sessionRoutingStore()
+                          .rememberSuccessfulFallback(
+                              route.key(), route.assignment(), attemptIndex);
+                    }
+                    recordOutcome(breaker, attemptModel, attemptId, true);
+                  }
+                });
+
     // 5) Failover.
     return flow.onErrorResumeNext(
         throwable -> {
@@ -170,11 +317,15 @@ public class FailoverLlm extends BaseLlm {
                   ? ((InBandFailureException) throwable).error()
                   : LlmErrorClassifier.classify(attemptModel, throwable);
 
-          LlmCallMetrics.recordFailure(error, attemptIndex, model());
+          if (failed.compareAndSet(false, true)) {
+            recordOutcome(breaker, attemptModel, attemptId, false);
+            LlmCallMetrics.recordFailure(error, attemptIndex, model());
+            LlmCallMetrics.recordAttemptFailure(context, error);
+          }
 
           boolean hasNext = attemptIndex + 1 < chain.size();
           if (hasNext && config.shouldFailover(error)) {
-            return attempt(attemptIndex + 1, llmRequest, stream);
+            return attempt(attemptIndex + 1, llmRequest, stream, context, route);
           }
 
           if (!hasNext) {
@@ -185,10 +336,33 @@ public class FailoverLlm extends BaseLlm {
         });
   }
 
+  private static void recordOutcome(
+      DragonflyCircuitBreaker breaker, String modelName, String attemptId, boolean success) {
+    if (breaker == null) return;
+    try {
+      if (success) breaker.onSuccess(modelName, attemptId);
+      else breaker.onFailure(modelName, attemptId);
+    } catch (RuntimeException error) {
+      // A health-store outage must not turn successful content into a provider failure.
+      logger.warn(
+          "Could not record circuit outcome: model={}, success={}", modelName, success, error);
+    }
+  }
+
   @Override
   public BaseLlmConnection connect(LlmRequest llmRequest) {
     // Live/bidi failover is out of scope; delegate to the primary model.
     return resolve(0).connect(llmRequest);
+  }
+
+  /** Returns the failover config. */
+  public FailoverConfig config() {
+    return config;
+  }
+
+  /** Returns the configured circuit breaker, if present. */
+  public Optional<DragonflyCircuitBreaker> circuitBreaker() {
+    return config.circuitBreaker();
   }
 
   /**
@@ -278,6 +452,8 @@ public class FailoverLlm extends BaseLlm {
   public static final class Builder {
     private final List<Supplier<BaseLlm>> chain = new ArrayList<>();
     private FailoverConfig config = FailoverConfig.defaults();
+    private String routingAgentName;
+    private String routingChainId;
 
     private Builder() {}
 
@@ -308,6 +484,13 @@ public class FailoverLlm extends BaseLlm {
       return this;
     }
 
+    /** Stable logical identity for wrappers recreated by application agent factories. */
+    public Builder routingIdentity(String agentName, String chainId) {
+      this.routingAgentName = Objects.requireNonNull(agentName, "agentName");
+      this.routingChainId = Objects.requireNonNull(chainId, "chainId");
+      return this;
+    }
+
     private void add(Supplier<BaseLlm> supplier) {
       chain.add(Objects.requireNonNull(supplier, "model supplier"));
     }
@@ -316,7 +499,7 @@ public class FailoverLlm extends BaseLlm {
       if (chain.isEmpty()) {
         throw new IllegalStateException("FailoverLlm.Builder requires at least a primary model.");
       }
-      return new FailoverLlm(chain, config);
+      return new FailoverLlm(chain, config, routingAgentName, routingChainId);
     }
   }
 }

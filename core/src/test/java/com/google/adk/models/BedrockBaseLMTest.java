@@ -303,12 +303,13 @@ public final class BedrockBaseLMTest {
   }
 
   @Test
-  public void mapAwsException_credentialsFailureIsActionable() {
+  public void mapAwsException_sdkFailurePreservesCauseWithoutAssumingCredentialFailure() {
     RuntimeException mapped =
         BedrockBaseLM.mapAwsException(SdkClientException.create("IMDS unavailable"));
 
     assertThat(mapped).isInstanceOf(IllegalStateException.class);
-    assertThat(mapped).hasMessageThat().contains("instance profile");
+    assertThat(mapped).hasMessageThat().doesNotContain("default credential chain");
+    assertThat(mapped.getCause()).isInstanceOf(SdkClientException.class);
     assertThat(mapped).hasMessageThat().contains("IMDS unavailable");
   }
 

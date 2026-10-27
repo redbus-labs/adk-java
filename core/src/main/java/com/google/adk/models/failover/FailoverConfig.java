@@ -19,6 +19,8 @@ package com.google.adk.models.failover;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
@@ -28,6 +30,8 @@ public final class FailoverConfig {
   private final Duration attemptTimeout;
   private final boolean treatEmptyResponseAsFailure;
   @Nullable private final Set<LlmFailureCategory> retryableCategories;
+  @Nullable private final DragonflyCircuitBreaker circuitBreaker;
+  private final SessionRoutingStore sessionRoutingStore;
 
   private FailoverConfig(Builder builder) {
     this.attemptTimeout = builder.attemptTimeout;
@@ -36,6 +40,11 @@ public final class FailoverConfig {
         builder.retryableCategories == null
             ? null
             : Collections.unmodifiableSet(EnumSet.copyOf(builder.retryableCategories));
+    this.circuitBreaker = builder.circuitBreaker;
+    this.sessionRoutingStore =
+        builder.sessionRoutingStore == null
+            ? new SessionRoutingStore()
+            : builder.sessionRoutingStore;
   }
 
   /** Default config: no timeout, empty responses treated as failures, default retryable set. */
@@ -78,11 +87,23 @@ public final class FailoverConfig {
     return error.isRetryable();
   }
 
+  /** Returns the circuit breaker instance, if configured. */
+  public Optional<DragonflyCircuitBreaker> circuitBreaker() {
+    return Optional.ofNullable(circuitBreaker);
+  }
+
+  /** Shared by all wrappers using this config; applications can supply a longer-lived store. */
+  public SessionRoutingStore sessionRoutingStore() {
+    return sessionRoutingStore;
+  }
+
   /** Builder for {@link FailoverConfig}. */
   public static final class Builder {
     private Duration attemptTimeout = Duration.ZERO;
     private boolean treatEmptyResponseAsFailure = true;
     @Nullable private Set<LlmFailureCategory> retryableCategories;
+    @Nullable private DragonflyCircuitBreaker circuitBreaker;
+    @Nullable private SessionRoutingStore sessionRoutingStore;
 
     private Builder() {}
 
@@ -107,6 +128,18 @@ public final class FailoverConfig {
      */
     public Builder retryableCategories(@Nullable Set<LlmFailureCategory> retryableCategories) {
       this.retryableCategories = retryableCategories;
+      return this;
+    }
+
+    /** Sets the ADK circuit breaker backed by application-provided Redis connections. */
+    public Builder circuitBreaker(@Nullable DragonflyCircuitBreaker circuitBreaker) {
+      this.circuitBreaker = circuitBreaker;
+      return this;
+    }
+
+    /** Sets the application-owned store used across recreated model and agent instances. */
+    public Builder sessionRoutingStore(SessionRoutingStore sessionRoutingStore) {
+      this.sessionRoutingStore = Objects.requireNonNull(sessionRoutingStore, "sessionRoutingStore");
       return this;
     }
 

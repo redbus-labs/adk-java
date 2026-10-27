@@ -16,6 +16,7 @@
 
 package com.google.adk.models.failover;
 
+import com.google.adk.agents.InvocationContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +32,12 @@ public final class LlmCallMetrics {
 
   /** Receives failover lifecycle events. All methods have no-op defaults. */
   public interface Recorder {
+    default void onAttemptStart(InvocationContext context, String modelName) {}
+
+    default void onAttemptFailure(InvocationContext context, LlmError error) {}
+
+    default void onUnavailable(InvocationContext context, Throwable error) {}
+
     /** Invoked for every failed attempt, whether or not a fallback follows. */
     default void onFailure(LlmError error, int attemptIndex, String primaryModel) {}
 
@@ -53,6 +60,40 @@ public final class LlmCallMetrics {
   /** Returns the active recorder. */
   public static Recorder recorder() {
     return recorder;
+  }
+
+  static void recordAttemptStart(InvocationContext context, String modelName) {
+    if (context == null) {
+      return;
+    }
+    try {
+      recorder.onAttemptStart(context, modelName);
+    } catch (RuntimeException error) {
+      LoggingRecorder.LOGGER.warn("LlmCallMetrics recorder threw on onAttemptStart", error);
+    }
+  }
+
+  static void recordAttemptFailure(InvocationContext context, LlmError error) {
+    if (context == null) {
+      return;
+    }
+    try {
+      recorder.onAttemptFailure(context, error);
+    } catch (RuntimeException recorderError) {
+      LoggingRecorder.LOGGER.warn(
+          "LlmCallMetrics recorder threw on onAttemptFailure", recorderError);
+    }
+  }
+
+  static void recordUnavailable(InvocationContext context, Throwable error) {
+    if (context == null) {
+      return;
+    }
+    try {
+      recorder.onUnavailable(context, error);
+    } catch (RuntimeException recorderError) {
+      LoggingRecorder.LOGGER.warn("LlmCallMetrics recorder threw on onUnavailable", recorderError);
+    }
   }
 
   static void recordFailure(LlmError error, int attemptIndex, String primaryModel) {

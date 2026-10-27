@@ -16,6 +16,7 @@
 
 package com.google.adk.models;
 
+import com.google.adk.models.failover.DragonflyCircuitBreaker;
 import com.google.adk.models.failover.FailoverConfig;
 import com.google.adk.models.failover.FailoverLlm;
 import com.google.common.annotations.VisibleForTesting;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -131,6 +133,14 @@ public final class LlmRegistry {
     }
     // Drop cached instances so subsequent lookups pick up the new (un)wrapped form.
     instances.keySet().removeIf(name -> name.matches(modelNamePattern));
+  }
+
+  /**
+   * Returns the default shared circuit breaker used by registry-built {@link FailoverLlm}
+   * instances, or an empty optional when circuit breaking is disabled.
+   */
+  public static Optional<DragonflyCircuitBreaker> defaultCircuitBreaker() {
+    return defaultFailoverConfig.circuitBreaker();
   }
 
   /** Sets the {@link FailoverConfig} used for registry-built {@link FailoverLlm} instances. */
