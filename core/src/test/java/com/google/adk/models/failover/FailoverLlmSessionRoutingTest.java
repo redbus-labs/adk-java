@@ -209,6 +209,44 @@ class FailoverLlmSessionRoutingTest {
   }
 
   @Test
+  void fullPrimaryShareStillFailsOverAndRemembersSuccessfulFallback() {
+    AtomicInteger primaryCalls = new AtomicInteger();
+    AtomicInteger fallbackCalls = new AtomicInteger();
+    FailoverLlm llm =
+        new FailoverLlm(
+            List.of(
+                () -> model("primary", primaryCalls, true),
+                () -> model("fallback", fallbackCalls, false)),
+            FailoverConfig.builder()
+                .sessionRoutingStore(SessionRoutingStore.withPrimaryTrafficProbability(1))
+                .build());
+    assertThat(call(llm, context("primary-fails"))).isEqualTo("fallback");
+    assertThat(call(llm, context("primary-fails"))).isEqualTo("fallback");
+    assertThat(primaryCalls.get()).isEqualTo(1);
+    assertThat(fallbackCalls.get()).isEqualTo(2);
+  }
+
+  @Test
+  void zeroPrimaryShareStartsAtFallbackAndStillAdvancesAfterFailure() {
+    AtomicInteger primaryCalls = new AtomicInteger();
+    AtomicInteger fallbackCalls = new AtomicInteger();
+    AtomicInteger lastCalls = new AtomicInteger();
+    FailoverLlm llm =
+        new FailoverLlm(
+            List.of(
+                () -> model("primary", primaryCalls, false),
+                () -> model("fallback", fallbackCalls, true),
+                () -> model("last", lastCalls, false)),
+            FailoverConfig.builder()
+                .sessionRoutingStore(SessionRoutingStore.withPrimaryTrafficProbability(0))
+                .build());
+    assertThat(call(llm, context("fallback-fails"))).isEqualTo("last");
+    assertThat(primaryCalls.get()).isEqualTo(0);
+    assertThat(fallbackCalls.get()).isEqualTo(1);
+    assertThat(lastCalls.get()).isEqualTo(1);
+  }
+
+  @Test
   void fallbackAssignedSessionStartsAtFallbackAndContinuesInChainOnFailure() {
     AtomicInteger primaryCalls = new AtomicInteger();
     AtomicInteger fallbackCalls = new AtomicInteger();

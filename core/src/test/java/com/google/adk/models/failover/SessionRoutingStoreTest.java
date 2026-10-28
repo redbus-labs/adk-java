@@ -32,6 +32,49 @@ import org.junit.jupiter.api.Test;
 
 class SessionRoutingStoreTest {
   @Test
+  void explicitPrimaryShareSupportsBothEndpointsRegardlessOfHealth() {
+    for (boolean healthy : List.of(true, false)) {
+      for (double primaryShare : new double[] {0, 1}) {
+        SessionRoutingStore store = SessionRoutingStore.withPrimaryTrafficProbability(primaryShare);
+        for (int session = 0; session < 20; session++) {
+          assertThat(store.getOrAssign(key("S" + session), () -> healthy).offset())
+              .isEqualTo(primaryShare == 1 ? 0 : 1);
+        }
+      }
+    }
+  }
+
+  @Test
+  void halfPrimaryShareSamplesOncePerSessionAndDoesNotUseHealth() {
+    AtomicInteger samples = new AtomicInteger();
+    SessionRoutingStore store =
+        SessionRoutingStore.withPrimaryTrafficProbability(
+            0.5, () -> samples.getAndIncrement() % 2 == 0 ? 0.49 : 0.5, Ticker.systemTicker());
+    for (int session = 0; session < 20; session++) {
+      SessionRoutingKey key = key("S" + session);
+      Assignment first =
+          store.getOrAssign(
+              key,
+              () -> {
+                throw new AssertionError(
+                    "Explicit traffic split must not depend on circuit health");
+              });
+      assertThat(first.offset()).isEqualTo(session % 2);
+      assertThat(store.getOrAssign(key, () -> false)).isSameInstanceAs(first);
+    }
+    assertThat(samples.get()).isEqualTo(20);
+  }
+
+  @Test
+  void invalidPrimaryShareIsRejected() {
+    for (double value : new double[] {-0.01, 1.01, Double.NaN, Double.POSITIVE_INFINITY}) {
+      org.junit.jupiter.api.Assertions.assertThrows(
+          IllegalArgumentException.class,
+          () -> SessionRoutingStore.withPrimaryTrafficProbability(value));
+    }
+  }
+
+  @Test
   void configuredProbabilitySelectsFallbackWhenHealthyAndPrimaryWhenUnhealthy() {
     for (boolean healthy : List.of(true, false)) {
       AtomicInteger draws = new AtomicInteger();

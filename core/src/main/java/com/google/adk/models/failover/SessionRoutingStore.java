@@ -54,6 +54,7 @@ public final class SessionRoutingStore {
   private final Striped<Lock> locks = Striped.lock(256);
   private final DoubleSupplier random;
   private final double routingFlipProbability;
+  private final Double primaryTrafficProbability;
 
   public SessionRoutingStore() {
     this(0.05);
@@ -71,13 +72,44 @@ public final class SessionRoutingStore {
     this(random, ticker, 0.05);
   }
 
+  /**
+   * Selects the initial model independently of circuit health: 1 means primary, 0 means first
+   * fallback. Assignments remain session-sticky and failures still advance through the chain.
+   */
+  public static SessionRoutingStore withPrimaryTrafficProbability(
+      double primaryTrafficProbability) {
+    return withPrimaryTrafficProbability(
+        primaryTrafficProbability,
+        () -> ThreadLocalRandom.current().nextDouble(),
+        Ticker.systemTicker());
+  }
+
+  static SessionRoutingStore withPrimaryTrafficProbability(
+      double primaryTrafficProbability, DoubleSupplier random, Ticker ticker) {
+    if (!Double.isFinite(primaryTrafficProbability)
+        || primaryTrafficProbability < 0
+        || primaryTrafficProbability > 1) {
+      throw new IllegalArgumentException("Primary traffic probability must be between 0 and 1");
+    }
+    return new SessionRoutingStore(random, ticker, 0.05, primaryTrafficProbability);
+  }
+
   SessionRoutingStore(DoubleSupplier random, Ticker ticker, double routingFlipProbability) {
+    this(random, ticker, routingFlipProbability, null);
+  }
+
+  private SessionRoutingStore(
+      DoubleSupplier random,
+      Ticker ticker,
+      double routingFlipProbability,
+      Double primaryTrafficProbability) {
     if (!Double.isFinite(routingFlipProbability)
         || routingFlipProbability < 0
         || routingFlipProbability > 1) {
       throw new IllegalArgumentException("Routing flip probability must be between 0 and 1");
     }
     this.routingFlipProbability = routingFlipProbability;
+    this.primaryTrafficProbability = primaryTrafficProbability;
     this.random = Objects.requireNonNull(random, "random");
     this.defaultOffsetSessions =
         CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.MINUTES).ticker(ticker).build();
@@ -92,8 +124,13 @@ public final class SessionRoutingStore {
     try {
       Assignment existing = cachedAssignment(key);
       if (existing != null) return existing;
-      int offset = primaryHealthy.getAsBoolean() ? 0 : 1;
-      if (random.getAsDouble() < routingFlipProbability) offset = 1 - offset;
+      int offset;
+      if (primaryTrafficProbability != null) {
+        offset = random.getAsDouble() < primaryTrafficProbability ? 0 : 1;
+      } else {
+        offset = primaryHealthy.getAsBoolean() ? 0 : 1;
+        if (random.getAsDouble() < routingFlipProbability) offset = 1 - offset;
+      }
       Assignment assignment = new Assignment(offset, UUID.randomUUID().toString());
       (offset == 0 ? defaultOffsetSessions : experimentalOffsetSessions).put(key, assignment);
       return assignment;
