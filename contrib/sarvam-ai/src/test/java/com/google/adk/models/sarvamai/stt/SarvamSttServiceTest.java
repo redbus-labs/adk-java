@@ -101,6 +101,70 @@ class SarvamSttServiceTest {
   }
 
   @Test
+  void transcribePcm16_wrapsAudioAndAllowsV4() throws Exception {
+    server.enqueue(
+        new MockResponse().setBody("{\"transcript\":\"hello\",\"language_code\":\"en-IN\"}"));
+    var config =
+        SarvamAiConfig.builder()
+            .apiKey("key")
+            .sttModel("saaras:v4")
+            .sttEndpoint(server.url("/speech-to-text").toString())
+            .build();
+    byte[] pcm = {1, 2, 3, 4};
+    var result =
+        new SarvamSttService(config, new OkHttpClient())
+            .transcribePcm16(
+                pcm,
+                16000,
+                1,
+                TranscriptionConfig.builder()
+                    .endpoint(server.url("/speech-to-text").toString())
+                    .language("auto")
+                    .build());
+    assertThat(result.getText()).isEqualTo("hello");
+    byte[] multipart = server.takeRequest(1, TimeUnit.SECONDS).getBody().readByteArray();
+    String body = new String(multipart, java.nio.charset.StandardCharsets.ISO_8859_1);
+    assertThat(body).contains("saaras:v4");
+    assertThat(body).doesNotContain("name=\"language_code\"");
+    int start = body.indexOf("RIFF");
+    assertThat(start).isAtLeast(0);
+    var wav =
+        java.nio.ByteBuffer.wrap(multipart, start, 48)
+            .slice()
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN);
+    assertThat(wav.getInt(24)).isEqualTo(16000);
+    assertThat(wav.getShort(22)).isEqualTo((short) 1);
+    assertThat(wav.getShort(34)).isEqualTo((short) 16);
+    assertThat(wav.getInt(40)).isEqualTo(pcm.length);
+    assertThat(java.util.Arrays.copyOfRange(multipart, start + 44, start + 48)).isEqualTo(pcm);
+  }
+
+  @Test
+  void transcribePcm16_rejectsIncompleteSampleFrame() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            sttService.transcribePcm16(
+                new byte[] {1, 2},
+                16000,
+                2,
+                TranscriptionConfig.builder()
+                    .endpoint(server.url("/speech-to-text").toString())
+                    .build()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            sttService.transcribePcm16(
+                new byte[0],
+                0,
+                1,
+                TranscriptionConfig.builder()
+                    .endpoint(server.url("/speech-to-text").toString())
+                    .build()));
+    assertThat(server.getRequestCount()).isEqualTo(0);
+  }
+
+  @Test
   void isAvailable_returnsTrue() {
     assertThat(sttService.isAvailable()).isTrue();
   }
