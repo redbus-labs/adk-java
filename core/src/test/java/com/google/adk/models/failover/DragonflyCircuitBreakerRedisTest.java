@@ -150,7 +150,7 @@ class DragonflyCircuitBreakerRedisTest {
   }
 
   @Test
-  void primaryTimeoutExercisesRedisCircuitStickySessionsProbesAndExpiry() {
+  void attemptTimeoutExercisesRedisCircuitStickySessionsProbesAndExpiry() {
     var scheduler = new io.reactivex.rxjava3.schedulers.TestScheduler();
     io.reactivex.rxjava3.plugins.RxJavaPlugins.setComputationSchedulerHandler(ignored -> scheduler);
     var primaryCalls = new java.util.concurrent.atomic.AtomicInteger();
@@ -189,7 +189,7 @@ class DragonflyCircuitBreakerRedisTest {
           public Flowable<LlmResponse> generateContent(LlmRequest request, boolean stream) {
             fallbackCalls.incrementAndGet();
             return Flowable.just(LlmResponse.builder().build())
-                .delay(200, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler);
+                .delay(20, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler);
           }
 
           @Override
@@ -200,7 +200,7 @@ class DragonflyCircuitBreakerRedisTest {
     var circuit = new DragonflyCircuitBreaker(connector, 90, 0, 2);
     var config =
         FailoverConfig.builder()
-            .primaryAttemptTimeoutMillis(100)
+            .attemptTimeoutMillis(100)
             .circuitBreaker(circuit)
             .sessionRoutingStore(store)
             .build();
@@ -208,7 +208,7 @@ class DragonflyCircuitBreakerRedisTest {
     var request = LlmRequest.builder().model(model).build();
     var key = new SessionRoutingStore.SessionRoutingKey("test-app", "sticky", "TestAgent", "chain");
     try {
-      // A real primary timeout opens Redis state, while a slower fallback can still finish.
+      // A real attempt timeout opens Redis state, while a responsive fallback can still finish.
       assertEquals(fallbackName, complete(llm, request, "sticky", scheduler));
       assertFalse(circuit.isHealthy(model));
       var pinned = store.getOrAssign(key, () -> true);

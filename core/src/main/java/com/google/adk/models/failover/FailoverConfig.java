@@ -28,7 +28,6 @@ import org.jspecify.annotations.Nullable;
 public final class FailoverConfig {
 
   private final Duration attemptTimeout;
-  @Nullable private final Duration primaryAttemptTimeout;
   private final boolean treatEmptyResponseAsFailure;
   @Nullable private final Set<LlmFailureCategory> retryableCategories;
   @Nullable private final DragonflyCircuitBreaker circuitBreaker;
@@ -36,7 +35,6 @@ public final class FailoverConfig {
 
   private FailoverConfig(Builder builder) {
     this.attemptTimeout = builder.attemptTimeout;
-    this.primaryAttemptTimeout = builder.primaryAttemptTimeout;
     this.treatEmptyResponseAsFailure = builder.treatEmptyResponseAsFailure;
     this.retryableCategories =
         builder.retryableCategories == null
@@ -56,26 +54,6 @@ public final class FailoverConfig {
 
   public static Builder builder() {
     return new Builder();
-  }
-
-  /** Copies tuning while retaining the shared routing store and circuit breaker. */
-  public Builder toBuilder() {
-    return builder()
-        .attemptTimeout(attemptTimeout)
-        .primaryAttemptTimeout(primaryAttemptTimeout)
-        .treatEmptyResponseAsFailure(treatEmptyResponseAsFailure)
-        .retryableCategories(retryableCategories)
-        .circuitBreaker(circuitBreaker)
-        .sessionRoutingStore(sessionRoutingStore);
-  }
-
-  /**
-   * Timeout for chain index zero only. Defaults to {@link #attemptTimeout()} when not overridden.
-   * An explicit zero disables the primary timeout. Fallbacks retain {@link #attemptTimeout()}. Like
-   * the general attempt timeout, this limits first response and gaps between streamed chunks.
-   */
-  public Duration primaryAttemptTimeout() {
-    return primaryAttemptTimeout == null ? attemptTimeout : primaryAttemptTimeout;
   }
 
   /**
@@ -122,7 +100,6 @@ public final class FailoverConfig {
   /** Builder for {@link FailoverConfig}. */
   public static final class Builder {
     private Duration attemptTimeout = Duration.ZERO;
-    @Nullable private Duration primaryAttemptTimeout;
     private boolean treatEmptyResponseAsFailure = true;
     @Nullable private Set<LlmFailureCategory> retryableCategories;
     @Nullable private DragonflyCircuitBreaker circuitBreaker;
@@ -138,19 +115,6 @@ public final class FailoverConfig {
     public Builder attemptTimeoutMillis(long millis) {
       this.attemptTimeout = Duration.ofMillis(Math.max(0, millis));
       return this;
-    }
-
-    /** Overrides only the primary's timeout; null inherits the general attempt timeout. */
-    public Builder primaryAttemptTimeout(@Nullable Duration timeout) {
-      if (timeout != null && timeout.isNegative()) {
-        throw new IllegalArgumentException("Primary attempt timeout must not be negative");
-      }
-      this.primaryAttemptTimeout = timeout;
-      return this;
-    }
-
-    public Builder primaryAttemptTimeoutMillis(long millis) {
-      return primaryAttemptTimeout(Duration.ofMillis(millis));
     }
 
     public Builder treatEmptyResponseAsFailure(boolean treatEmptyResponseAsFailure) {

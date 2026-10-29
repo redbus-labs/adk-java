@@ -288,10 +288,8 @@ public class FailoverLlm extends BaseLlm {
     }
 
     // 3) Latency budget -> TimeoutException -> classified as TIMEOUT.
-    var attemptTimeout =
-        attemptIndex == 0 ? config.primaryAttemptTimeout() : config.attemptTimeout();
-    if (!attemptTimeout.isZero() && !attemptTimeout.isNegative()) {
-      flow = flow.timeout(attemptTimeout.toMillis(), TimeUnit.MILLISECONDS);
+    if (config.isTimeoutEnabled()) {
+      flow = flow.timeout(config.attemptTimeout().toMillis(), TimeUnit.MILLISECONDS);
     }
 
     if (attemptIndex > 0) {
