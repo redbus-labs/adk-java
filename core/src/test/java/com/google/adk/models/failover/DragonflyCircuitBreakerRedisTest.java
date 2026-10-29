@@ -150,6 +150,118 @@ class DragonflyCircuitBreakerRedisTest {
   }
 
   @Test
+  void primaryTimeoutExercisesRedisCircuitStickySessionsProbesAndExpiry() {
+    var scheduler = new io.reactivex.rxjava3.schedulers.TestScheduler();
+    io.reactivex.rxjava3.plugins.RxJavaPlugins.setComputationSchedulerHandler(ignored -> scheduler);
+    var primaryCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var fallbackCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var stalled = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var sample = new java.util.concurrent.atomic.AtomicReference<Double>(0.5);
+    var nanos = new java.util.concurrent.atomic.AtomicLong();
+    var store =
+        SessionRoutingStore.withHealthBasedPrimaryProbabilities(
+            1,
+            0.05,
+            sample::get,
+            new com.google.common.base.Ticker() {
+              @Override
+              public long read() {
+                return nanos.get();
+              }
+            });
+    String fallbackName = model + "-timeout-fallback";
+    BaseLlm primary =
+        new BaseLlm(model) {
+          @Override
+          public Flowable<LlmResponse> generateContent(LlmRequest request, boolean stream) {
+            primaryCalls.incrementAndGet();
+            return stalled.get() ? Flowable.never() : Flowable.just(LlmResponse.builder().build());
+          }
+
+          @Override
+          public BaseLlmConnection connect(LlmRequest request) {
+            throw new UnsupportedOperationException();
+          }
+        };
+    BaseLlm fallback =
+        new BaseLlm(fallbackName) {
+          @Override
+          public Flowable<LlmResponse> generateContent(LlmRequest request, boolean stream) {
+            fallbackCalls.incrementAndGet();
+            return Flowable.just(LlmResponse.builder().build())
+                .delay(200, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler);
+          }
+
+          @Override
+          public BaseLlmConnection connect(LlmRequest request) {
+            throw new UnsupportedOperationException();
+          }
+        };
+    var circuit = new DragonflyCircuitBreaker(connector, 90, 0, 2);
+    var config =
+        FailoverConfig.builder()
+            .primaryAttemptTimeoutMillis(100)
+            .circuitBreaker(circuit)
+            .sessionRoutingStore(store)
+            .build();
+    var llm = new FailoverLlm(List.of(() -> primary, () -> fallback), config, "TestAgent", "chain");
+    var request = LlmRequest.builder().model(model).build();
+    var key = new SessionRoutingStore.SessionRoutingKey("test-app", "sticky", "TestAgent", "chain");
+    try {
+      // A real primary timeout opens Redis state, while a slower fallback can still finish.
+      assertEquals(fallbackName, complete(llm, request, "sticky", scheduler));
+      assertFalse(circuit.isHealthy(model));
+      var pinned = store.getOrAssign(key, () -> true);
+      assertEquals(1, pinned.offset());
+      try (Jedis jedis = redis()) {
+        assertEquals("1", jedis.hget(keys.get(2), "open"));
+        assertEquals(1, jedis.zcard(DragonflyCircuitBreaker.keys(fallbackName).get(1)));
+      }
+      var recreated =
+          new FailoverLlm(List.of(() -> primary, () -> fallback), config, "TestAgent", "chain");
+      assertEquals(fallbackName, complete(recreated, request, "sticky", scheduler));
+      assertEquals(fallbackName, complete(recreated, request, "new-unhealthy", scheduler));
+      assertEquals(1, primaryCalls.get());
+
+      // Force the probe bucket for two NEW sessions; completed primary probes close the circuit.
+      stalled.set(false);
+      sample.set(0.0);
+      assertEquals(model, complete(recreated, request, "probe-1", scheduler));
+      assertFalse(circuit.isHealthy(model));
+      assertEquals(model, complete(recreated, request, "probe-2", scheduler));
+      assertTrue(circuit.isHealthy(model));
+      assertEquals(fallbackName, complete(recreated, request, "sticky", scheduler));
+      assertEquals(3, primaryCalls.get());
+      assertEquals(4, fallbackCalls.get());
+      nanos.set(java.util.concurrent.TimeUnit.MINUTES.toNanos(10));
+      assertEquals(model, complete(recreated, request, "sticky", scheduler));
+      assertNotEquals(pinned.generation(), store.getOrAssign(key, () -> true).generation());
+    } finally {
+      io.reactivex.rxjava3.plugins.RxJavaPlugins.reset();
+      try (Jedis jedis = redis()) {
+        jedis.del(DragonflyCircuitBreaker.keys(fallbackName).toArray(String[]::new));
+      }
+    }
+  }
+
+  private String complete(
+      FailoverLlm llm,
+      LlmRequest request,
+      String sessionId,
+      io.reactivex.rxjava3.schedulers.TestScheduler scheduler) {
+    var context =
+        com.google.adk.agents.InvocationContext.builder()
+            .agent(com.google.adk.agents.LlmAgent.builder().name("TestAgent").build())
+            .sessionService(new com.google.adk.sessions.InMemorySessionService())
+            .session(com.google.adk.sessions.Session.builder(sessionId).appName("test-app").build())
+            .build();
+    var observer = llm.generateContent(request, false, context).test();
+    scheduler.advanceTimeBy(300, java.util.concurrent.TimeUnit.MILLISECONDS);
+    observer.assertComplete().assertNoErrors().assertValueCount(1);
+    return observer.values().get(0).modelVersion().orElseThrow();
+  }
+
+  @Test
   void failoverRoutesAroundOpenPrimaryAndTwoCompletedProbesRestoreItWithoutDatabaseContext() {
     var primaryCalls = new java.util.concurrent.atomic.AtomicInteger();
     var fallbackCalls = new java.util.concurrent.atomic.AtomicInteger();

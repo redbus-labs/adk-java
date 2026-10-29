@@ -11,7 +11,8 @@ import redis.clients.jedis.Protocol.Command;
 import redis.clients.jedis.params.ZAddParams;
 
 /**
- * Model health in Redis; session assignment and recovery sampling belong to SessionRoutingStore.
+ * Model health in Redis, shared by model name across applications using the same database. Session
+ * assignment and recovery sampling belong to SessionRoutingStore.
  */
 public class DragonflyCircuitBreaker {
   private static final Logger logger = LoggerFactory.getLogger(DragonflyCircuitBreaker.class);
@@ -101,14 +102,14 @@ public class DragonflyCircuitBreaker {
             : value.toString());
   }
 
-  // Keep the existing keys and hash-tag placement compatible with deployed Redis state.
+  // Circuit health is shared by model name across applications using the same Redis database.
   static List<String> keys(String modelName) {
     Objects.requireNonNull(modelName, "modelName");
     if (modelName.isBlank() || modelName.indexOf('{') >= 0 || modelName.indexOf('}') >= 0) {
       throw new IllegalArgumentException(
           "Model name must be nonblank and cannot contain Redis hash-tag braces");
     }
-    String base = "rae:llm:{" + modelName + "}";
+    String base = "adk:llm:{" + modelName + "}";
     return List.of(base + "_FAILED", base + "_SUCCESS", base + "_STATE");
   }
 }

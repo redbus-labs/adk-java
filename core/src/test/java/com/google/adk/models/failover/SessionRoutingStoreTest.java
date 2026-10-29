@@ -75,18 +75,16 @@ class SessionRoutingStoreTest {
   }
 
   @Test
-  void configuredProbabilitySelectsFallbackWhenHealthyAndPrimaryWhenUnhealthy() {
+  void configuredProbabilityProbesOnlyWhenUnhealthy() {
     for (boolean healthy : List.of(true, false)) {
       AtomicInteger draws = new AtomicInteger();
       SessionRoutingStore store =
           new SessionRoutingStore(
               () -> draws.getAndIncrement() == 0 ? 0.09 : 0.10, Ticker.systemTicker(), 0.10);
-      assertThat(store.getOrAssign(key("below-threshold"), () -> healthy).offset())
-          .isEqualTo(healthy ? 1 : 0);
+      assertThat(store.getOrAssign(key("below-threshold"), () -> healthy).offset()).isEqualTo(0);
       assertThat(store.getOrAssign(key("at-threshold"), () -> healthy).offset())
           .isEqualTo(healthy ? 0 : 1);
-      assertThat(store.getOrAssign(key("below-threshold"), () -> !healthy).offset())
-          .isEqualTo(healthy ? 1 : 0);
+      assertThat(store.getOrAssign(key("below-threshold"), () -> !healthy).offset()).isEqualTo(0);
       assertThat(draws.get()).isEqualTo(2);
     }
   }
@@ -94,11 +92,73 @@ class SessionRoutingStoreTest {
   @Test
   void zeroAndFullProbabilityHaveDeterministicAssignments() {
     for (boolean healthy : List.of(true, false)) {
-      var noFlip = new SessionRoutingStore(() -> 0.5, Ticker.systemTicker(), 0);
-      var alwaysFlip = new SessionRoutingStore(() -> 0.5, Ticker.systemTicker(), 1);
-      assertThat(noFlip.getOrAssign(key("S1"), () -> healthy).offset()).isEqualTo(healthy ? 0 : 1);
-      assertThat(alwaysFlip.getOrAssign(key("S1"), () -> healthy).offset())
-          .isEqualTo(healthy ? 1 : 0);
+      var noProbe = new SessionRoutingStore(() -> 0.5, Ticker.systemTicker(), 0);
+      var alwaysProbe = new SessionRoutingStore(() -> 0.5, Ticker.systemTicker(), 1);
+      assertThat(noProbe.getOrAssign(key("S1"), () -> healthy).offset()).isEqualTo(healthy ? 0 : 1);
+      assertThat(alwaysProbe.getOrAssign(key("S1"), () -> healthy).offset()).isEqualTo(0);
+    }
+  }
+
+  @Test
+  void probeFactoryUsesHealthForNewSessionsAndPreservesExistingAssignmentsAfterRecovery() {
+    SessionRoutingStore store = SessionRoutingStore.withPrimaryProbeProbability(0);
+    assertThat(store.getOrAssign(key("healthy"), () -> true).offset()).isEqualTo(0);
+    Assignment fallback = store.getOrAssign(key("outage"), () -> false);
+    assertThat(fallback.offset()).isEqualTo(1);
+    assertThat(store.getOrAssign(key("outage"), () -> true)).isSameInstanceAs(fallback);
+    assertThat(store.getOrAssign(key("recovered"), () -> true).offset()).isEqualTo(0);
+    assertThat(
+            SessionRoutingStore.withPrimaryProbeProbability(1)
+                .getOrAssign(key("probe"), () -> false)
+                .offset())
+        .isEqualTo(0);
+  }
+
+  @Test
+  void healthBasedProbabilitiesApplyToNewSessionsAndKeepExistingAssignments() {
+    AtomicInteger samples = new AtomicInteger();
+    SessionRoutingStore store =
+        SessionRoutingStore.withHealthBasedPrimaryProbabilities(
+            0.8, 0.2, () -> (samples.getAndIncrement() % 100) / 100.0, Ticker.systemTicker());
+    for (boolean healthy : List.of(true, false)) {
+      int primaryCount = 0;
+      for (int session = 0; session < 100; session++) {
+        SessionRoutingKey key = key(healthy + "-" + session);
+        Assignment assignment = store.getOrAssign(key, () -> healthy);
+        if (assignment.offset() == 0) primaryCount++;
+        assertThat(store.getOrAssign(key, () -> !healthy)).isSameInstanceAs(assignment);
+      }
+      assertThat(primaryCount).isEqualTo(healthy ? 80 : 20);
+    }
+    assertThat(samples.get()).isEqualTo(200);
+  }
+
+  @Test
+  void healthBasedProbabilitiesAllowZeroAndOneIndependently() {
+    for (double healthyShare : new double[] {0, 1}) {
+      for (double unhealthyShare : new double[] {0, 1}) {
+        SessionRoutingStore store =
+            SessionRoutingStore.withHealthBasedPrimaryProbabilities(healthyShare, unhealthyShare);
+        assertThat(store.getOrAssign(key("healthy"), () -> true).offset())
+            .isEqualTo(healthyShare == 1 ? 0 : 1);
+        assertThat(store.getOrAssign(key("unhealthy"), () -> false).offset())
+            .isEqualTo(unhealthyShare == 1 ? 0 : 1);
+      }
+    }
+  }
+
+  @Test
+  void healthBasedProbabilitiesRejectInvalidValuesInEitherState() {
+    for (double value :
+        new double[] {
+          -0.01, 1.01, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY
+        }) {
+      org.junit.jupiter.api.Assertions.assertThrows(
+          IllegalArgumentException.class,
+          () -> SessionRoutingStore.withHealthBasedPrimaryProbabilities(value, 0.05));
+      org.junit.jupiter.api.Assertions.assertThrows(
+          IllegalArgumentException.class,
+          () -> SessionRoutingStore.withHealthBasedPrimaryProbabilities(1, value));
     }
   }
 
@@ -114,8 +174,8 @@ class SessionRoutingStoreTest {
   void assignmentKeySeparatesApplicationSessionAgentAndChain() {
     AtomicInteger samples = new AtomicInteger();
     SessionRoutingStore store =
-        new SessionRoutingStore(
-            () -> samples.getAndIncrement() == 0 ? 0 : 0.5, Ticker.systemTicker());
+        SessionRoutingStore.withPrimaryTrafficProbability(
+            0.5, () -> samples.getAndIncrement() == 0 ? 0.75 : 0.25, Ticker.systemTicker());
     SessionRoutingKey first = new SessionRoutingKey("RAY", "S1", "Filter", "chain1");
     assertThat(store.getOrAssign(first, () -> true).offset()).isEqualTo(1);
     for (SessionRoutingKey other :
@@ -145,9 +205,9 @@ class SessionRoutingStoreTest {
       SessionRoutingStore store = new SessionRoutingStore(() -> 0.5, ticker(nanos));
       SessionRoutingKey key = key("S1");
       Assignment first = store.getOrAssign(key, () -> healthy);
-      nanos.set(TimeUnit.SECONDS.toNanos(59));
+      nanos.set(TimeUnit.SECONDS.toNanos(599));
       assertThat(store.getOrAssign(key, () -> !healthy)).isSameInstanceAs(first);
-      nanos.set(TimeUnit.MINUTES.toNanos(1));
+      nanos.set(TimeUnit.MINUTES.toNanos(10));
       Assignment next = store.getOrAssign(key, () -> !healthy);
       assertThat(next.offset()).isNotEqualTo(first.offset());
       assertThat(next.generation()).isNotEqualTo(first.generation());
@@ -174,7 +234,7 @@ class SessionRoutingStoreTest {
     SessionRoutingStore store = new SessionRoutingStore(() -> 0.5, ticker(nanos));
     SessionRoutingKey key = key("S1");
     Assignment old = store.getOrAssign(key, () -> true);
-    nanos.set(TimeUnit.MINUTES.toNanos(1));
+    nanos.set(TimeUnit.MINUTES.toNanos(10));
     Assignment replacement = store.getOrAssign(key, () -> true);
     store.rememberSuccessfulFallback(key, old, 1);
     assertThat(store.getOrAssign(key, () -> true)).isSameInstanceAs(replacement);
@@ -184,12 +244,12 @@ class SessionRoutingStoreTest {
   @Test
   void completedFallbackDoesNotRefreshAnExistingFallbackTtl() {
     AtomicLong nanos = new AtomicLong();
-    SessionRoutingStore store = new SessionRoutingStore(() -> 0, ticker(nanos));
+    SessionRoutingStore store = new SessionRoutingStore(() -> 0.5, ticker(nanos));
     SessionRoutingKey key = key("S1");
-    Assignment first = store.getOrAssign(key, () -> true);
-    nanos.set(TimeUnit.SECONDS.toNanos(59));
+    Assignment first = store.getOrAssign(key, () -> false);
+    nanos.set(TimeUnit.SECONDS.toNanos(599));
     store.rememberSuccessfulFallback(key, first, 1);
-    nanos.set(TimeUnit.MINUTES.toNanos(1));
+    nanos.set(TimeUnit.MINUTES.toNanos(10));
     assertThat(store.getOrAssign(key, () -> true).generation()).isNotEqualTo(first.generation());
   }
 

@@ -44,13 +44,43 @@ import org.junit.jupiter.api.Test;
 
 class FailoverLlmSessionRoutingTest {
   @Test
-  void healthyPrimaryAssignsNinetyFiveSessionsToPrimaryAndFiveToFallback() {
-    assertSplit(true, 95, 5);
+  void healthyPrimaryAssignsAllSessionsToPrimary() {
+    assertSplit(true, 100, 0);
   }
 
   @Test
   void unhealthyPrimaryAssignsFiveSessionsToPrimaryAndNinetyFiveToFallback() {
     assertSplit(false, 5, 95);
+  }
+
+  @Test
+  void applicationConfiguredSharesControlInitialModelForEachHealthState() {
+    for (boolean healthy : List.of(true, false)) {
+      AtomicInteger samples = new AtomicInteger();
+      AtomicInteger primaryCalls = new AtomicInteger();
+      AtomicInteger fallbackCalls = new AtomicInteger();
+      FailoverConfig config =
+          FailoverConfig.builder()
+              .sessionRoutingStore(
+                  SessionRoutingStore.withHealthBasedPrimaryProbabilities(
+                      0.8, 0.2, () -> samples.getAndIncrement() / 100.0, Ticker.systemTicker()))
+              .circuitBreaker(
+                  TestCircuitBreaker.healthyWhen(name -> !name.equals("primary") || healthy))
+              .build();
+      FailoverLlm llm =
+          new FailoverLlm(
+              model("primary", primaryCalls, false),
+              List.of(model("fallback", fallbackCalls, false)),
+              config);
+      for (int session = 0; session < 100; session++) {
+        InvocationContext context = context("session-" + session);
+        String selected = call(llm, context);
+        assertThat(call(llm, context)).isEqualTo(selected);
+      }
+      assertThat(primaryCalls.get()).isEqualTo(healthy ? 160 : 40);
+      assertThat(fallbackCalls.get()).isEqualTo(healthy ? 40 : 160);
+      assertThat(samples.get()).isEqualTo(100);
+    }
   }
 
   private void assertSplit(boolean healthy, int primarySessions, int fallbackSessions) {
@@ -81,20 +111,24 @@ class FailoverLlmSessionRoutingTest {
     FailoverLlm llm =
         llm(
             healthy,
-            () -> samples.getAndIncrement() == 0 ? 0.5 : 0.0,
+            () -> {
+              samples.incrementAndGet();
+              return 0.5;
+            },
             Ticker.systemTicker(),
             model("primary", new AtomicInteger(), false),
             model("fallback", new AtomicInteger(), false));
     assertThat(call(llm, context("default"))).isEqualTo("primary");
-    assertThat(call(llm, context("experiment"))).isEqualTo("fallback");
     healthy.set(false);
+    // A new session starts on fallback once the primary is unhealthy.
+    assertThat(call(llm, context("experiment"))).isEqualTo("fallback");
     assertThat(call(llm, context("default"))).isEqualTo("primary");
     assertThat(call(llm, context("experiment"))).isEqualTo("fallback");
     assertThat(samples.get()).isEqualTo(2);
   }
 
   @Test
-  void bothCachesExpireOneMinuteAfterWriteAndReadsDoNotRefreshTtl() {
+  void bothCachesExpireTenMinutesAfterWriteAndReadsDoNotRefreshTtl() {
     for (boolean initiallyHealthy : List.of(true, false)) {
       AtomicBoolean healthy = new AtomicBoolean(initiallyHealthy);
       AtomicLong nanos = new AtomicLong();
@@ -116,30 +150,50 @@ class FailoverLlmSessionRoutingTest {
               ticker,
               model("primary", new AtomicInteger(), false),
               model("fallback", new AtomicInteger(), false));
-      String first = call(llm, context("mri"));
+      String first = call(llm, context("adk-session"));
       healthy.set(!initiallyHealthy);
-      nanos.set(TimeUnit.SECONDS.toNanos(59));
-      assertThat(call(llm, context("mri"))).isEqualTo(first);
+      nanos.set(TimeUnit.SECONDS.toNanos(599));
+      assertThat(call(llm, context("adk-session"))).isEqualTo(first);
       assertThat(samples.get()).isEqualTo(1);
-      nanos.set(TimeUnit.MINUTES.toNanos(1));
-      assertThat(call(llm, context("mri"))).isNotEqualTo(first);
+      nanos.set(TimeUnit.MINUTES.toNanos(10));
+      assertThat(call(llm, context("adk-session"))).isNotEqualTo(first);
       assertThat(samples.get()).isEqualTo(2);
     }
   }
 
   @Test
-  void mriSessionIdentityIsUsedAcrossDifferentAdkSessions() {
+  void adkSessionIdentitySeparatesSessionsWithTheSameState() {
+    AtomicInteger samples = new AtomicInteger();
+    FailoverLlm llm =
+        llm(
+            new AtomicBoolean(false),
+            () -> samples.getAndIncrement() == 0 ? 0.5 : 0,
+            Ticker.systemTicker(),
+            model("primary", new AtomicInteger(), false),
+            model("fallback", new AtomicInteger(), false));
+    assertThat(call(llm, context("adk-1", "same-state"))).isEqualTo("fallback");
+    assertThat(call(llm, context("adk-2", "same-state"))).isEqualTo("primary");
+    assertThat(call(llm, context("adk-1", "changed-state"))).isEqualTo("fallback");
+    assertThat(samples.get()).isEqualTo(2);
+  }
+
+  @Test
+  void missingOrBlankAdkSessionIdentityStillAllowsOrdinaryFailover() {
     AtomicInteger samples = new AtomicInteger();
     FailoverLlm llm =
         llm(
             new AtomicBoolean(true),
-            () -> samples.getAndIncrement() == 0 ? 0 : 0.5,
+            () -> {
+              samples.incrementAndGet();
+              return 0.5;
+            },
             Ticker.systemTicker(),
-            model("primary", new AtomicInteger(), false),
+            model("primary", new AtomicInteger(), true),
             model("fallback", new AtomicInteger(), false));
-    assertThat(call(llm, context("adk-1", "same-mri"))).isEqualTo("fallback");
-    assertThat(call(llm, context("adk-2", "same-mri"))).isEqualTo("fallback");
-    assertThat(samples.get()).isEqualTo(1);
+    assertThat(call(llm, null)).isEqualTo("fallback");
+    assertThat(call(llm, context(""))).isEqualTo("fallback");
+    assertThat(call(llm, context(" "))).isEqualTo("fallback");
+    assertThat(samples.get()).isEqualTo(0);
   }
 
   @Test
@@ -149,9 +203,9 @@ class FailoverLlmSessionRoutingTest {
     FailoverLlm first =
         llm(new AtomicBoolean(true), () -> 0.5, Ticker.systemTicker(), primary, fallback);
     FailoverLlm second =
-        llm(new AtomicBoolean(true), () -> 0, Ticker.systemTicker(), primary, fallback);
-    assertThat(call(first, context("same-mri"))).isEqualTo("primary");
-    assertThat(call(second, context("same-mri"))).isEqualTo("fallback");
+        llm(new AtomicBoolean(false), () -> 0.5, Ticker.systemTicker(), primary, fallback);
+    assertThat(call(first, context("same-state"))).isEqualTo("primary");
+    assertThat(call(second, context("same-state"))).isEqualTo("fallback");
   }
 
   @Test
@@ -159,8 +213,8 @@ class FailoverLlmSessionRoutingTest {
     AtomicInteger samples = new AtomicInteger();
     FailoverLlm llm =
         llm(
-            new AtomicBoolean(true),
-            () -> samples.getAndIncrement() % 2 == 0 ? 0 : 0.5,
+            new AtomicBoolean(false),
+            () -> samples.getAndIncrement() % 2 == 0 ? 0.5 : 0,
             Ticker.systemTicker(),
             model("primary", new AtomicInteger(), false),
             model("fallback", new AtomicInteger(), false));
@@ -168,7 +222,7 @@ class FailoverLlmSessionRoutingTest {
     try {
       List<Future<String>> responses = new ArrayList<>();
       for (int i = 0; i < 40; i++) {
-        responses.add(executor.submit(() -> call(llm, context("same-mri"))));
+        responses.add(executor.submit(() -> call(llm, context("same-state"))));
       }
       for (Future<String> response : responses) {
         assertThat(response.get(10, TimeUnit.SECONDS)).isEqualTo("fallback");
@@ -258,7 +312,7 @@ class FailoverLlmSessionRoutingTest {
                 () -> model("fallback", fallbackCalls, true),
                 () -> model("last", lastCalls, false)),
             FailoverConfig.builder()
-                .sessionRoutingStore(new SessionRoutingStore(() -> 0, Ticker.systemTicker()))
+                .sessionRoutingStore(SessionRoutingStore.withPrimaryTrafficProbability(0))
                 .build());
     assertThat(call(llm, context("experiment"))).isEqualTo("last");
     assertThat(call(llm, context("experiment"))).isEqualTo("last");
@@ -287,14 +341,14 @@ class FailoverLlmSessionRoutingTest {
             ticker,
             model("primary", primaryCalls, primaryFails::get),
             model("fallback", fallbackCalls, false));
-    assertThat(call(llm, context("mri"))).isEqualTo("fallback");
+    assertThat(call(llm, context("adk-session"))).isEqualTo("fallback");
     primaryFails.set(false);
-    nanos.set(TimeUnit.SECONDS.toNanos(59));
-    assertThat(call(llm, context("mri"))).isEqualTo("fallback");
+    nanos.set(TimeUnit.SECONDS.toNanos(599));
+    assertThat(call(llm, context("adk-session"))).isEqualTo("fallback");
     assertThat(primaryCalls.get()).isEqualTo(1);
     assertThat(fallbackCalls.get()).isEqualTo(2);
-    nanos.set(TimeUnit.MINUTES.toNanos(1));
-    assertThat(call(llm, context("mri"))).isEqualTo("primary");
+    nanos.set(TimeUnit.MINUTES.toNanos(10));
+    assertThat(call(llm, context("adk-session"))).isEqualTo("primary");
     assertThat(primaryCalls.get()).isEqualTo(2);
   }
 
@@ -309,9 +363,9 @@ class FailoverLlmSessionRoutingTest {
             Ticker.systemTicker(),
             model("primary", primaryCalls, primaryFails::get),
             model("fallback", new AtomicInteger(), true));
-    assertThrows(LlmHttpException.class, () -> call(llm, context("mri")));
+    assertThrows(LlmHttpException.class, () -> call(llm, context("adk-session")));
     primaryFails.set(false);
-    assertThat(call(llm, context("mri"))).isEqualTo("primary");
+    assertThat(call(llm, context("adk-session"))).isEqualTo("primary");
     assertThat(primaryCalls.get()).isEqualTo(2);
   }
 
@@ -329,7 +383,8 @@ class FailoverLlmSessionRoutingTest {
             model("primary", new AtomicInteger(), false),
             model("fallback", new AtomicInteger(), false));
     Flowable<LlmResponse> response =
-        llm.generateContent(LlmRequest.builder().model("primary").build(), false, context("mri"));
+        llm.generateContent(
+            LlmRequest.builder().model("primary").build(), false, context("adk-session"));
     assertThat(samples.get()).isEqualTo(0);
     response.toList().blockingGet();
     response.toList().blockingGet();
@@ -340,8 +395,8 @@ class FailoverLlmSessionRoutingTest {
   void recreatedAgentAndWrapperReuseFallbackAssignment() {
     AtomicInteger samples = new AtomicInteger();
     SessionRoutingStore store =
-        new SessionRoutingStore(
-            () -> samples.getAndIncrement() == 0 ? 0 : 0.5, Ticker.systemTicker());
+        SessionRoutingStore.withPrimaryTrafficProbability(
+            0.5, () -> samples.getAndIncrement() == 0 ? 0.75 : 0.25, Ticker.systemTicker());
     FailoverConfig config = FailoverConfig.builder().sessionRoutingStore(store).build();
     for (int request = 0; request < 5; request++) {
       FailoverLlm recreated =
@@ -350,9 +405,8 @@ class FailoverLlmSessionRoutingTest {
                   () -> model("primary", new AtomicInteger(), false),
                   () -> model("fallback", new AtomicInteger(), false)),
               config,
-              "FilterGenerationAgent",
               "chain-A");
-      assertThat(call(recreated, context("adk-" + request, "same-mri"))).isEqualTo("fallback");
+      assertThat(call(recreated, context("same-adk-session"))).isEqualTo("fallback");
     }
     assertThat(samples.get()).isEqualTo(1);
   }
@@ -379,9 +433,8 @@ class FailoverLlmSessionRoutingTest {
                   () -> model("primary", primaryCalls, fails::get),
                   () -> model("fallback", new AtomicInteger(), false)),
               config,
-              "FilterGenerationAgent",
               "chain-A");
-      assertThat(call(recreated, context("same-mri"))).isEqualTo("fallback");
+      assertThat(call(recreated, context("same-state"))).isEqualTo("fallback");
       fails.set(false);
     }
     assertThat(primaryCalls.get()).isEqualTo(1);
@@ -394,8 +447,8 @@ class FailoverLlmSessionRoutingTest {
     FailoverConfig config =
         FailoverConfig.builder()
             .sessionRoutingStore(
-                new SessionRoutingStore(
-                    () -> samples.getAndIncrement() == 0 ? 0 : 0.5, Ticker.systemTicker()))
+                SessionRoutingStore.withPrimaryTrafficProbability(
+                    0.5, () -> samples.getAndIncrement() == 0 ? 0.75 : 0.25, Ticker.systemTicker()))
             .build();
     for (String name : List.of("FilterGenerationAgent", "Coordinator", "FilterGenerationAgent")) {
       FailoverLlm recreated =
@@ -404,12 +457,108 @@ class FailoverLlmSessionRoutingTest {
                   () -> model("primary", new AtomicInteger(), false),
                   () -> model("fallback", new AtomicInteger(), false)),
               config,
-              name,
               "same-chain");
-      assertThat(call(recreated, context("same-mri")))
+      assertThat(call(recreated, context("same-state", "test", "user", name, Map.of())))
           .isEqualTo(name.equals("FilterGenerationAgent") ? "fallback" : "primary");
     }
     assertThat(samples.get()).isEqualTo(2);
+  }
+
+  @Test
+  void sharedWrapperUsesContextAgentAndApplicationButDoesNotUseUserIdentity() {
+    AtomicInteger samples = new AtomicInteger();
+    FailoverConfig config =
+        FailoverConfig.builder()
+            .sessionRoutingStore(
+                SessionRoutingStore.withPrimaryTrafficProbability(
+                    0.5, () -> samples.getAndIncrement() == 0 ? 0.75 : 0.25, Ticker.systemTicker()))
+            .build();
+    FailoverLlm llm =
+        FailoverLlm.builder()
+            .primary(model("primary", new AtomicInteger(), false))
+            .fallback(model("fallback", new AtomicInteger(), false))
+            .config(config)
+            .routingChainId("same-chain")
+            .build();
+
+    assertThat(call(llm, context("session", "app", "user-1", "AgentA", Map.of())))
+        .isEqualTo("fallback");
+    assertThat(call(llm, context("session", "app", "user-2", "AgentA", Map.of())))
+        .isEqualTo("fallback");
+    assertThat(call(llm, context("session", "app", null, "AgentA", Map.of())))
+        .isEqualTo("fallback");
+    assertThat(call(llm, context("session", "app", "user-1", "AgentB", Map.of())))
+        .isEqualTo("primary");
+    assertThat(call(llm, context("session", "other-app", "user-1", "AgentA", Map.of())))
+        .isEqualTo("primary");
+    assertThat(samples.get()).isEqualTo(3);
+  }
+
+  @Test
+  void configuredAgentIdentitySurvivesMissingOrDifferentContextAgentsAndWrapperRecreation() {
+    AtomicInteger samples = new AtomicInteger();
+    FailoverConfig config =
+        FailoverConfig.builder()
+            .sessionRoutingStore(
+                SessionRoutingStore.withPrimaryTrafficProbability(
+                    0.5, () -> samples.getAndIncrement() == 0 ? 0.75 : 0.25, Ticker.systemTicker()))
+            .build();
+    InvocationContext withoutAgent = contextWithoutAgent("session");
+    for (int request = 0; request < 3; request++) {
+      FailoverLlm llm =
+          new FailoverLlm(
+              List.of(
+                  () -> model("primary", new AtomicInteger(), false),
+                  () -> model("fallback", new AtomicInteger(), false)),
+              config,
+              "ConfiguredAgent",
+              "chain");
+      assertThat(call(llm, withoutAgent)).isEqualTo("fallback");
+      assertThat(call(llm, context("session"))).isEqualTo("fallback");
+    }
+    FailoverLlm otherAgent =
+        FailoverLlm.builder()
+            .primary(model("primary", new AtomicInteger(), false))
+            .fallback(model("fallback", new AtomicInteger(), false))
+            .config(config)
+            .routingIdentity("OtherAgent", "chain")
+            .build();
+    assertThat(call(otherAgent, withoutAgent)).isEqualTo("primary");
+    assertThat(samples.get()).isEqualTo(2);
+  }
+
+  @Test
+  void missingAgentIdentityUsesOrdinaryFailoverWithoutCaching() {
+    AtomicInteger samples = new AtomicInteger();
+    FailoverLlm llm =
+        llm(
+            new AtomicBoolean(true),
+            () -> {
+              samples.incrementAndGet();
+              return 0.5;
+            },
+            Ticker.systemTicker(),
+            model("primary", new AtomicInteger(), true),
+            model("fallback", new AtomicInteger(), false));
+    assertThat(call(llm, contextWithoutAgent("session"))).isEqualTo("fallback");
+    assertThat(samples.get()).isEqualTo(0);
+  }
+
+  @Test
+  void blankConfiguredAgentIdentityIsRejected() {
+    for (String name : List.of("", " ")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              new FailoverLlm(
+                  List.of(() -> model("primary", new AtomicInteger(), false)),
+                  FailoverConfig.defaults(),
+                  name,
+                  "chain"));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> FailoverLlm.builder().routingIdentity(name, "chain"));
+    }
   }
 
   @Test
@@ -418,8 +567,8 @@ class FailoverLlmSessionRoutingTest {
     FailoverConfig config =
         FailoverConfig.builder()
             .sessionRoutingStore(
-                new SessionRoutingStore(
-                    () -> samples.getAndIncrement() == 0 ? 0 : 0.5, Ticker.systemTicker()))
+                SessionRoutingStore.withPrimaryTrafficProbability(
+                    0.5, () -> samples.getAndIncrement() == 0 ? 0.75 : 0.25, Ticker.systemTicker()))
             .build();
     for (int request = 0; request < 3; request++) {
       FailoverLlm recreated =
@@ -427,7 +576,7 @@ class FailoverLlmSessionRoutingTest {
               model("primary", new AtomicInteger(), false),
               List.of(model("fallback", new AtomicInteger(), false)),
               config);
-      assertThat(call(recreated, context("same-mri"))).isEqualTo("fallback");
+      assertThat(call(recreated, context("same-state"))).isEqualTo("fallback");
     }
     assertThat(samples.get()).isEqualTo(1);
   }
@@ -448,9 +597,8 @@ class FailoverLlmSessionRoutingTest {
                   return model("fallback", new AtomicInteger(), false);
                 }),
             config,
-            "Coordinator",
             "primary-then-fallback");
-    assertThat(call(llm, context("mri"))).isEqualTo("primary");
+    assertThat(call(llm, context("adk-session"))).isEqualTo("primary");
     assertThat(constructions.get()).isEqualTo(0);
   }
 
@@ -469,20 +617,31 @@ class FailoverLlmSessionRoutingTest {
             .build());
   }
 
-  private static InvocationContext context(String id) {
-    return context(id, id);
+  private static InvocationContext contextWithoutAgent(String id) {
+    // ADK's builder requires an agent; simulate a custom context omitting it for this guard.
+    InvocationContext context = org.mockito.Mockito.spy(context(id));
+    org.mockito.Mockito.when(context.agent()).thenReturn(null);
+    return context;
   }
 
-  private static InvocationContext context(String adkId, String mriId) {
+  private static InvocationContext context(String id) {
+    return context(id, Map.of());
+  }
+
+  private static InvocationContext context(String adkId, String stateValue) {
+    return context(adkId, Map.of("applicationSessionId", stateValue));
+  }
+
+  private static InvocationContext context(String adkId, Map<String, Object> state) {
+    return context(adkId, "test", "user", "test_agent", state);
+  }
+
+  private static InvocationContext context(
+      String adkId, String appName, String userId, String agentName, Map<String, Object> state) {
     return InvocationContext.builder()
-        .agent(LlmAgent.builder().name("test_agent").build())
+        .agent(LlmAgent.builder().name(agentName).build())
         .sessionService(new InMemorySessionService())
-        .session(
-            Session.builder(adkId)
-                .appName("test")
-                .userId("user")
-                .state(Map.of("mriSessionId", mriId))
-                .build())
+        .session(Session.builder(adkId).appName(appName).userId(userId).state(state).build())
         .build();
   }
 

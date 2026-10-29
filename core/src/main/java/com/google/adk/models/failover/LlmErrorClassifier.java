@@ -197,9 +197,6 @@ public final class LlmErrorClassifier {
     if (lower.startsWith("bedrock") || lower.contains("anthropic") || lower.contains("claude")) {
       return "bedrock";
     }
-    if (lower.startsWith("redbusadg")) {
-      return "redbusadg";
-    }
     if (lower.startsWith("ollama")) {
       return "ollama";
     }

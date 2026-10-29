@@ -44,9 +44,10 @@ import org.slf4j.LoggerFactory;
  * <p>Key properties:
  *
  * <ul>
- *   <li><b>Session routing.</b> Two shared caches retain logical agent/session offsets for ten
- *       minutes. New sessions use a 95/5 primary/fallback split while the primary is healthy and a
- *       5/95 split while it is unhealthy. A successful failover pins the session to that fallback.
+ *   <li><b>Session routing.</b> Two shared caches retain ADK session/agent offsets for ten minutes.
+ *       New sessions use configurable health-based probabilities (by default, 100% primary while
+ *       healthy and 5% primary while unhealthy). A successful failover pins the session to that
+ *       fallback.
  *   <li><b>Lazy failover.</b> After the session's starting model, further fallbacks are attempted
  *       lazily on a classified, retryable failure or timeout.
  *   <li><b>Transparent to all agents.</b> Because it implements {@link BaseLlm}, any {@code
@@ -91,23 +92,35 @@ public class FailoverLlm extends BaseLlm {
    * @param config failover tuning.
    */
   public FailoverLlm(List<Supplier<BaseLlm>> chain, FailoverConfig config) {
-    this(chain, config, null, null);
+    this(chain, config, null);
   }
 
-  /** Builds a wrapper with stable logical identity supplied by application wiring. */
+  /** Builds a wrapper with an explicit chain identity without resolving lazy fallbacks. */
+  public FailoverLlm(List<Supplier<BaseLlm>> chain, FailoverConfig config, String routingChainId) {
+    this(chain, config, null, routingChainId);
+  }
+
+  /**
+   * Builds a wrapper with a configured agent name and optional ordered chain identity. The
+   * configured name takes precedence over the invocation's agent name. If null, the name is
+   * obtained from the invocation context. Session identity still comes from ADK's context.
+   */
   public FailoverLlm(
       List<Supplier<BaseLlm>> chain,
       FailoverConfig config,
       String routingAgentName,
       String routingChainId) {
     super(primaryModelName(chain));
+    if (routingAgentName != null && routingAgentName.isBlank()) {
+      throw new IllegalArgumentException("Routing agent name must not be blank");
+    }
+    this.routingAgentName = routingAgentName;
     List<Supplier<BaseLlm>> memoized = new ArrayList<>(chain.size());
     for (Supplier<BaseLlm> supplier : chain) {
       memoized.add(Suppliers.memoize(supplier::get)::get);
     }
     this.chain = memoized;
     this.config = config == null ? FailoverConfig.defaults() : config;
-    this.routingAgentName = routingAgentName;
     this.routingChainId =
         routingChainId == null
             ? Suppliers.memoize(
@@ -159,7 +172,8 @@ public class FailoverLlm extends BaseLlm {
     String agentName =
         routingAgentName != null
             ? routingAgentName
-            : context.agent() == null ? model() : context.agent().name();
+            : context.agent() == null ? null : context.agent().name();
+    if (agentName == null || agentName.isBlank()) return null;
     return new SessionRoutingKey(
         Objects.toString(context.session().appName(), ""),
         sessionId,
@@ -170,10 +184,6 @@ public class FailoverLlm extends BaseLlm {
   private static String routingSessionId(InvocationContext context) {
     if (context == null || context.session() == null) {
       return null;
-    }
-    Object mriSessionId = context.session().state().get("mriSessionId");
-    if (mriSessionId instanceof String id && !id.isBlank()) {
-      return id;
     }
     String id = context.session().id();
     return id == null || id.isBlank() ? null : id;
@@ -278,8 +288,10 @@ public class FailoverLlm extends BaseLlm {
     }
 
     // 3) Latency budget -> TimeoutException -> classified as TIMEOUT.
-    if (config.isTimeoutEnabled()) {
-      flow = flow.timeout(config.attemptTimeout().toMillis(), TimeUnit.MILLISECONDS);
+    var attemptTimeout =
+        attemptIndex == 0 ? config.primaryAttemptTimeout() : config.attemptTimeout();
+    if (!attemptTimeout.isZero() && !attemptTimeout.isNegative()) {
+      flow = flow.timeout(attemptTimeout.toMillis(), TimeUnit.MILLISECONDS);
     }
 
     if (attemptIndex > 0) {
@@ -484,9 +496,19 @@ public class FailoverLlm extends BaseLlm {
       return this;
     }
 
-    /** Stable logical identity for wrappers recreated by application agent factories. */
+    /** Configured agent and chain identity for wrappers dedicated to a logical agent. */
     public Builder routingIdentity(String agentName, String chainId) {
-      this.routingAgentName = Objects.requireNonNull(agentName, "agentName");
+      Objects.requireNonNull(agentName, "agentName");
+      if (agentName.isBlank()) {
+        throw new IllegalArgumentException("Routing agent name must not be blank");
+      }
+      this.routingAgentName = agentName;
+      this.routingChainId = Objects.requireNonNull(chainId, "chainId");
+      return this;
+    }
+
+    /** Stable ordered chain identity, allowing fallback suppliers to remain lazy. */
+    public Builder routingChainId(String chainId) {
       this.routingChainId = Objects.requireNonNull(chainId, "chainId");
       return this;
     }

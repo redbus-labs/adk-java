@@ -146,7 +146,7 @@ class DragonflyCircuitBreakerTest {
   }
 
   @Test
-  void rejectsInvalidConfigurationAndKeepsExistingModelKeys() {
+  void rejectsInvalidConfigurationAndUsesGenericModelKeys() {
     assertThrows(
         IllegalArgumentException.class, () -> new DragonflyCircuitBreaker(connector, 0, 10));
     assertThrows(
@@ -156,7 +156,7 @@ class DragonflyCircuitBreakerTest {
     assertThrows(
         IllegalArgumentException.class, () -> DragonflyCircuitBreaker.keys("model{other}"));
     assertEquals(
-        List.of("rae:llm:{primary}_FAILED", "rae:llm:{primary}_SUCCESS", "rae:llm:{primary}_STATE"),
+        List.of("adk:llm:{primary}_FAILED", "adk:llm:{primary}_SUCCESS", "adk:llm:{primary}_STATE"),
         keys);
   }
 }

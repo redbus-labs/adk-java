@@ -349,6 +349,93 @@ class FailoverLlmTest {
     assertThat(successes.get()).isEqualTo(1);
   }
 
+  @Test
+  void primaryOnlyTimeoutAllowsFallbackToRunLongerThanPrimaryBudget() {
+    var scheduler = new io.reactivex.rxjava3.schedulers.TestScheduler();
+    io.reactivex.rxjava3.plugins.RxJavaPlugins.setComputationSchedulerHandler(ignored -> scheduler);
+    try {
+      var config = FailoverConfig.builder().primaryAttemptTimeoutMillis(100).build();
+      var observer =
+          new FailoverLlm(
+                  model("primary", new AtomicInteger(), Flowable.never()),
+                  List.of(
+                      model(
+                          "fallback",
+                          new AtomicInteger(),
+                          success()
+                              .delay(200, java.util.concurrent.TimeUnit.MILLISECONDS, scheduler))),
+                  config)
+              .generateContent(LlmRequest.builder().build(), false)
+              .test();
+      scheduler.advanceTimeBy(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+      observer.assertNoValues().assertNotComplete();
+      scheduler.advanceTimeBy(199, java.util.concurrent.TimeUnit.MILLISECONDS);
+      observer.assertNoValues().assertNoErrors();
+      scheduler.advanceTimeBy(1, java.util.concurrent.TimeUnit.MILLISECONDS);
+      observer.assertValueCount(1).assertComplete().assertNoErrors();
+      assertThat(observer.values().get(0).modelVersion()).hasValue("fallback");
+    } finally {
+      io.reactivex.rxjava3.plugins.RxJavaPlugins.reset();
+    }
+  }
+
+  @Test
+  void primaryOverrideDoesNotDisableTheGeneralFallbackTimeout() {
+    var scheduler = new io.reactivex.rxjava3.schedulers.TestScheduler();
+    io.reactivex.rxjava3.plugins.RxJavaPlugins.setComputationSchedulerHandler(ignored -> scheduler);
+    try {
+      var config =
+          FailoverConfig.builder()
+              .attemptTimeoutMillis(50)
+              .primaryAttemptTimeoutMillis(100)
+              .build();
+      var observer =
+          new FailoverLlm(
+                  model("primary", new AtomicInteger(), Flowable.never()),
+                  List.of(model("fallback", new AtomicInteger(), Flowable.never())),
+                  config)
+              .generateContent(LlmRequest.builder().build(), false)
+              .test();
+      scheduler.advanceTimeBy(149, java.util.concurrent.TimeUnit.MILLISECONDS);
+      observer.assertNoValues().assertNoErrors().assertNotComplete();
+      scheduler.advanceTimeBy(1, java.util.concurrent.TimeUnit.MILLISECONDS);
+      observer.assertError(java.util.concurrent.TimeoutException.class);
+    } finally {
+      io.reactivex.rxjava3.plugins.RxJavaPlugins.reset();
+    }
+  }
+
+  @Test
+  void copyingConfigRetainsSharedServicesAndTimeoutInheritance() {
+    var breaker = outcomes(new AtomicInteger(), new AtomicInteger());
+    var original =
+        FailoverConfig.builder()
+            .attemptTimeoutMillis(500)
+            .circuitBreaker(breaker)
+            .treatEmptyResponseAsFailure(false)
+            .retryableCategories(java.util.Set.of(LlmFailureCategory.TIMEOUT))
+            .build();
+    var overridden = original.toBuilder().primaryAttemptTimeoutMillis(100).build();
+    assertThat(overridden.primaryAttemptTimeout()).isEqualTo(java.time.Duration.ofMillis(100));
+    assertThat(overridden.attemptTimeout()).isEqualTo(java.time.Duration.ofMillis(500));
+    assertThat(overridden.sessionRoutingStore()).isSameInstanceAs(original.sessionRoutingStore());
+    assertThat(overridden.circuitBreaker().orElseThrow()).isSameInstanceAs(breaker);
+    assertThat(overridden.treatEmptyResponseAsFailure()).isFalse();
+    assertThat(
+            overridden.shouldFailover(
+                LlmError.builder("model").category(LlmFailureCategory.AUTH).build()))
+        .isFalse();
+    assertThat(original.primaryAttemptTimeout()).isEqualTo(java.time.Duration.ofMillis(500));
+    assertThat(original.toBuilder().attemptTimeoutMillis(600).build().primaryAttemptTimeout())
+        .isEqualTo(java.time.Duration.ofMillis(600));
+    assertThat(
+            overridden.toBuilder().primaryAttemptTimeoutMillis(0).build().primaryAttemptTimeout())
+        .isEqualTo(java.time.Duration.ZERO);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> FailoverConfig.builder().primaryAttemptTimeoutMillis(-1));
+  }
+
   private static DragonflyCircuitBreaker outcomes(AtomicInteger successes, AtomicInteger failures) {
     return new TestCircuitBreaker() {
       @Override

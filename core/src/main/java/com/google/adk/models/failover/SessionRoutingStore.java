@@ -35,12 +35,15 @@ import java.util.function.DoubleSupplier;
 
 /** Application-owned session assignments shared by recreated agents and model wrappers. */
 public final class SessionRoutingStore {
-  /** Logical identity, independent of Java object or invocation identity. */
+  /**
+   * ADK session identity scoped to an application, agent and ordered model chain. Session IDs must
+   * be unique within the application; user identity is not part of routing.
+   */
   public record SessionRoutingKey(
-      String applicationName, String mriSessionId, String agentName, String chainId) {
+      String appName, String sessionId, String agentName, String chainId) {
     public SessionRoutingKey {
-      Objects.requireNonNull(applicationName, "applicationName");
-      Objects.requireNonNull(mriSessionId, "mriSessionId");
+      Objects.requireNonNull(appName, "appName");
+      Objects.requireNonNull(sessionId, "sessionId");
       Objects.requireNonNull(agentName, "agentName");
       Objects.requireNonNull(chainId, "chainId");
     }
@@ -53,19 +56,54 @@ public final class SessionRoutingStore {
   private final Cache<SessionRoutingKey, Assignment> experimentalOffsetSessions;
   private final Striped<Lock> locks = Striped.lock(256);
   private final DoubleSupplier random;
-  private final double routingFlipProbability;
+  private final double healthyPrimaryProbability;
+  private final double primaryProbeProbability;
   private final Double primaryTrafficProbability;
 
   public SessionRoutingStore() {
     this(0.05);
   }
 
-  /** Probability of choosing fallback when healthy, or primary when unhealthy; range [0, 1]. */
-  public SessionRoutingStore(double routingFlipProbability) {
+  /**
+   * Probability of probing the primary when unhealthy; healthy primaries receive all new sessions.
+   */
+  public SessionRoutingStore(double primaryProbeProbability) {
     this(
         () -> ThreadLocalRandom.current().nextDouble(),
         Ticker.systemTicker(),
-        routingFlipProbability);
+        primaryProbeProbability);
+  }
+
+  /** Healthy primaries receive all new sessions; unhealthy primaries receive the probe share. */
+  public static SessionRoutingStore withPrimaryProbeProbability(double primaryProbeProbability) {
+    return new SessionRoutingStore(primaryProbeProbability);
+  }
+
+  /**
+   * Configures primary selection for new sessions separately for each circuit health state. Both
+   * probabilities must be finite and between 0 and 1, inclusive. The first fallback receives the
+   * remaining share. Existing assignments remain sticky until expiry or successful failover.
+   * Without a circuit breaker, the primary is considered healthy.
+   *
+   * <p>For example, {@code (1.0, 0.05)} routes all new sessions to a healthy primary and probes an
+   * unhealthy primary with five percent of new sessions. Applications own configuration loading.
+   */
+  public static SessionRoutingStore withHealthBasedPrimaryProbabilities(
+      double healthyPrimaryProbability, double unhealthyPrimaryProbability) {
+    return withHealthBasedPrimaryProbabilities(
+        healthyPrimaryProbability,
+        unhealthyPrimaryProbability,
+        () -> ThreadLocalRandom.current().nextDouble(),
+        Ticker.systemTicker());
+  }
+
+  static SessionRoutingStore withHealthBasedPrimaryProbabilities(
+      double healthyPrimaryProbability,
+      double unhealthyPrimaryProbability,
+      DoubleSupplier random,
+      Ticker ticker) {
+    return new SessionRoutingStore(
+        random, ticker, healthyPrimaryProbability, unhealthyPrimaryProbability, null);
   }
 
   SessionRoutingStore(DoubleSupplier random, Ticker ticker) {
@@ -91,33 +129,40 @@ public final class SessionRoutingStore {
         || primaryTrafficProbability > 1) {
       throw new IllegalArgumentException("Primary traffic probability must be between 0 and 1");
     }
-    return new SessionRoutingStore(random, ticker, 0.05, primaryTrafficProbability);
+    return new SessionRoutingStore(random, ticker, 1.0, 0.05, primaryTrafficProbability);
   }
 
-  SessionRoutingStore(DoubleSupplier random, Ticker ticker, double routingFlipProbability) {
-    this(random, ticker, routingFlipProbability, null);
+  SessionRoutingStore(DoubleSupplier random, Ticker ticker, double primaryProbeProbability) {
+    this(random, ticker, 1.0, primaryProbeProbability, null);
   }
 
   private SessionRoutingStore(
       DoubleSupplier random,
       Ticker ticker,
-      double routingFlipProbability,
+      double healthyPrimaryProbability,
+      double primaryProbeProbability,
       Double primaryTrafficProbability) {
-    if (!Double.isFinite(routingFlipProbability)
-        || routingFlipProbability < 0
-        || routingFlipProbability > 1) {
-      throw new IllegalArgumentException("Routing flip probability must be between 0 and 1");
+    if (!Double.isFinite(healthyPrimaryProbability)
+        || healthyPrimaryProbability < 0
+        || healthyPrimaryProbability > 1) {
+      throw new IllegalArgumentException("Healthy primary probability must be between 0 and 1");
     }
-    this.routingFlipProbability = routingFlipProbability;
+    if (!Double.isFinite(primaryProbeProbability)
+        || primaryProbeProbability < 0
+        || primaryProbeProbability > 1) {
+      throw new IllegalArgumentException("Primary probe probability must be between 0 and 1");
+    }
+    this.healthyPrimaryProbability = healthyPrimaryProbability;
+    this.primaryProbeProbability = primaryProbeProbability;
     this.primaryTrafficProbability = primaryTrafficProbability;
     this.random = Objects.requireNonNull(random, "random");
     this.defaultOffsetSessions =
-        CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.MINUTES).ticker(ticker).build();
+        CacheBuilder.newBuilder().expireAfterWrite(10, TimeUnit.MINUTES).ticker(ticker).build();
     this.experimentalOffsetSessions =
-        CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.MINUTES).ticker(ticker).build();
+        CacheBuilder.newBuilder().expireAfterWrite(10, TimeUnit.MINUTES).ticker(ticker).build();
   }
 
-  /** Samples once for a missing key; cached reads do not extend the one-minute TTL. */
+  /** Samples once for a missing key; cached reads do not extend the ten-minute TTL. */
   public Assignment getOrAssign(SessionRoutingKey key, BooleanSupplier primaryHealthy) {
     Lock lock = locks.get(key);
     lock.lock();
@@ -128,8 +173,10 @@ public final class SessionRoutingStore {
       if (primaryTrafficProbability != null) {
         offset = random.getAsDouble() < primaryTrafficProbability ? 0 : 1;
       } else {
-        offset = primaryHealthy.getAsBoolean() ? 0 : 1;
-        if (random.getAsDouble() < routingFlipProbability) offset = 1 - offset;
+        boolean healthy = primaryHealthy.getAsBoolean();
+        double sample = random.getAsDouble();
+        double probability = healthy ? healthyPrimaryProbability : primaryProbeProbability;
+        offset = sample < probability ? 0 : 1;
       }
       Assignment assignment = new Assignment(offset, UUID.randomUUID().toString());
       (offset == 0 ? defaultOffsetSessions : experimentalOffsetSessions).put(key, assignment);
