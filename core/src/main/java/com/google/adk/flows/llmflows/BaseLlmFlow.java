@@ -37,6 +37,7 @@ import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.models.LlmRegistry;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.failover.FailoverLlm;
 import com.google.adk.telemetry.Tracing;
 import com.google.adk.tools.BaseTool;
 import com.google.adk.tools.BaseToolset;
@@ -258,10 +259,14 @@ public abstract class BaseLlmFlow implements BaseFlow {
                                                 agent.resolvedModel().modelName().get());
                                     LlmRequest finalLlmRequest = llmRequestBuilder.build();
 
-                                    return llm.generateContent(
-                                            finalLlmRequest,
-                                            context.runConfig().streamingMode()
-                                                == StreamingMode.SSE)
+                                    boolean stream =
+                                        context.runConfig().streamingMode() == StreamingMode.SSE;
+                                    Flowable<LlmResponse> responses =
+                                        llm instanceof FailoverLlm failover
+                                            ? failover.generateContent(
+                                                finalLlmRequest, stream, context)
+                                            : llm.generateContent(finalLlmRequest, stream);
+                                    return responses
                                         .onErrorResumeNext(
                                             exception ->
                                                 handleOnModelErrorCallback(
