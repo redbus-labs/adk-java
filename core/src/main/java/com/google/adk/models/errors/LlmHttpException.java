@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-package com.google.adk.models.failover;
+package com.google.adk.models.errors;
 
 /**
  * Typed exception carrying an HTTP status code for providers that otherwise swallow or stringify
  * transport failures (e.g. the Azure and Bedrock REST transports).
  *
  * <p>Surfacing the status code as a first-class field lets {@link LlmErrorClassifier} reliably bin
- * to a {@link LlmFailureCategory} so that {@link FailoverLlm} can decide whether to fail over.
+ * to a {@link LlmFailureCategory} so that the failover wrapper can decide whether to fail over.
  */
 public class LlmHttpException extends RuntimeException {
 

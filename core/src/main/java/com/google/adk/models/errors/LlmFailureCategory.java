@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-package com.google.adk.models.failover;
+package com.google.adk.models.errors;
 
 /**
  * Normalized classification of an LLM call failure across heterogeneous providers (Gemini/genai,
  * Azure, Bedrock, Claude, Ollama, etc.).
  *
  * <p>The {@code retryableByDefault} flag expresses whether a failure of this category is, in
- * general, worth failing over to another model. Transient/availability failures are retryable;
- * deterministic client-side failures (bad request, auth, content blocked) are not, because retrying
- * the same request against a different model would almost certainly fail the same way.
+ * general, worth failing over to another model. Authentication and bad-request failures are also
+ * retryable because another provider may accept the request with its own credentials. Content
+ * blocking is non-retryable by default. Applications can override the category policy.
  */
 public enum LlmFailureCategory {
   /** HTTP 429 / quota exhausted. Worth failing over to a different model or provider. */

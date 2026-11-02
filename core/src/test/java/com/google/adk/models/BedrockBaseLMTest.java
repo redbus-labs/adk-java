@@ -17,7 +17,7 @@ package com.google.adk.models;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.adk.models.failover.LlmHttpException;
+import com.google.adk.models.errors.LlmHttpException;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import java.util.HashMap;

@@ -16,7 +16,7 @@
 
 package com.google.adk.models;
 
-import com.google.adk.models.failover.DragonflyCircuitBreaker;
+import com.google.adk.models.failover.CircuitBreaker;
 import com.google.adk.models.failover.FailoverConfig;
 import com.google.adk.models.failover.FailoverLlm;
 import com.google.common.annotations.VisibleForTesting;
@@ -139,7 +139,7 @@ public final class LlmRegistry {
    * Returns the default shared circuit breaker used by registry-built {@link FailoverLlm}
    * instances, or an empty optional when circuit breaking is disabled.
    */
-  public static Optional<DragonflyCircuitBreaker> defaultCircuitBreaker() {
+  public static Optional<CircuitBreaker> defaultCircuitBreaker() {
     return defaultFailoverConfig.circuitBreaker();
   }
 

@@ -16,6 +16,8 @@
 
 package com.google.adk.models.failover;
 
+import com.google.adk.models.errors.LlmError;
+import com.google.adk.models.errors.LlmFailureCategory;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -29,13 +31,15 @@ public final class FailoverConfig {
 
   private final Duration attemptTimeout;
   private final boolean treatEmptyResponseAsFailure;
+  private final boolean failoverOnPartialStream;
   @Nullable private final Set<LlmFailureCategory> retryableCategories;
-  @Nullable private final DragonflyCircuitBreaker circuitBreaker;
+  @Nullable private final CircuitBreaker circuitBreaker;
   private final SessionRoutingStore sessionRoutingStore;
 
   private FailoverConfig(Builder builder) {
     this.attemptTimeout = builder.attemptTimeout;
     this.treatEmptyResponseAsFailure = builder.treatEmptyResponseAsFailure;
+    this.failoverOnPartialStream = builder.failoverOnPartialStream;
     this.retryableCategories =
         builder.retryableCategories == null
             ? null
@@ -79,6 +83,14 @@ public final class FailoverConfig {
     return treatEmptyResponseAsFailure;
   }
 
+  /**
+   * Whether streaming may switch models after content has been forwarded. Disabled by default to
+   * avoid mixing answers or tool calls from different models. Metadata-only emissions do not count.
+   */
+  public boolean failoverOnPartialStream() {
+    return failoverOnPartialStream;
+  }
+
   /** Decides whether a given error should trigger failover to the next model in the chain. */
   public boolean shouldFailover(LlmError error) {
     if (retryableCategories != null) {
@@ -88,7 +100,7 @@ public final class FailoverConfig {
   }
 
   /** Returns the circuit breaker instance, if configured. */
-  public Optional<DragonflyCircuitBreaker> circuitBreaker() {
+  public Optional<CircuitBreaker> circuitBreaker() {
     return Optional.ofNullable(circuitBreaker);
   }
 
@@ -101,8 +113,9 @@ public final class FailoverConfig {
   public static final class Builder {
     private Duration attemptTimeout = Duration.ZERO;
     private boolean treatEmptyResponseAsFailure = true;
+    private boolean failoverOnPartialStream = false;
     @Nullable private Set<LlmFailureCategory> retryableCategories;
-    @Nullable private DragonflyCircuitBreaker circuitBreaker;
+    @Nullable private CircuitBreaker circuitBreaker;
     @Nullable private SessionRoutingStore sessionRoutingStore;
 
     private Builder() {}
@@ -122,6 +135,12 @@ public final class FailoverConfig {
       return this;
     }
 
+    /** Explicitly allows mixed-model streaming output after a partially emitted response. */
+    public Builder failoverOnPartialStream(boolean failoverOnPartialStream) {
+      this.failoverOnPartialStream = failoverOnPartialStream;
+      return this;
+    }
+
     /**
      * Overrides which categories trigger failover. When unset, each category's default ({@link
      * LlmFailureCategory#isRetryableByDefault()}) is used.
@@ -131,8 +150,8 @@ public final class FailoverConfig {
       return this;
     }
 
-    /** Sets the ADK circuit breaker backed by application-provided Redis connections. */
-    public Builder circuitBreaker(@Nullable DragonflyCircuitBreaker circuitBreaker) {
+    /** Sets the application-provided model health implementation. */
+    public Builder circuitBreaker(@Nullable CircuitBreaker circuitBreaker) {
       this.circuitBreaker = circuitBreaker;
       return this;
     }

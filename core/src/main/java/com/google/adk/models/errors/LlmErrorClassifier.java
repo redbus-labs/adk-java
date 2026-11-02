@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.adk.models.failover;
+package com.google.adk.models.errors;
 
 import com.google.adk.models.LlmResponse;
 import com.google.genai.errors.ApiException;
@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
  *       TimeoutException}).
  *   <li>In-band "successful" emissions where {@link LlmResponse#errorCode()} is set (the genai path
  *       emits these instead of throwing).
- *   <li>Silent empty completion (handled by {@link FailoverLlm}, not here).
+ *   <li>Silent empty completion (handled by the failover wrapper, not here).
  * </ul>
  */
 public final class LlmErrorClassifier {
@@ -97,6 +97,10 @@ public final class LlmErrorClassifier {
   /**
    * Classifies an in-band error carried on a "successful" {@link LlmResponse} (i.e. {@link
    * LlmResponse#errorCode()} is present). Returns empty if the response is not an error.
+   *
+   * <p>The code is a model finish/block reason, not an HTTP status. Preserve it as providerCode and
+   * leave httpStatus unknown (-1); transport exceptions are classified separately by {@link
+   * #classify(String, Throwable)}.
    */
   public static Optional<LlmError> classifyInBand(String modelName, LlmResponse response) {
     if (response.errorCode().isEmpty()) {
@@ -114,27 +118,22 @@ public final class LlmErrorClassifier {
             .build());
   }
 
-  /** Maps an HTTP status code to a normalized failure category. */
+  /**
+   * Maps a transport HTTP status to a normalized category. Model finish/block reasons are
+   * classified separately; an unknown or absent transport status remains UNKNOWN.
+   */
   public static LlmFailureCategory categoryForStatus(int status) {
-    if (status == 429) {
-      return LlmFailureCategory.RATE_LIMIT;
-    }
-    if (status == 503) {
-      return LlmFailureCategory.UNAVAILABLE;
-    }
-    if (status == 408) {
-      return LlmFailureCategory.TIMEOUT;
-    }
-    if (status == 401 || status == 403) {
-      return LlmFailureCategory.AUTH;
-    }
-    if (status >= 500 && status < 600) {
-      return LlmFailureCategory.SERVER_ERROR;
-    }
-    if (status >= 400 && status < 500) {
-      return LlmFailureCategory.BAD_REQUEST;
-    }
-    return LlmFailureCategory.UNKNOWN;
+    return switch (status) {
+      case 401, 403 -> LlmFailureCategory.AUTH;
+      case 408 -> LlmFailureCategory.TIMEOUT;
+      case 429 -> LlmFailureCategory.RATE_LIMIT;
+      case 503 -> LlmFailureCategory.UNAVAILABLE;
+      default -> {
+        if (status >= 400 && status < 500) yield LlmFailureCategory.BAD_REQUEST;
+        if (status >= 500 && status < 600) yield LlmFailureCategory.SERVER_ERROR;
+        yield LlmFailureCategory.UNKNOWN;
+      }
+    };
   }
 
   private static LlmFailureCategory categoryForFinishReason(String reason) {

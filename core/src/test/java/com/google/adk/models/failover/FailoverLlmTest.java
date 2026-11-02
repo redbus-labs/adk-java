@@ -25,6 +25,8 @@ import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.errors.LlmError;
+import com.google.adk.models.errors.LlmHttpException;
 import com.google.genai.types.Content;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Flowable;
@@ -209,8 +211,9 @@ class FailoverLlmTest {
   void onlyCompletedNonemptyAttemptsReceiveSuccessCredit() {
     AtomicInteger successes = new AtomicInteger();
     AtomicInteger failures = new AtomicInteger();
-    DragonflyCircuitBreaker breaker = outcomes(successes, failures);
-    FailoverConfig config = FailoverConfig.builder().circuitBreaker(breaker).build();
+    CircuitBreaker breaker = outcomes(successes, failures);
+    FailoverConfig config =
+        FailoverConfig.builder().circuitBreaker(breaker).failoverOnPartialStream(true).build();
     new FailoverLlm(model("primary", new AtomicInteger(), success()), List.of(), config)
         .generateContent(LlmRequest.builder().build(), true)
         .toList()
@@ -276,7 +279,7 @@ class FailoverLlmTest {
   @Test
   void completionHookFailureDoesNotTurnSuccessIntoFailover() {
     AtomicInteger fallbackCalls = new AtomicInteger();
-    DragonflyCircuitBreaker breaker =
+    CircuitBreaker breaker =
         new TestCircuitBreaker() {
           @Override
           public boolean isHealthy(String name) {
@@ -302,7 +305,7 @@ class FailoverLlmTest {
   void healthCheckAndAttemptIdentityAreLocalToEachSubscription() {
     List<String> ids = new ArrayList<>();
     AtomicInteger checks = new AtomicInteger();
-    DragonflyCircuitBreaker breaker =
+    CircuitBreaker breaker =
         new TestCircuitBreaker() {
           @Override
           public boolean isHealthy(String name) {
@@ -349,7 +352,106 @@ class FailoverLlmTest {
     assertThat(successes.get()).isEqualTo(1);
   }
 
-  private static DragonflyCircuitBreaker outcomes(AtomicInteger successes, AtomicInteger failures) {
+  @Test
+  void streamingFailureBeforeContentStillFallsBack() {
+    assertStreamFallback(Flowable.empty(), FailoverConfig.defaults(), true, true);
+  }
+
+  @Test
+  void streamingFailureAfterTextDoesNotMixModelsByDefault() {
+    assertStreamFallback(success(), FailoverConfig.defaults(), true, false);
+  }
+
+  @Test
+  void streamingFailureAfterToolCallDoesNotRepeatToolWork() {
+    LlmResponse tool =
+        LlmResponse.builder()
+            .content(
+                Content.fromParts(
+                    Part.builder()
+                        .functionCall(
+                            com.google.genai.types.FunctionCall.builder()
+                                .name("book")
+                                .id("call-1")
+                                .build())
+                        .build()))
+            .partial(true)
+            .build();
+    assertStreamFallback(Flowable.just(tool), FailoverConfig.defaults(), true, false);
+  }
+
+  @Test
+  void streamingMetadataAndEmptyPartsDoNotPreventFallback() {
+    assertStreamFallback(
+        Flowable.just(
+            LlmResponse.builder().build(),
+            LlmResponse.builder()
+                .content(Content.builder().role("model").parts(List.of()).build())
+                .build()),
+        FailoverConfig.defaults(),
+        true,
+        true);
+  }
+
+  @Test
+  void partialStreamFallbackCanBeExplicitlyEnabled() {
+    assertStreamFallback(
+        success(), FailoverConfig.builder().failoverOnPartialStream(true).build(), true, true);
+  }
+
+  @Test
+  void nonStreamingFallbackIsUnchangedAfterAnEmission() {
+    assertStreamFallback(success(), FailoverConfig.defaults(), false, true);
+  }
+
+  @Test
+  void timeoutAfterStreamingContentDoesNotSwitchModels() {
+    AtomicInteger fallbackCalls = new AtomicInteger();
+    FailoverLlm llm =
+        new FailoverLlm(
+            model("primary", new AtomicInteger(), success().concatWith(Flowable.never())),
+            List.of(model("fallback", fallbackCalls, success())),
+            FailoverConfig.builder().attemptTimeoutMillis(50).build());
+    llm.generateContent(LlmRequest.builder().build(), true)
+        .test()
+        .awaitDone(5, java.util.concurrent.TimeUnit.SECONDS)
+        .assertValueCount(1)
+        .assertError(java.util.concurrent.TimeoutException.class);
+    assertThat(fallbackCalls.get()).isEqualTo(0);
+  }
+
+  private static void assertStreamFallback(
+      Flowable<LlmResponse> prefix, FailoverConfig config, boolean stream, boolean expectFallback) {
+    AtomicInteger fallbackCalls = new AtomicInteger();
+    AtomicInteger failureEvents = new AtomicInteger();
+    LlmCallMetrics.setRecorder(
+        new LlmCallMetrics.Recorder() {
+          @Override
+          public void onFailure(LlmError error, int attemptIndex, String primaryModel) {
+            failureEvents.incrementAndGet();
+          }
+        });
+    LlmHttpException failure = new LlmHttpException(503, "attempt failed", null);
+    FailoverLlm llm =
+        new FailoverLlm(
+            model("primary", new AtomicInteger(), prefix.concatWith(Flowable.error(failure))),
+            List.of(model("fallback", fallbackCalls, success())),
+            config);
+    var subscriber = llm.generateContent(LlmRequest.builder().build(), stream).test();
+    if (expectFallback) {
+      subscriber.assertComplete().assertNoErrors();
+      assertThat(subscriber.values().get(subscriber.values().size() - 1).modelVersion().get())
+          .isEqualTo("fallback");
+    } else {
+      subscriber.assertNotComplete().assertError(failure);
+      assertThat(subscriber.values()).hasSize(1);
+      assertThat(subscriber.values().get(0).modelVersion().get()).isEqualTo("primary");
+    }
+    assertThat(fallbackCalls.get()).isEqualTo(expectFallback ? 1 : 0);
+    assertThat(failureEvents.get()).isEqualTo(1);
+  }
+
+  private static CircuitBreaker outcomes(AtomicInteger successes, AtomicInteger failures) {
     return new TestCircuitBreaker() {
       @Override
       public boolean isHealthy(String name) {

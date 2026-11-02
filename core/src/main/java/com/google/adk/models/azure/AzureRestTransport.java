@@ -7,7 +7,7 @@ import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.GenericLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
-import com.google.adk.models.failover.LlmHttpException;
+import com.google.adk.models.errors.LlmHttpException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.genai.types.Content;

@@ -1,9 +1,13 @@
-package com.google.adk.models.failover;
+package com.google.adk.models.failover.redis;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.google.adk.models.errors.LlmHttpException;
+import com.google.adk.models.failover.FailoverConfig;
+import com.google.adk.models.failover.FailoverLlm;
+import com.google.adk.models.failover.LlmCallMetrics;
 import java.util.List;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;

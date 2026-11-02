@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.adk.models.failover;
+package com.google.adk.models.errors;
 
 import java.util.Optional;
 import org.jspecify.annotations.Nullable;
@@ -22,7 +22,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * Normalized, provider-agnostic description of a single failed LLM attempt.
  *
- * <p>This is the unit recorded by {@link LlmCallMetrics} and inspected by {@link FailoverLlm} to
+ * <p>This is the unit recorded by model-call telemetry and inspected by the failover wrapper to
  * decide whether to fail over. It captures the HTTP status code where available, a provider-native
  * code/status string, the normalized {@link LlmFailureCategory}, a human readable message, and the
  * underlying cause.

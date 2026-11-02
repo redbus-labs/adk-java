@@ -1,5 +1,6 @@
-package com.google.adk.models.failover;
+package com.google.adk.models.failover.redis;
 
+import com.google.adk.models.failover.CircuitBreaker;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
@@ -14,13 +15,17 @@ import redis.clients.jedis.params.ZAddParams;
  * Model health in Redis, shared by model name across applications using the same database. Session
  * assignment and recovery sampling belong to SessionRoutingStore.
  */
-public class DragonflyCircuitBreaker {
+public class DragonflyCircuitBreaker implements CircuitBreaker {
   private static final Logger logger = LoggerFactory.getLogger(DragonflyCircuitBreaker.class);
   private final Supplier<Jedis> connector;
   private final long windowSeconds;
   private final long failureThreshold;
   private final long recoverySuccessThreshold;
 
+  /**
+   * Borrows connections from an application-owned pool. Closing a borrowed Jedis resource returns
+   * it to that pool; this breaker never creates or closes the pool itself.
+   */
   public DragonflyCircuitBreaker(
       Supplier<Jedis> connector, long windowSeconds, long failureThreshold) {
     this(connector, windowSeconds, failureThreshold, 2);
@@ -44,6 +49,7 @@ public class DragonflyCircuitBreaker {
   }
 
   /** Missing state is healthy. A Redis outage must not prevent a model call. */
+  @Override
   public boolean isHealthy(String modelName) {
     try (Jedis jedis = connector.get()) {
       return !"1".equals(jedis.hget(keys(modelName).get(2), "open"));
@@ -53,10 +59,12 @@ public class DragonflyCircuitBreaker {
     }
   }
 
+  @Override
   public void onSuccess(String modelName, String attemptId) {
     record(modelName, attemptId, true);
   }
 
+  @Override
   public void onFailure(String modelName, String attemptId) {
     record(modelName, attemptId, false);
   }
@@ -102,8 +110,8 @@ public class DragonflyCircuitBreaker {
             : value.toString());
   }
 
-  // Circuit health is shared by model name across applications using the same Redis database.
-  static List<String> keys(String modelName) {
+  /** Returns failure, success and state keys for model-health diagnostics. */
+  public static List<String> keys(String modelName) {
     Objects.requireNonNull(modelName, "modelName");
     if (modelName.isBlank() || modelName.indexOf('{') >= 0 || modelName.indexOf('}') >= 0) {
       throw new IllegalArgumentException(

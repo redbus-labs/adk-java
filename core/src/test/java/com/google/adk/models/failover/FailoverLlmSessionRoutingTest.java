@@ -25,6 +25,7 @@ import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.errors.LlmHttpException;
 import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.Session;
 import com.google.common.base.Ticker;
@@ -236,7 +237,7 @@ class FailoverLlmSessionRoutingTest {
   @Test
   void selectedUnhealthyPrimaryReceivesProbeAndSuccessfulCompletionCredit() {
     AtomicInteger successes = new AtomicInteger();
-    DragonflyCircuitBreaker breaker =
+    CircuitBreaker breaker =
         new TestCircuitBreaker() {
           @Override
           public boolean isHealthy(String name) {

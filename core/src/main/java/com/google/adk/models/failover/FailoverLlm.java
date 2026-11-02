@@ -21,9 +21,14 @@ import com.google.adk.models.BaseLlm;
 import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.LlmRequest;
 import com.google.adk.models.LlmResponse;
+import com.google.adk.models.errors.LlmError;
+import com.google.adk.models.errors.LlmErrorClassifier;
+import com.google.adk.models.errors.LlmFailureCategory;
+import com.google.adk.models.errors.LlmHttpException;
 import com.google.adk.models.failover.SessionRoutingStore.Assignment;
 import com.google.adk.models.failover.SessionRoutingStore.SessionRoutingKey;
 import com.google.common.base.Suppliers;
+import com.google.genai.types.Content;
 import io.reactivex.rxjava3.core.Flowable;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,9 +64,10 @@ import org.slf4j.LoggerFactory;
  *       silent empty completion (Azure/Bedrock).
  * </ul>
  *
- * <p>Streaming caveat: if a failure surfaces after partial chunks were already emitted, downstream
- * consumers will have observed those partial chunks before the fallback model's output. Failover is
- * cleanest for non-streaming calls, which is the dominant path for the agents in this codebase.
+ * <p>Streaming stops on failure once content has been forwarded, to avoid mixing different models'
+ * answers or tool calls. Applications may explicitly opt into partial-stream failover through
+ * {@link FailoverConfig.Builder#failoverOnPartialStream(boolean)}. Metadata-only emissions do not
+ * prevent fallback.
  */
 public class FailoverLlm extends BaseLlm {
 
@@ -145,6 +151,7 @@ public class FailoverLlm extends BaseLlm {
     return generateContent(llmRequest, stream, null);
   }
 
+  @Override
   public Flowable<LlmResponse> generateContent(
       LlmRequest llmRequest, boolean stream, InvocationContext context) {
     return Flowable.defer(
@@ -208,7 +215,7 @@ public class FailoverLlm extends BaseLlm {
     final int attemptIndex = index;
     final String attemptModel = safeModelName(attemptIndex);
 
-    final DragonflyCircuitBreaker breaker = config.circuitBreaker().orElse(null);
+    final CircuitBreaker breaker = config.circuitBreaker().orElse(null);
     if (breaker != null) {
       if (!sessionAssigned && !breaker.isHealthy(attemptModel)) {
         boolean hasNext = attemptIndex + 1 < chain.size();
@@ -234,6 +241,7 @@ public class FailoverLlm extends BaseLlm {
     final String attemptId = UUID.randomUUID().toString();
     final AtomicBoolean failed = new AtomicBoolean(false);
     final AtomicBoolean receivedResponse = new AtomicBoolean(false);
+    final AtomicBoolean emittedContent = new AtomicBoolean(false);
     final BaseLlm attemptLlm = resolve(attemptIndex);
     LlmCallMetrics.recordAttemptStart(context, attemptLlm.model());
 
@@ -305,7 +313,17 @@ public class FailoverLlm extends BaseLlm {
 
     // Recovery requires a whole successful attempt, not a partial chunk or cancelled stream.
     flow =
-        flow.doOnNext(response -> receivedResponse.set(true))
+        flow.doOnNext(
+                response -> {
+                  receivedResponse.set(true);
+                  if (response
+                      .content()
+                      .flatMap(Content::parts)
+                      .map(parts -> !parts.isEmpty())
+                      .orElse(false)) {
+                    emittedContent.set(true);
+                  }
+                })
             .doOnComplete(
                 () -> {
                   if (receivedResponse.get() && !failed.get()) {
@@ -333,6 +351,11 @@ public class FailoverLlm extends BaseLlm {
             LlmCallMetrics.recordAttemptFailure(context, error);
           }
 
+          if (stream && emittedContent.get() && !config.failoverOnPartialStream()) {
+            logger.warn(
+                "Not switching models after streaming content was emitted: model={}", attemptModel);
+            return Flowable.error(unwrapForPropagation(throwable));
+          }
           boolean hasNext = attemptIndex + 1 < chain.size();
           if (hasNext && config.shouldFailover(error)) {
             return attempt(attemptIndex + 1, llmRequest, stream, context, route);
@@ -347,7 +370,7 @@ public class FailoverLlm extends BaseLlm {
   }
 
   private static void recordOutcome(
-      DragonflyCircuitBreaker breaker, String modelName, String attemptId, boolean success) {
+      CircuitBreaker breaker, String modelName, String attemptId, boolean success) {
     if (breaker == null) return;
     try {
       if (success) breaker.onSuccess(modelName, attemptId);
@@ -371,7 +394,7 @@ public class FailoverLlm extends BaseLlm {
   }
 
   /** Returns the configured circuit breaker, if present. */
-  public Optional<DragonflyCircuitBreaker> circuitBreaker() {
+  public Optional<CircuitBreaker> circuitBreaker() {
     return config.circuitBreaker();
   }
 

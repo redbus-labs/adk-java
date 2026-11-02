@@ -17,6 +17,7 @@
 package com.google.adk.models.failover;
 
 import com.google.adk.agents.InvocationContext;
+import com.google.adk.models.errors.LlmError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
