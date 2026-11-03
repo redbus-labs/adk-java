@@ -20,22 +20,25 @@ import static java.util.stream.Collectors.toCollection;
 
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.platform.UuidProvider;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.time.Instant;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An in-memory implementation of {@link BaseSessionService} assuming {@link Session} objects are
@@ -49,6 +52,24 @@ import org.jspecify.annotations.Nullable;
  * during retrieval operations ({@code getSession}, {@code createSession}).
  */
 public final class InMemorySessionService implements BaseSessionService {
+
+  private static final Logger logger = LoggerFactory.getLogger(InMemorySessionService.class);
+
+  /** What {@code createSession} does when {@code sessionId} is already in use. */
+  public enum DuplicateSessionIdBehavior {
+    /**
+     * Replaces the stored session, discarding its events and state.
+     *
+     * @deprecated Construct the service with {@link #REJECT} instead, which becomes the default in
+     *     a future release.
+     */
+    @Deprecated
+    OVERWRITE,
+
+    /** Rejects the call with {@link SessionException}. Becomes the default in a future release. */
+    REJECT;
+  }
+
   // Structure: appName -> userId -> sessionId -> Session
   private final ConcurrentMap<String, ConcurrentMap<String, ConcurrentMap<String, Session>>>
       sessions;
@@ -58,11 +79,48 @@ public final class InMemorySessionService implements BaseSessionService {
   // Structure: appName -> stateKey -> stateValue
   private final ConcurrentMap<String, ConcurrentMap<String, Object>> appState;
 
-  /** Creates a new instance of the in-memory session service with empty storage. */
+  private final DuplicateSessionIdBehavior duplicateSessionIdBehavior;
+  private final InstantSource instantSource;
+  private final UuidProvider uuidProvider;
+
+  /**
+   * Creates a new instance of the in-memory session service with empty storage. A duplicate session
+   * ID overwrites the stored session, which stays the default until callers have migrated.
+   */
   public InMemorySessionService() {
+    this(DuplicateSessionIdBehavior.OVERWRITE);
+  }
+
+  /**
+   * Creates a new instance of the in-memory session service with empty storage.
+   *
+   * @param duplicateSessionIdBehavior What {@code createSession} does when the session ID is
+   *     already in use.
+   */
+  public InMemorySessionService(DuplicateSessionIdBehavior duplicateSessionIdBehavior) {
+    this(duplicateSessionIdBehavior, InstantSource.system(), UuidProvider.SYSTEM);
+  }
+
+  /**
+   * Creates a new instance of the in-memory session service with empty storage.
+   *
+   * @param duplicateSessionIdBehavior What {@code createSession} does when the session ID is
+   *     already in use.
+   * @param instantSource Supplies the {@code lastUpdateTime} of a newly created session.
+   * @param uuidProvider Supplies the session ID when {@code createSession} is not given one.
+   */
+  public InMemorySessionService(
+      DuplicateSessionIdBehavior duplicateSessionIdBehavior,
+      InstantSource instantSource,
+      UuidProvider uuidProvider) {
+    this.duplicateSessionIdBehavior =
+        Objects.requireNonNull(
+            duplicateSessionIdBehavior, "duplicateSessionIdBehavior cannot be null");
     this.sessions = new ConcurrentHashMap<>();
     this.userState = new ConcurrentHashMap<>();
     this.appState = new ConcurrentHashMap<>();
+    this.instantSource = Objects.requireNonNull(instantSource, "instantSource cannot be null");
+    this.uuidProvider = Objects.requireNonNull(uuidProvider, "uuidProvider cannot be null");
   }
 
   @Override
@@ -87,7 +145,7 @@ public final class InMemorySessionService implements BaseSessionService {
         Optional.ofNullable(sessionId)
             .map(String::trim)
             .filter(s -> !s.isEmpty())
-            .orElseGet(() -> UUID.randomUUID().toString());
+            .orElseGet(uuidProvider::newUuid);
 
     // Ensure state map and events list are mutable for the new session
     ConcurrentMap<String, Object> initialState =
@@ -99,13 +157,25 @@ public final class InMemorySessionService implements BaseSessionService {
             .appName(appName)
             .userId(userId)
             .state(initialState)
-            .lastUpdateTime(Instant.now())
+            .lastUpdateTime(instantSource.instant())
             .build();
 
-    sessions
-        .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
-        .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>())
-        .put(resolvedSessionId, newSession);
+    ConcurrentMap<String, Session> userSessions =
+        sessions
+            .computeIfAbsent(appName, unused -> new ConcurrentHashMap<>())
+            .computeIfAbsent(userId, unused -> new ConcurrentHashMap<>());
+    if (duplicateSessionIdBehavior == DuplicateSessionIdBehavior.REJECT) {
+      if (userSessions.putIfAbsent(resolvedSessionId, newSession) != null) {
+        return Single.error(new SessionException(SessionException.SESSION_ALREADY_EXISTS));
+      }
+    } else {
+      Session previous = userSessions.put(resolvedSessionId, newSession);
+      if (previous != null) {
+        logger.info(
+            "Replaced an existing session because its ID was reused; its events and state are"
+                + " discarded.");
+      }
+    }
 
     // Create a mutable copy for the return value
     Session returnCopy = copySession(newSession);
@@ -219,7 +289,7 @@ public final class InMemorySessionService implements BaseSessionService {
       return Single.just(ListEventsResponse.builder().build());
     }
 
-    ImmutableList<Event> eventsCopy = ImmutableList.copyOf(storedSession.events());
+    ImmutableList<Event> eventsCopy = storedSession.immutableEvents();
     return Single.just(ListEventsResponse.builder().events(eventsCopy).build());
   }
 
@@ -310,7 +380,7 @@ public final class InMemorySessionService implements BaseSessionService {
         .appName(original.appName())
         .userId(original.userId())
         .state(new ConcurrentHashMap<>(original.state()))
-        .events(new ArrayList<>(original.events()))
+        .events(original.immutableEvents())
         .lastUpdateTime(original.lastUpdateTime())
         .build();
   }
@@ -356,7 +426,7 @@ public final class InMemorySessionService implements BaseSessionService {
       String appName, String userId, Collection<Session> sessions) {
     return sessions.stream()
         .map(this::copySession)
-        .peek(s -> s.events().clear())
+        .peek(Session::clearEvents)
         .map(s -> mergeWithGlobalState(appName, userId, s))
         .collect(toCollection(ArrayList::new));
   }

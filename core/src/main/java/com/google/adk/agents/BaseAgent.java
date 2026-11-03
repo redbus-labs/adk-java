@@ -16,18 +16,24 @@
 
 package com.google.adk.agents;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.isNullOrEmpty;
+import static com.google.common.base.Strings.nullToEmpty;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.lang.String.format;
 
 import com.google.adk.agents.Callbacks.AfterAgentCallback;
 import com.google.adk.agents.Callbacks.BeforeAgentCallback;
+import com.google.adk.annotations.Experimental;
 import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
 import com.google.adk.plugins.Plugin;
 import com.google.adk.telemetry.Instrumentation;
 import com.google.adk.telemetry.Instrumentation.AgentInvocation;
 import com.google.adk.telemetry.Tracing;
 import com.google.adk.utils.AgentEnums.AgentOrigin;
+import com.google.adk.workflow.BaseNode;
+import com.google.adk.workflow.NodeExecutionState;
 import com.google.common.collect.ImmutableList;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.errorprone.annotations.DoNotCall;
@@ -39,6 +45,7 @@ import io.reactivex.rxjava3.core.Maybe;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -46,20 +53,11 @@ import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
 /** Base class for all agents. */
-public abstract class BaseAgent {
+public abstract class BaseAgent extends BaseNode {
 
   // Pattern for valid agent names.
   private static final String IDENTIFIER_REGEX = "^_?[a-zA-Z0-9]*([. _-][a-zA-Z0-9]+)*$";
   private static final Pattern IDENTIFIER_PATTERN = Pattern.compile(IDENTIFIER_REGEX);
-
-  /** The agent's name. Must be a unique identifier within the agent tree. */
-  private final String name;
-
-  /**
-   * One line description about the agent's capability. The system can use this for decision-making
-   * when delegating control to different agents.
-   */
-  private final String description;
 
   /**
    * The parent agent in the agent tree. Note that one agent cannot be added to two different
@@ -76,7 +74,7 @@ public abstract class BaseAgent {
    * Creates a new BaseAgent.
    *
    * @param name Unique agent name. Cannot be "user" (reserved).
-   * @param description Agent purpose.
+   * @param description Agent purpose; null is treated as an empty string.
    * @param subAgents Agents managed by this agent.
    * @param beforeAgentCallback Callbacks before agent execution. Invoked in order until one doesn't
    *     return null.
@@ -85,16 +83,14 @@ public abstract class BaseAgent {
    */
   public BaseAgent(
       String name,
-      String description,
+      @Nullable String description,
       @Nullable List<? extends BaseAgent> subAgents,
       @Nullable List<? extends BeforeAgentCallback> beforeAgentCallback,
       @Nullable List<? extends AfterAgentCallback> afterAgentCallback) {
-    validateAgentName(name);
-    this.name = name;
-    this.description = description;
+    super(validateAgentName(name), nullToEmpty(description));
     this.parentAgent = null;
     this.subAgents = (subAgents != null) ? ImmutableList.copyOf(subAgents) : ImmutableList.of();
-    validateSubAgents(this.name, this.subAgents);
+    validateSubAgents(name, this.subAgents);
     this.beforeAgentCallback =
         (beforeAgentCallback != null)
             ? ImmutableList.copyOf(beforeAgentCallback)
@@ -125,10 +121,12 @@ public abstract class BaseAgent {
    * Validates the agent name.
    *
    * @param name The agent name to validate.
+   * @return the validated name.
    * @throws IllegalArgumentException if the agent name is null, empty, or does not match the
    *     identifier pattern.
    */
-  private static void validateAgentName(String name) {
+  @CanIgnoreReturnValue
+  private static String validateAgentName(String name) {
     if (isNullOrEmpty(name)) {
       throw new IllegalArgumentException("Agent name cannot be null or empty.");
     }
@@ -136,10 +134,9 @@ public abstract class BaseAgent {
       throw new IllegalArgumentException(
           format("Agent name '%s' does not match regex '%s'.", name, IDENTIFIER_REGEX));
     }
-    if (name.equals(Role.USER)) {
-      throw new IllegalArgumentException(
-          "Agent name cannot be 'user'; reserved for end-user input.");
-    }
+    checkArgument(
+        !name.equals(Role.USER), "Agent name cannot be 'user'; reserved for end-user input.");
+    return name;
   }
 
   /**
@@ -170,24 +167,6 @@ public abstract class BaseAgent {
               "Agent named '%s' has sub-agents with duplicate names: %s. Sub-agents: %s",
               name, duplicateSubAgentNames, subAgents));
     }
-  }
-
-  /**
-   * Gets the agent's unique name.
-   *
-   * @return the unique name of the agent.
-   */
-  public final String name() {
-    return name;
-  }
-
-  /**
-   * Gets the one-line description of the agent's capability.
-   *
-   * @return the description of the agent.
-   */
-  public final String description() {
-    return description;
   }
 
   /**
@@ -291,16 +270,21 @@ public abstract class BaseAgent {
    * instance.
    *
    * @param parentContext Parent context to copy.
-   * @return new context with updated branch name.
+   * @param keepBranch Whether to keep the parent's branch instead of appending this agent's name.
+   * @return the new context for this agent.
    */
-  private InvocationContext createInvocationContext(InvocationContext parentContext) {
+  private InvocationContext createInvocationContext(
+      InvocationContext parentContext, boolean keepBranch) {
     InvocationContext.Builder builder = parentContext.toBuilder();
-    builder.agent(this);
-    // Check for branch to be truthy (not None, not empty string),
-    parentContext
-        .branch()
-        .filter(s -> !s.isEmpty())
-        .ifPresent(branch -> builder.branch(branch + "." + name()));
+    // An agent's context runs that agent, not the node that its parent context ran.
+    builder.agent(this).node(null);
+    if (!keepBranch) {
+      // Check for branch to be truthy (not None, not empty string),
+      parentContext
+          .branch()
+          .filter(s -> !s.isEmpty())
+          .ifPresent(branch -> builder.branch(branch + "." + name()));
+    }
     return builder.build();
   }
 
@@ -311,24 +295,26 @@ public abstract class BaseAgent {
    * @return stream of agent-generated events.
    */
   public Flowable<Event> runAsync(InvocationContext parentContext) {
-    return run(parentContext, this::runAsyncImpl);
+    return runWithCallbacks(parentContext, /* keepBranch= */ false, this::runAsyncImpl);
   }
 
   /**
    * Runs the agent with the given implementation.
    *
    * @param parentContext Parent context to inherit.
+   * @param keepBranch Whether to keep the parent's branch instead of appending this agent's name.
    * @param runImplementation The agent-specific logic to run.
    * @return stream of agent-generated events.
    */
-  private Flowable<Event> run(
+  private Flowable<Event> runWithCallbacks(
       InvocationContext parentContext,
+      boolean keepBranch,
       Function<InvocationContext, Flowable<Event>> runImplementation) {
     return Flowable.using(
         () -> {
           Context otelContext = Context.current();
           return Instrumentation.recordAgentInvocation(
-              createInvocationContext(parentContext), this, otelContext);
+              createInvocationContext(parentContext, keepBranch), this, otelContext);
         },
         agentInvocation -> {
           InvocationContext invocationContext = agentInvocation.getCtx();
@@ -428,7 +414,8 @@ public abstract class BaseAgent {
                       content -> {
                         invocationContext.setEndInvocation(true);
                         return Event.builder()
-                            .id(Event.generateEventId())
+                            .id(invocationContext.newUuid())
+                            .timestamp(invocationContext.now().toEpochMilli())
                             .invocationId(invocationContext.invocationId())
                             .author(name())
                             .branch(invocationContext.branch().orElse(null))
@@ -445,7 +432,8 @@ public abstract class BaseAgent {
                   if (callbackContext.state().hasDelta()) {
                     Event.Builder eventBuilder =
                         Event.builder()
-                            .id(Event.generateEventId())
+                            .id(invocationContext.newUuid())
+                            .timestamp(invocationContext.now().toEpochMilli())
                             .invocationId(invocationContext.invocationId())
                             .author(name())
                             .branch(invocationContext.branch().orElse(null))
@@ -465,7 +453,69 @@ public abstract class BaseAgent {
    * @return stream of agent-generated events.
    */
   public Flowable<Event> runLive(InvocationContext parentContext) {
-    return run(parentContext, this::runLiveImpl);
+    return runWithCallbacks(parentContext, /* keepBranch= */ false, this::runLiveImpl);
+  }
+
+  /**
+   * Records this agent's end-of-agent checkpoint and returns it as a single-event stream. The
+   * recorded state is cleared and the agent marked finished, so a later run skips it.
+   *
+   * @param context Current invocation context.
+   * @return stream of the single {@code endOfAgent = true} checkpoint event.
+   */
+  final Flowable<Event> endOfAgentAndRecord(InvocationContext context) {
+    context.setAgentState(name(), /* agentState= */ null, /* endOfAgent= */ true);
+    return Flowable.just(checkpointEvent(context, EventActions.builder().endOfAgent(true).build()));
+  }
+
+  /**
+   * Records {@code agentState} for this agent and returns the matching checkpoint event as a
+   * single-event stream. The agent is left unfinished, so a later run resumes from this checkpoint.
+   *
+   * @param context Current invocation context.
+   * @param agentState The serialized agent state to persist.
+   * @return stream of the single checkpoint event carrying {@code agentState}.
+   */
+  final Flowable<Event> checkpointAndRecord(
+      InvocationContext context, Map<String, Object> agentState) {
+    context.setAgentState(name(), agentState, /* endOfAgent= */ false);
+    return Flowable.just(
+        checkpointEvent(context, EventActions.builder().agentState(agentState).build()));
+  }
+
+  /** Builds a resumability checkpoint event authored by this agent carrying {@code actions}. */
+  private Event checkpointEvent(InvocationContext context, EventActions actions) {
+    return Event.builder()
+        .id(context.newUuid())
+        .timestamp(context.now().toEpochMilli())
+        .invocationId(context.invocationId())
+        .author(name())
+        .branch(context.branch().orElse(null))
+        .actions(actions)
+        .build();
+  }
+
+  /**
+   * Runs this agent as a workflow node, on the node's branch so the nodes after it see its events.
+   * It runs the callbacks and {@link #runAsyncImpl} that {@link #runAsync} runs, but does not call
+   * an override of {@link #runAsync}. The node input is not used, and each event's author is copied
+   * into the node state so that the agent's events keep their own authors instead of an inherited
+   * author or the node's name.
+   *
+   * @throws IllegalStateException if {@code context} is not the context of a workflow node.
+   */
+  @Experimental
+  @Override
+  public Flowable<Event> runNode(
+      com.google.adk.agents.Context context, @Nullable Object nodeInput) {
+    NodeExecutionState nodeState = context.requireNodeState();
+    return runWithCallbacks(context.invocationContext(), /* keepBranch= */ true, this::runAsyncImpl)
+        .doOnNext(
+            event -> {
+              if (!isNullOrEmpty(event.author())) {
+                nodeState.eventAuthor(event.author());
+              }
+            });
   }
 
   /**

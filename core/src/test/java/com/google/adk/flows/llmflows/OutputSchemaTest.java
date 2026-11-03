@@ -45,6 +45,8 @@ import com.google.genai.types.Part;
 import com.google.genai.types.Schema;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
+import java.time.Instant;
+import java.time.InstantSource;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -84,6 +86,22 @@ public final class OutputSchemaTest {
     public Single<Map<String, Object>> runAsync(Map<String, Object> args, ToolContext toolContext) {
       return Single.just(ImmutableMap.of());
     }
+  }
+
+  @Test
+  public void createFinalModelResponseEvent_usesInvocationProviders() {
+    LlmAgent agent = LlmAgent.builder().name("agent").model(testLlm).build();
+    InvocationContext context =
+        createInvocationContext(agent).toBuilder()
+            .instantSource(InstantSource.fixed(Instant.ofEpochMilli(1234L)))
+            .uuidProvider(() -> "fixed-uuid")
+            .build();
+
+    Event event = OutputSchema.createFinalModelResponseEvent(context, "{\"answer\": 42}");
+
+    assertThat(event.id()).isEqualTo("fixed-uuid");
+    assertThat(event.timestamp()).isEqualTo(1234L);
+    assertThat(event.invocationId()).isEqualTo(context.invocationId());
   }
 
   @Test
@@ -183,7 +201,8 @@ public final class OutputSchemaTest {
             .response(
                 ImmutableMap.of(
                     "error",
-                    "Validation Error found: field1 is required. Fix the errors and call it again."))
+                    "Validation Error found: field1 is required. Fix the errors and call it"
+                        + " again."))
             .build();
     Event event =
         Event.builder()
@@ -365,19 +384,19 @@ public final class OutputSchemaTest {
     // The retry request must carry the validation feedback from the first call back to the model:
     // the feedback names the missing required field, tying it to the first call's failure.
     assertThat(scriptedLlm.getRequests()).hasSize(2);
-    boolean feedbackSentBack =
+    Optional<String> feedbackError =
         scriptedLlm.getRequests().get(1).contents().stream()
             .flatMap(content -> content.parts().orElse(ImmutableList.of()).stream())
             .map(Part::functionResponse)
             .flatMap(Optional::stream)
-            .anyMatch(
-                fr ->
-                    Objects.equals(fr.name().orElse(""), SetModelResponseTool.NAME)
-                        && fr.response().orElse(ImmutableMap.of()).get("error")
-                            instanceof String error
-                        && error.contains("Validation Error found")
-                        && error.contains("field1"));
-    assertThat(feedbackSentBack).isTrue();
+            .filter(fr -> Objects.equals(fr.name().orElse(""), SetModelResponseTool.NAME))
+            .map(fr -> fr.response().orElse(ImmutableMap.of()).get("error"))
+            .filter(String.class::isInstance)
+            .map(String.class::cast)
+            .findFirst();
+    assertThat(feedbackError).isPresent();
+    assertThat(feedbackError.get()).contains("Validation Error found");
+    assertThat(feedbackError.get()).contains("field1");
 
     // Only the corrected, validated response becomes the final structured output.
     Event finalEvent = events.get(events.size() - 1);

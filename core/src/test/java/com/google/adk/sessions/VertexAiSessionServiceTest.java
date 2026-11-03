@@ -31,10 +31,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.events.ToolConfirmation;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.genai.types.Content;
+import com.google.genai.types.CustomMetadata;
+import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.Part;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
@@ -464,6 +467,50 @@ public class VertexAiSessionServiceTest {
   }
 
   @Test
+  public void appendEvent_thenListEvents_keepsEventFields() {
+    Session session = vertexAiSessionService.createSession("987", "userA").blockingGet();
+    Event event =
+        Event.builder()
+            .id("client-event-id")
+            .invocationId("inv-1")
+            .author("agent")
+            .timestamp(Instant.parse("2024-12-12T12:12:12.123Z").toEpochMilli())
+            .usageMetadata(
+                GenerateContentResponseUsageMetadata.builder().totalTokenCount(12).build())
+            .customMetadata(
+                ImmutableList.of(CustomMetadata.builder().key("k").stringValue("v").build()))
+            .actions(
+                EventActions.builder()
+                    .transferToAgent("other")
+                    .requestedToolConfirmations(
+                        new ConcurrentHashMap<>(
+                            ImmutableMap.of(
+                                "call-1", ToolConfirmation.builder().hint("ok?").build())))
+                    .endOfAgent(true)
+                    .agentState(ImmutableMap.of("step", "2"))
+                    .build())
+            .build();
+    var unused = vertexAiSessionService.appendEvent(session, event).blockingGet();
+
+    Event reloaded =
+        vertexAiSessionService
+            .listEvents(session.appName(), session.userId(), session.id())
+            .blockingGet()
+            .events()
+            .get(0);
+
+    assertThat(reloaded.id()).isEqualTo("client-event-id");
+    assertThat(reloaded.usageMetadata().get().totalTokenCount()).hasValue(12);
+    assertThat(reloaded.customMetadata().get())
+        .containsExactly(CustomMetadata.builder().key("k").stringValue("v").build());
+    assertThat(reloaded.actions().transferToAgent()).hasValue("other");
+    assertThat(reloaded.actions().requestedToolConfirmations().get("call-1").hint())
+        .isEqualTo("ok?");
+    assertThat(reloaded.actions().endOfAgent()).isTrue();
+    assertThat(reloaded.actions().agentState().get()).containsEntry("step", "2");
+  }
+
+  @Test
   public void listSessions_empty() {
     assertThat(vertexAiSessionService.listSessions("789", "user1").blockingGet().sessions())
         .isEmpty();
@@ -526,21 +573,29 @@ public class VertexAiSessionServiceTest {
 
   @Test
   public void deleteSession_wrongUser_deniedAndSessionKept() {
+    sessionMap.put("victim-session", mockSessionJson("victim-session", "2024-12-12T12:12:12Z"));
     // The ownership error surfaces on subscription, so hoist the Completable out.
-    Completable deletion = vertexAiSessionService.deleteSession("123", "attacker", "1");
-    assertThrows(SecurityException.class, deletion::blockingAwait);
+    Completable deletion =
+        vertexAiSessionService.deleteSession("123", "attacker", "victim-session");
+    SecurityException exception = assertThrows(SecurityException.class, deletion::blockingAwait);
+    assertThat(exception).hasMessageThat().doesNotContain("attacker");
+    assertThat(exception).hasMessageThat().doesNotContain("victim-session");
     // The session is still readable by its real owner, i.e. it was not deleted.
     assertThat(
-            vertexAiSessionService.getSession("123", "user", "1", Optional.empty()).blockingGet())
+            vertexAiSessionService
+                .getSession("123", "user", "victim-session", Optional.empty())
+                .blockingGet())
         .isNotNull();
   }
 
   // Session id validation is synchronous, so each call below throws before returning a stream.
   @Test
   public void getSession_invalidSessionId_throws() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> vertexAiSessionService.getSession("123", "user", "1/../2", Optional.empty()));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> vertexAiSessionService.getSession("123", "user", "1/../2", Optional.empty()));
+    assertThat(exception).hasMessageThat().doesNotContain("1/../2");
   }
 
   @Test
@@ -563,6 +618,15 @@ public class VertexAiSessionServiceTest {
     Event event = Event.builder().author("user").build();
     assertThrows(
         IllegalArgumentException.class, () -> vertexAiSessionService.appendEvent(session, event));
+  }
+
+  @Test
+  public void getSession_invalidAppName_throws() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> vertexAiSessionService.getSession("customer-app", "user", "1", Optional.empty()));
+    assertThat(exception).hasMessageThat().doesNotContain("customer-app");
   }
 
   @Test

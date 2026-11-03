@@ -16,6 +16,7 @@
 
 package com.google.adk.models;
 
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
@@ -38,6 +39,7 @@ import io.reactivex.rxjava3.observers.TestObserver;
 import io.reactivex.rxjava3.subscribers.TestSubscriber;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -76,6 +78,94 @@ public final class GeminiLlmConnectionTest {
     assertThat(parameters.video()).hasValue(blob);
     assertThat(parameters.audio()).isEmpty();
     assertThat(parameters.media()).isEmpty();
+  }
+
+  @Test
+  public void sendContent_withoutPartial_completesTurn() {
+    Content content = Content.fromParts(Part.fromText("complete input"));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(content)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      LiveSendClientContentParameters sent = getOnlyElement(fixture.transport.clientContents);
+      assertThat(sent.turns()).hasValue(ImmutableList.of(content));
+      assertThat(sent.turnComplete()).hasValue(true);
+    }
+  }
+
+  @Test
+  public void sendContent_multiplePartialUpdates_onlyFinalContentCompletesTurn() {
+    Content first = Content.fromParts(Part.fromText("first context"));
+    Content second = Content.fromParts(Part.fromText("second context"));
+    Content last = Content.fromParts(Part.fromText("final context"));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(first, /* partial= */ true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+      fixture
+          .connection
+          .sendContent(second, /* partial= */ true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+      fixture
+          .connection
+          .sendContent(last, /* partial= */ false)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      List<LiveSendClientContentParameters> sent = fixture.transport.clientContents;
+      assertThat(sent).hasSize(3);
+      assertThat(sent.get(0).turns()).hasValue(ImmutableList.of(first));
+      assertThat(sent.get(1).turns()).hasValue(ImmutableList.of(second));
+      assertThat(sent.get(2).turns()).hasValue(ImmutableList.of(last));
+      assertThat(sent.stream().map(p -> p.turnComplete().orElseThrow()).toList())
+          .containsExactly(false, false, true)
+          .inOrder();
+    }
+  }
+
+  @Test
+  public void sendContent_functionResponses_useToolResponseRegardlessOfPartial() {
+    Content content =
+        Content.fromParts(
+            Part.fromFunctionResponse("firstTool", ImmutableMap.of("result", "first")),
+            Part.fromFunctionResponse("secondTool", ImmutableMap.of("result", "second")));
+    try (LiveConnectionFixture fixture = new LiveConnectionFixture()) {
+      fixture
+          .connection
+          .sendContent(content, /* partial= */ true)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+      fixture
+          .connection
+          .sendContent(content, /* partial= */ false)
+          .test()
+          .awaitDone(5, TimeUnit.SECONDS)
+          .assertComplete()
+          .assertNoErrors();
+
+      assertThat(fixture.transport.toolResponses).hasSize(2);
+      assertThat(fixture.transport.clientContents).isEmpty();
+      for (LiveSendToolResponseParameters sent : fixture.transport.toolResponses) {
+        assertThat(sent.functionResponses())
+            .hasValue(content.parts().get().stream().map(p -> p.functionResponse().get()).toList());
+      }
+    }
   }
 
   @Test
@@ -399,11 +489,14 @@ public final class GeminiLlmConnectionTest {
   }
 
   /**
-   * A minimal in-process {@link GeminiLiveTransport} that records closes and can end its stream.
+   * A minimal in-process {@link GeminiLiveTransport} that records sends and closes and can end its
+   * stream.
    */
   private static final class FakeTransport implements GeminiLiveTransport {
     private final boolean endStreamOnReceive;
     final AtomicInteger closeCount = new AtomicInteger();
+    final List<LiveSendClientContentParameters> clientContents = new CopyOnWriteArrayList<>();
+    final List<LiveSendToolResponseParameters> toolResponses = new CopyOnWriteArrayList<>();
 
     FakeTransport(boolean endStreamOnReceive) {
       this.endStreamOnReceive = endStreamOnReceive;
@@ -411,6 +504,7 @@ public final class GeminiLlmConnectionTest {
 
     @Override
     public CompletableFuture<Void> sendClientContent(LiveSendClientContentParameters params) {
+      clientContents.add(params);
       return CompletableFuture.completedFuture(null);
     }
 
@@ -421,6 +515,7 @@ public final class GeminiLlmConnectionTest {
 
     @Override
     public CompletableFuture<Void> sendToolResponse(LiveSendToolResponseParameters params) {
+      toolResponses.add(params);
       return CompletableFuture.completedFuture(null);
     }
 
@@ -437,6 +532,18 @@ public final class GeminiLlmConnectionTest {
     public CompletableFuture<Void> close() {
       closeCount.incrementAndGet();
       return CompletableFuture.completedFuture(null);
+    }
+  }
+
+  /** Exercises the real connection's send path without opening a WebSocket or using credentials. */
+  private static final class LiveConnectionFixture implements AutoCloseable {
+    final FakeTransport transport = new FakeTransport(/* endStreamOnReceive= */ false);
+    final GeminiLlmConnection connection =
+        new GeminiLlmConnection(CompletableFuture.completedFuture(transport));
+
+    @Override
+    public void close() {
+      connection.close();
     }
   }
 }

@@ -1,5 +1,82 @@
 # Changelog
 
+## [1.12.0](https://github.com/google/adk-java/compare/v1.11.0...v1.12.0) (2026-10-14)
+
+
+### Features
+
+* add a context caching demo sample ([91a1838](https://github.com/google/adk-java/commit/91a183865e5e14499e827961cb96df24a0476ea1))
+* add a Gemini context cache manager ([e5083e3](https://github.com/google/adk-java/commit/e5083e3ba9410ec32eb8d785d0f1f31eed7375d4))
+* add an injectable scheduler for ADK's internal fan-out ([1b89d23](https://github.com/google/adk-java/commit/1b89d23b78c09b87b0dd7d2d7daac866fd9fc5c0))
+* add cacheIntervals and createHttpOptions to ContextCacheConfig, as in ADK Python ([3afe4e5](https://github.com/google/adk-java/commit/3afe4e5e12800f604c83365383c808a4760f736c))
+* add Context as the common base of CallbackContext and ToolContext ([1309d38](https://github.com/google/adk-java/commit/1309d3841b5609943aa5c88b8b8d4b986646e9c6))
+* add injectable time and UUID providers for timestamps and ids ([caccc7c](https://github.com/google/adk-java/commit/caccc7cbbc3198b35bd769d20d72c1cd68a08d4c))
+* add the experimental Edge and Start workflow types ([a7b317a](https://github.com/google/adk-java/commit/a7b317a8dc8d19bc406de63e556ece3fdf2c5f80))
+* add the experimental JoinNode workflow node ([5137604](https://github.com/google/adk-java/commit/5137604e2a8f9ddacced43b0cbd918f26ac1f2ed))
+* add the experimental Node and BaseNode workflow types ([189d463](https://github.com/google/adk-java/commit/189d463a9988d5235ccf34de6a6fab1aae779d20))
+* add the experimental Workflow type for workflow graphs ([4c77cdf](https://github.com/google/adk-java/commit/4c77cdface117da17f79778e5a5726db1fdefc99))
+* add the workflow fields Event.output, Event.nodeInfo and EventActions.route ([e823fba](https://github.com/google/adk-java/commit/e823fbac72f8ab2829a0a128686047fb1f3dc420))
+* carry context cache config and metadata on LlmRequest, LlmResponse and Event ([187a4e1](https://github.com/google/adk-java/commit/187a4e1234a8d949c6b33b201a9a6b39e995f21a))
+* carry the continuation token across the Kotlin engine interop ([b3f0665](https://github.com/google/adk-java/commit/b3f0665288a9a388ec5c323733df460be9aaeaa1))
+* make BaseAgent extend BaseNode so every agent is a workflow node ([dbc973b](https://github.com/google/adk-java/commit/dbc973bfcfc1b23ca04fed3cf8f8bb84f03ab160))
+* **mcp:** allow rejecting config-supplied stdio MCP servers ([28810cd](https://github.com/google/adk-java/commit/28810cdc0165b1cb71b24b9f98c154da9f2b88a7))
+
+
+### Bug Fixes
+
+* **a2a:** skip an unconvertible remote A2A part instead of failing the turn ([9debe96](https://github.com/google/adk-java/commit/9debe96751165fbf63f41858f87ae8deddcff7e4))
+* create and use Gemini context caches when ContextCacheConfig is set ([68914c5](https://github.com/google/adk-java/commit/68914c59e254e50fece01711d5213d3c03b07090)), closes [#1530](https://github.com/google/adk-java/issues/1530)
+* run approved tool confirmations for agents under a ParallelAgent ([f866804](https://github.com/google/adk-java/commit/f866804518e6fd2bb2ebb206bcb11007f17dca98))
+* send MCP tool input schemas in chat completions requests ([ce88237](https://github.com/google/adk-java/commit/ce882374918a96ff1d306bab38cbdd3eb77c071d))
+* **spring-ai:** order SpringAIAutoConfiguration after Spring AI model auto-configurations ([d342a95](https://github.com/google/adk-java/commit/d342a959fee63723dc6a81e734a4c34eda674290))
+* **spring-ai:** preserve enum and items in tool schema conversion ([7b1a5b8](https://github.com/google/adk-java/commit/7b1a5b800e9dd3f3329976e708585b7404a3a3e4)), closes [#1609](https://github.com/google/adk-java/issues/1609)
+* stop losing event fields on Vertex AI session reloads ([887f9da](https://github.com/google/adk-java/commit/887f9da87e48b072cbf68936141294373d9f7c4e))
+* wait for the transfer event to be persisted before running the transfer target ([9f5d5ce](https://github.com/google/adk-java/commit/9f5d5ce736c9a9aff7f5ae5b4390c93507519e68))
+
+## [1.11.0](https://github.com/google/adk-java/compare/v1.10.1...v1.11.0) (2026-10-02)
+
+
+### Features
+
+* add rewindBeforeInvocationId to EventActions and carry it through the Kotlin interop ([4ff229b](https://github.com/google/adk-java/commit/4ff229bbade2191ba523a67800f28ccc739e4565))
+* add thread-safe immutableEvents, addEvent, and addEvents helpers to Session ([950b869](https://github.com/google/adk-java/commit/950b86968dc443fd7322072e193d5bfc349973c4))
+* carry code-execution, media resolution and more config across the Java/Kotlin interop ([4f3b02d](https://github.com/google/adk-java/commit/4f3b02da92d39c15ef3dbd081f3f0565efc227e5))
+* **dev:** add the /version and /health endpoints ([849e1f6](https://github.com/google/adk-java/commit/849e1f6f35c46074fd4e79b867351d0643785f8b))
+* drop model-name checks from GoogleSearchTool and UrlContextTool ([887da0e](https://github.com/google/adk-java/commit/887da0e2170811361b33c73ba416c2813c6fd185))
+* honor the plain-text continuation flag and allow only one resumability flag ([f5c7561](https://github.com/google/adk-java/commit/f5c75618992b8a3cfbc6aedf84bc4e0e7ddf11ba))
+* let the ADK Java &lt;-&gt; Kotlin interop run on a caller-supplied dispatcher ([29481a9](https://github.com/google/adk-java/commit/29481a98afc0c919998294562b67631d404829b5))
+* resume Gemini generations paused with a continuation token ([e8dfcb0](https://github.com/google/adk-java/commit/e8dfcb0e4d04c2973ec4be27299582a2ccb5e68d))
+* **sessions:** add an opt-in switch for rejecting a duplicate session id ([e6a46b1](https://github.com/google/adk-java/commit/e6a46b1a0fcb2298aee5e2c3aa151b7d6aa740e8))
+* support pausing and resuming a session invocation ([8361c5f](https://github.com/google/adk-java/commit/8361c5fcb8434b4b8017d80bd0e67146542b9804))
+* support the resume runAsync overload when adapting a Kotlin runner to the Java Runner API ([4e67b3d](https://github.com/google/adk-java/commit/4e67b3df7ecf31bb99e73fa9939e627b3a15d382))
+
+
+### Bug Fixes
+
+* **agents:** only stop ParallelAgent on direct sub-agent escalation ([fc3e352](https://github.com/google/adk-java/commit/fc3e3529e75695d36abdabe8d8dd2e667ff8c7a7))
+* **dev:** ignore an unusable adk.web.backend-url instead of serving it ([f7d7a7c](https://github.com/google/adk-java/commit/f7d7a7ca248070b2290b93802fe3242fae5198e0))
+* **dev:** let the dev UI's public address be configured ([2c5bd9e](https://github.com/google/adk-java/commit/2c5bd9e8c4da6b8f0002b0dd2d97cec73f857803))
+* keep structuredContent and non-text content in MCP tool results ([9b128df](https://github.com/google/adk-java/commit/9b128dfba2c2f256bfab927bda46d476b8032443))
+* make Java session appends on the Kotlin engine update the caller's session in place ([650e950](https://github.com/google/adk-java/commit/650e9509dda7384ee43c1d2f1fb475514d61aecf))
+* record the thinking budget and level on the call_llm telemetry span ([ed72ddb](https://github.com/google/adk-java/commit/ed72ddbf1c969ed466aad2e6d141a7013560f6d9))
+* respect OpenTelemetry LIFO scoping in reactive streams ([33e28e3](https://github.com/google/adk-java/commit/33e28e3483c62ac935c226bd34592c580cb89ff3))
+* scope the tool-confirmation resume scan to the current branch ([b00e25d](https://github.com/google/adk-java/commit/b00e25d3ddf3a20b46d1ded78f0cdc2601398316))
+* **sessions:** reject a duplicate session id in FirestoreSessionService ([9fe5830](https://github.com/google/adk-java/commit/9fe5830f8513833f541eced7fb3f579c9093f439))
+* **sessions:** reject negative numRecentEvents in GetSessionConfig ([3adb8cf](https://github.com/google/adk-java/commit/3adb8cf132d66ad56c119711784f1f808647a80c))
+* **tools:** run an AgentTool under the caller's RunConfig ([18560ba](https://github.com/google/adk-java/commit/18560badeaa6fc40cdb636ab112ec8c952e1b1c6))
+
+
+### Reverts
+
+* keeping structuredContent and non-text content in MCP tool results ([c897cdb](https://github.com/google/adk-java/commit/c897cdb1e027bd3aaf5350e2a063b7e8c30bb8c1))
+
+
+### Documentation
+
+* add [@deprecated](https://github.com/deprecated) guidance to two deprecated event setters ([a88b093](https://github.com/google/adk-java/commit/a88b093de854d8aceeace99563eccdbac1cf126d))
+* add placeholder AGENTS.md, CLAUDE.md, and .gemini styleguide ([e0d71c0](https://github.com/google/adk-java/commit/e0d71c049b3fb06a6a20eb3b87ad4b8dc7ea3245))
+* fix inaccuracies in the tokt interop KDoc ([1afd839](https://github.com/google/adk-java/commit/1afd839593f9d67552180fc7c5ce2deaf8d5d981))
+
 ## [1.10.1](https://github.com/google/adk-java/compare/v1.10.0...v1.10.1) (2026-09-18)
 
 

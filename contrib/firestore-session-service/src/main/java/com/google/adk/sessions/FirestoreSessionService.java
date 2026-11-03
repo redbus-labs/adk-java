@@ -17,11 +17,14 @@ package com.google.adk.sessions;
 
 import com.google.adk.events.Event;
 import com.google.adk.events.EventActions;
+import com.google.adk.platform.UuidProvider;
 import com.google.adk.utils.ApiFutureUtils;
 import com.google.adk.utils.Constants;
 import com.google.api.core.ApiFuture;
 import com.google.api.core.ApiFutures;
+import com.google.api.gax.rpc.AlreadyExistsException;
 import com.google.cloud.firestore.CollectionReference;
+import com.google.cloud.firestore.DocumentReference;
 import com.google.cloud.firestore.DocumentSnapshot;
 import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.Query;
@@ -36,6 +39,7 @@ import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import java.time.Instant;
+import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,9 +52,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,6 +66,8 @@ import org.slf4j.LoggerFactory;
 public class FirestoreSessionService implements BaseSessionService {
   private static final Logger logger = LoggerFactory.getLogger(FirestoreSessionService.class);
   private final Firestore firestore;
+  private final InstantSource instantSource;
+  private final UuidProvider uuidProvider;
   private static final String ROOT_COLLECTION_NAME = Constants.ROOT_COLLECTION_NAME;
   private static final String EVENTS_SUBCOLLECTION_NAME = Constants.EVENTS_SUBCOLLECTION_NAME;
   private static final String APP_STATE_COLLECTION = Constants.APP_STATE_COLLECTION;
@@ -73,9 +80,27 @@ public class FirestoreSessionService implements BaseSessionService {
   private static final String UPDATE_TIME_KEY = Constants.KEY_UPDATE_TIME;
   private static final String TIMESTAMP_KEY = Constants.KEY_TIMESTAMP;
 
+  /** Random token each create stores, so a retried create can detect its own write. */
+  static final String CREATE_TOKEN_KEY = "createToken";
+
   /** Constructor for FirestoreSessionService. */
   public FirestoreSessionService(Firestore firestore) {
-    this.firestore = firestore;
+    this(firestore, InstantSource.system(), UuidProvider.SYSTEM);
+  }
+
+  /**
+   * Creates a session service whose generated session IDs and {@code lastUpdateTime} values come
+   * from the given providers instead of {@link java.util.UUID#randomUUID()} and the wall clock.
+   *
+   * @param firestore The Firestore client.
+   * @param instantSource Supplies the {@code lastUpdateTime} of a newly created session.
+   * @param uuidProvider Supplies the session ID when {@code createSession} is not given one.
+   */
+  public FirestoreSessionService(
+      Firestore firestore, InstantSource instantSource, UuidProvider uuidProvider) {
+    this.firestore = Objects.requireNonNull(firestore, "firestore cannot be null");
+    this.instantSource = Objects.requireNonNull(instantSource, "instantSource cannot be null");
+    this.uuidProvider = Objects.requireNonNull(uuidProvider, "uuidProvider cannot be null");
   }
 
   /** Gets the sessions collection reference for a given userId. */
@@ -96,7 +121,10 @@ public class FirestoreSessionService implements BaseSessionService {
     return createSession(appName, userId, (Map<String, Object>) state, sessionId);
   }
 
-  /** Creates a new session in Firestore. */
+  /**
+   * Creates a new session in Firestore. Session IDs are unique per user across apps, so creating
+   * one the user already has under any app fails with {@link SessionException}.
+   */
   @Override
   public Single<Session> createSession(
       String appName,
@@ -112,7 +140,7 @@ public class FirestoreSessionService implements BaseSessionService {
               Optional.ofNullable(sessionId)
                   .map(String::trim)
                   .filter(s -> !s.isEmpty())
-                  .orElseGet(() -> UUID.randomUUID().toString());
+                  .orElseGet(uuidProvider::newUuid);
 
           ConcurrentMap<String, Object> initialState =
               (state == null) ? new ConcurrentHashMap<>() : new ConcurrentHashMap<>(state);
@@ -122,7 +150,7 @@ public class FirestoreSessionService implements BaseSessionService {
               resolvedSessionId,
               initialState);
           List<Event> initialEvents = new ArrayList<>();
-          Instant now = Instant.now();
+          Instant now = instantSource.instant();
           Session newSession =
               Session.builder(resolvedSessionId)
                   .appName(appName)
@@ -139,11 +167,22 @@ public class FirestoreSessionService implements BaseSessionService {
           sessionData.put(USER_ID_KEY, newSession.userId());
           sessionData.put(UPDATE_TIME_KEY, newSession.lastUpdateTime().toString());
           sessionData.put(STATE_KEY, newSession.state());
+          String createToken = UUID.randomUUID().toString();
+          sessionData.put(CREATE_TOKEN_KEY, createToken);
 
-          // Asynchronously write to Firestore and wait for the result
-          ApiFuture<WriteResult> future =
-              getSessionsCollection(userId).document(resolvedSessionId).set(sessionData);
-          future.get(); // Block until the write is complete
+          // Unlike set(), create() fails if the session already exists instead of replacing it.
+          DocumentReference sessionDoc = getSessionsCollection(userId).document(resolvedSessionId);
+          try {
+            sessionDoc.create(sessionData).get();
+          } catch (ExecutionException e) {
+            if (!(e.getCause() instanceof AlreadyExistsException)) {
+              throw e;
+            }
+            // A retry after a lost reply fails on this call's own write; its token means success.
+            if (!createToken.equals(sessionDoc.get().get().getString(CREATE_TOKEN_KEY))) {
+              throw new SessionException(SessionException.SESSION_ALREADY_EXISTS, e.getCause());
+            }
+          }
 
           return newSession;
         });
@@ -351,7 +390,9 @@ public class FirestoreSessionService implements BaseSessionService {
    * @return A Part containing the file data.
    */
   private Part fileDataPartFromMap(Map<String, Object> fdMap) {
-    if (fdMap == null) return null;
+    if (fdMap == null) {
+      return null;
+    }
     String fileUri = (String) fdMap.get("fileUri");
     String mimeType = (String) fdMap.get("mimeType");
     return Part.fromUri(fileUri, mimeType);
@@ -658,7 +699,7 @@ public class FirestoreSessionService implements BaseSessionService {
           }
 
           // Manually add the event to the session's internal list.
-          session.events().add(event);
+          session.addEvent(event);
           session.lastUpdateTime(getInstantFromEvent(event));
 
           // --- Persist event to Firestore ---

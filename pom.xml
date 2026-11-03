@@ -17,7 +17,7 @@
 
   <groupId>com.google.adk</groupId>
   <artifactId>google-adk-parent</artifactId>
-  <version>1.10.1</version><!-- {x-version-update:google-adk:current} -->
+  <version>1.12.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
   <packaging>pom</packaging>
 
   <name>Google Agent Development Kit Maven Parent POM</name>
@@ -30,9 +30,10 @@
     <module>maven_plugin</module>
     <module>contrib/langchain4j</module>
     <module>contrib/spring-ai</module>
-    <module>contrib/samples</module>
     <module>contrib/planners</module>
     <module>contrib/firestore-session-service</module>
+    <module>contrib/sarvam-ai</module>
+    <module>examples</module>
     <module>tutorials/city-time-weather</module>
     <module>tutorials/live-audio-single-agent</module>
     <module>a2a</module>
@@ -56,7 +57,7 @@
     <otel.version>1.51.0</otel.version>
     <mcp.version>2.0.0</mcp.version>
     <errorprone.version>2.47.0</errorprone.version>
-    <google.genai.version>1.58.0</google.genai.version>
+    <google.genai.version>1.77.0</google.genai.version>
     <protobuf.version>4.33.5</protobuf.version>
     <junit.version>5.11.4</junit.version>
     <mockito.version>5.23.0</mockito.version>
@@ -75,7 +76,7 @@
     <kotlin.version>2.1.20</kotlin.version>
     <dokka.version>2.2.0</dokka.version>
     <kotlinx-coroutines.version>1.11.0</kotlinx-coroutines.version>
-    <adk-kotlin.version>1.1.0</adk-kotlin.version>
+    <adk-kotlin.version>1.3.0</adk-kotlin.version>
     <reactor-core.version>3.7.0</reactor-core.version>
     <wiremock.version>2.35.1</wiremock.version>
     <assertj.version>3.27.7</assertj.version>
@@ -86,7 +87,8 @@
     <!-- Prepended to the surefire JVM args. Empty by default; any module whose tests resolve
          mockito-core (directly or transitively) must set it to
          "-javaagent:${org.mockito:mockito-core:jar}" so the inline mock maker loads as a
-         startup agent instead of self-attaching at runtime, which newer JDKs block. -->
+         startup agent instead of self-attaching at runtime, which newer JDKs block. Keep the
+         quotes: they make a jar path with spaces a single JVM argument. -->
     <mockito.javaagent.arg/>
     <surefire.argLine>${mockito.javaagent.arg} @{jacoco.agent.argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true</surefire.argLine>
   </properties>

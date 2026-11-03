@@ -32,6 +32,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+/**
+ * Tests for InstructionUtils.
+ *
+ * @author Sandeep Belgavi
+ */
 @RunWith(JUnit4.class)
 public final class InstructionUtilsTest {
 
@@ -129,11 +134,11 @@ public final class InstructionUtilsTest {
     testContext.session().state().put("user:first_name", "John");
     testContext.session().state().put("user:last_name", "Doe");
     String template =
-        "The user's full name is: {user:first_name} {user:middle_name?} {user:last_name}.";
+        "The user's full name is: {user:first_name} {user:middle_name?} {?user:middle_name} {user:last_name}.";
 
     String result = InstructionUtils.injectSessionState(testContext, template).blockingGet();
 
-    assertThat(result).isEqualTo("The user's full name is: John  Doe.");
+    assertThat(result).isEqualTo("The user's full name is: John   Doe.");
   }
 
   @Test

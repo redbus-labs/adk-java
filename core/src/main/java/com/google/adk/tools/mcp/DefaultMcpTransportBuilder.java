@@ -65,7 +65,7 @@ public class DefaultMcpTransportBuilder implements McpTransportBuilder {
                                       .orElse(""))))
           .build();
     } else if (connectionParams instanceof StreamableHttpServerParameters streamableParams) {
-      // Split the URL so the transport's URI.resolve does not drop a custom path (b/513186321).
+      // Split the URL so the transport's URI.resolve does not drop a custom path.
       SplitUri split = splitBaseAndEndpoint(streamableParams.url());
       HttpClientStreamableHttpTransport.Builder builder =
           HttpClientStreamableHttpTransport.builder(split.baseUri())

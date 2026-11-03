@@ -20,6 +20,8 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.sessions.State;
+import com.google.adk.workflow.Route;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.genai.types.Content;
@@ -53,6 +55,7 @@ public final class EventActionsTest {
             .skipSummarization(true)
             .compaction(COMPACTION)
             .deletedArtifactIds(ImmutableSet.of("d1"))
+            .route(ImmutableList.of(new Route.Tag("next")))
             .build();
 
     EventActions eventActionsAfterRebuild = eventActionsWithSkipSummarization.toBuilder().build();
@@ -90,6 +93,8 @@ public final class EventActionsTest {
                 new ConcurrentHashMap<>(ImmutableMap.of("tool2", TOOL_CONFIRMATION)))
             .endOfAgent(true)
             .setModelResponse(ImmutableMap.of("field1", "value1"))
+            .rewindBeforeInvocationId("inv1")
+            .route(ImmutableList.of(new Route.Tag("next")))
             .build();
 
     EventActions merged = eventActions1.toBuilder().merge(eventActions2).build();
@@ -111,6 +116,115 @@ public final class EventActionsTest {
     assertThat(merged.endOfAgent()).isTrue();
     assertThat(merged.compaction()).hasValue(COMPACTION);
     assertThat(merged.setModelResponse()).hasValue(ImmutableMap.of("field1", "value1"));
+    assertThat(merged.rewindBeforeInvocationId()).hasValue("inv1");
+    assertThat(merged.route()).hasValue(ImmutableList.of(new Route.Tag("next")));
+  }
+
+  @Test
+  public void route_roundTripsThroughJsonAsArrayOfScalars() {
+    EventActions actions =
+        EventActions.builder()
+            .route(
+                ImmutableList.of(
+                    new Route.Tag("a"),
+                    new Route.Num(1),
+                    new Route.Flag(true),
+                    Route.Default.INSTANCE))
+            .build();
+
+    String json = actions.toJson();
+
+    assertThat(json).contains("\"route\":[\"a\",1,true,\"__DEFAULT__\"]");
+    assertThat(EventActions.fromJsonString(json, EventActions.class).route())
+        .isEqualTo(actions.route());
+  }
+
+  @Test
+  public void route_readsBareScalarAsOneRoute() {
+    EventActions actions =
+        EventActions.fromJsonString("{\"route\":\"approve\"}", EventActions.class);
+
+    assertThat(actions.route()).hasValue(ImmutableList.of(new Route.Tag("approve")));
+  }
+
+  @Test
+  public void route_absentByDefault() {
+    assertThat(EventActions.builder().build().route()).isEmpty();
+  }
+
+  @Test
+  public void toJson_omitsAbsentRoute() {
+    assertThat(EventActions.builder().build().toJson()).doesNotContain("\"route\"");
+  }
+
+  @Test
+  public void merge_route_emptyInOther_replacesThis() {
+    EventActions first = EventActions.builder().route(ImmutableList.of(new Route.Tag("a"))).build();
+    EventActions other = EventActions.builder().route(ImmutableList.of()).build();
+
+    EventActions merged = first.toBuilder().merge(other).build();
+
+    assertThat(merged.route()).hasValue(ImmutableList.of());
+  }
+
+  @Test
+  public void merge_route_absentInOther_keepsThis() {
+    EventActions first = EventActions.builder().route(ImmutableList.of(new Route.Tag("a"))).build();
+
+    EventActions merged = first.toBuilder().merge(EventActions.builder().build()).build();
+
+    assertThat(merged.route()).hasValue(ImmutableList.of(new Route.Tag("a")));
+  }
+
+  @Test
+  public void rewindBeforeInvocationId_roundTripsThroughToBuilder() {
+    EventActions actions = EventActions.builder().rewindBeforeInvocationId("inv1").build();
+
+    EventActions rebuilt = actions.toBuilder().build();
+
+    assertThat(rebuilt).isEqualTo(actions);
+    assertThat(rebuilt).isNotEqualTo(EventActions.builder().build());
+    assertThat(rebuilt.rewindBeforeInvocationId()).hasValue("inv1");
+  }
+
+  @Test
+  public void rewindBeforeInvocationId_roundTripsThroughJson() {
+    EventActions actions = EventActions.builder().rewindBeforeInvocationId("inv1").build();
+
+    String json = actions.toJson();
+    EventActions deserialized = EventActions.fromJsonString(json, EventActions.class);
+
+    assertThat(json).contains("\"rewindBeforeInvocationId\":\"inv1\"");
+    assertThat(deserialized.rewindBeforeInvocationId()).hasValue("inv1");
+  }
+
+  @Test
+  public void rewindBeforeInvocationId_absentByDefault_andOmittedFromJson() {
+    EventActions actions = EventActions.builder().build();
+
+    assertThat(actions.rewindBeforeInvocationId()).isEmpty();
+    assertThat(actions.toJson()).doesNotContain("rewindBeforeInvocationId");
+  }
+
+  @Test
+  public void merge_rewindBeforeInvocationId_absentInOther_keepsThis() {
+    EventActions first = EventActions.builder().rewindBeforeInvocationId("inv1").build();
+    EventActions second = EventActions.builder().build();
+
+    EventActions merged = first.toBuilder().merge(second).build();
+
+    assertThat(merged.rewindBeforeInvocationId()).hasValue("inv1");
+  }
+
+  @Test
+  public void setRewindBeforeInvocationId_setsAndClears() {
+    EventActions actions = new EventActions();
+
+    actions.setRewindBeforeInvocationId("inv1");
+    assertThat(actions.rewindBeforeInvocationId()).hasValue("inv1");
+
+    actions.setRewindBeforeInvocationId(null);
+    assertThat(actions.rewindBeforeInvocationId()).isEmpty();
   }
 
   @Test
