@@ -16,6 +16,7 @@
 
 package com.google.adk.models;
 
+import com.google.adk.agents.InvocationContext;
 import io.reactivex.rxjava3.core.Flowable;
 
 /**
@@ -51,6 +52,17 @@ public abstract class BaseLlm {
    *     LlmResponses should be treated as one content by merging their parts.
    */
   public abstract Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream);
+
+  /**
+   * Generates content with invocation identity when supported by the model.
+   *
+   * <p>The default delegates to the existing two-argument API so providers need not implement
+   * context-aware generation. Decorators can override this method for session-aware behavior.
+   */
+  public Flowable<LlmResponse> generateContent(
+      LlmRequest llmRequest, boolean stream, InvocationContext context) {
+    return generateContent(llmRequest, stream);
+  }
 
   /** Creates a live connection to the LLM. */
   public abstract BaseLlmConnection connect(LlmRequest llmRequest);
