@@ -17,7 +17,7 @@
 
   <groupId>com.google.adk</groupId>
   <artifactId>google-adk-parent</artifactId>
-  <version>1.12.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+  <version>1.14.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
   <packaging>pom</packaging>
 
   <name>Google Agent Development Kit Maven Parent POM</name>
@@ -73,14 +73,14 @@
     <jspecify.version>1.0.0</jspecify.version>
     <rxjava.version>3.1.12</rxjava.version>
     <!-- ADK Kotlin engine interop (google-adk-tokt module). -->
-    <kotlin.version>2.1.20</kotlin.version>
+    <kotlin.version>2.3.21</kotlin.version>
     <dokka.version>2.2.0</dokka.version>
     <kotlinx-coroutines.version>1.11.0</kotlinx-coroutines.version>
-    <adk-kotlin.version>1.3.0</adk-kotlin.version>
+    <adk-kotlin.version>1.5.0</adk-kotlin.version>
     <reactor-core.version>3.7.0</reactor-core.version>
     <wiremock.version>2.35.1</wiremock.version>
     <assertj.version>3.27.7</assertj.version>
-    <anthropic.version>2.15.0</anthropic.version>
+    <anthropic.version>2.65.0</anthropic.version>
     <maven-plugin-tools.version>3.9.0</maven-plugin-tools.version>
     <httpclient5.version>5.6.1</httpclient5.version>
     <netty.version>4.1.118.Final</netty.version>
