@@ -20,40 +20,66 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.adk.agents.Context;
+import com.google.adk.agents.InvocationContext;
 import com.google.adk.annotations.Experimental;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
 
 /**
  * The state of one workflow node run, held by the run's {@link Context}. Only the workflow runtime
- * creates it and updates the bookkeeping that records which results an event has carried.
+ * creates it and updates the bookkeeping that records which results an event has carried. Its
+ * output, interrupt IDs and child run IDs are safe to update from several threads, since children
+ * that a node runs itself may start and finish on other threads.
  */
 @Experimental
 public final class NodeExecutionState {
 
+  private static final OutputState NO_OUTPUT = new OutputState(OutputStatus.NONE, null);
+  private static final OutputState DELEGATED_OUTPUT = new OutputState(OutputStatus.DELEGATED, null);
+  private static final String SECOND_OUTPUT_MESSAGE =
+      "Node '%s' produced a second output; a node produces at most one output.";
+
   private final Node node;
   private final NodeRunner.EventSink eventSink;
   private final @Nullable Context parent;
+  // The parent's state when this run's output is also the parent's.
+  private final @Nullable NodeExecutionState outputParent;
   private final String runId;
+  private final int attemptCount;
   private final String nodePath;
   private final ImmutableList<String> outputFor;
-  private final Map<String, Integer> childRunCounts = new HashMap<>();
+  private final Map<String, @Nullable Object> resumeInputs;
+  private final ConcurrentMap<String, Integer> childRunCounts;
+  private final ConcurrentMap<String, NodeRunner.SharedChildRun> childRuns;
+  // Paths of runs started but not finished in this turn, shared under one root and its attempts.
+  private final Set<String> unfinishedNodePaths;
+  // Paths of runs that failed this turn and have not finished cleanly since, shared the same way.
+  private final Set<String> failedNodePaths;
+  private final Set<String> interruptIds = new CopyOnWriteArraySet<>();
+  private final AtomicReference<OutputState> outputState = new AtomicReference<>(NO_OUTPUT);
+  // Set once the node drops its own output because a useAsOutput child holds the output.
+  private final AtomicBoolean droppedOwnOutput = new AtomicBoolean();
   private String eventAuthor;
-  private final Set<String> interruptIds = new LinkedHashSet<>();
-  private @Nullable Object output;
-  private boolean outputEmitted;
   private @Nullable ImmutableList<Route> selectedRoutes;
   private boolean routesEmitted;
   private @Nullable Exception failure;
+  private @Nullable String failureNodePath;
+  private @Nullable ImmutableMap<String, ResumeScan.RecoveredNode> recoveredChildren;
 
   private NodeExecutionState(Builder builder) {
     checkState(builder.node != null, "A node state needs a node.");
@@ -64,6 +90,7 @@ public final class NodeExecutionState {
     this.parent = builder.parent;
     this.runId = builder.runId;
     NodeExecutionState parentState = parent == null ? null : parent.requireNodeState();
+    this.outputParent = builder.useAsOutput ? parentState : null;
     this.nodePath =
         NodeRunner.appendSegment(
             parentState == null ? null : parentState.nodePath,
@@ -71,10 +98,23 @@ public final class NodeExecutionState {
             runId,
             /* separator= */ '/');
     this.outputFor =
-        builder.useAsOutput && parentState != null
-            ? ImmutableList.<String>builder().add(nodePath).addAll(parentState.outputFor).build()
+        outputParent != null
+            ? ImmutableList.<String>builder().add(nodePath).addAll(outputParent.outputFor).build()
             : ImmutableList.of(nodePath);
     this.eventAuthor = parentState == null ? "" : parentState.eventAuthor;
+    NodeExecutionState previousAttempt = builder.previousAttempt;
+    this.attemptCount = previousAttempt == null ? 1 : previousAttempt.attemptCount + 1;
+    NodeExecutionState turnRecords = parentState != null ? parentState : previousAttempt;
+    this.unfinishedNodePaths =
+        turnRecords == null ? ConcurrentHashMap.newKeySet() : turnRecords.unfinishedNodePaths;
+    this.failedNodePaths =
+        turnRecords == null ? ConcurrentHashMap.newKeySet() : turnRecords.failedNodePaths;
+    this.resumeInputs = Collections.unmodifiableMap(new LinkedHashMap<>(builder.resumeInputs));
+    // A retried workflow restarts its node numbering, so its finished nodes replay.
+    boolean continuesChildRuns = previousAttempt != null && !(node instanceof Workflow);
+    this.childRunCounts =
+        continuesChildRuns ? previousAttempt.childRunCounts : new ConcurrentHashMap<>();
+    this.childRuns = continuesChildRuns ? previousAttempt.childRuns : new ConcurrentHashMap<>();
   }
 
   /** Returns a builder for the state of one node run. */
@@ -100,6 +140,11 @@ public final class NodeExecutionState {
     return runId;
   }
 
+  /** Returns the number of this attempt at running the node, counting from 1. */
+  public int attemptCount() {
+    return attemptCount;
+  }
+
   /** Returns the context of the node that ran this node, or empty if this is a root node. */
   public Optional<Context> parent() {
     return Optional.ofNullable(parent);
@@ -118,24 +163,55 @@ public final class NodeExecutionState {
     this.eventAuthor = checkNotNull(eventAuthor);
   }
 
-  /** Returns the node's output, or empty if it has produced none. */
+  /**
+   * Returns the node's output, which is the output of its {@code useAsOutput} child once that child
+   * emits one, or empty if it has none.
+   */
   public Optional<Object> output() {
-    return Optional.ofNullable(output);
+    return Optional.ofNullable(outputState.get().value());
   }
 
   /**
    * Records the node's output, which an event carries when the node finishes unless an earlier
-   * event already carried it. A node produces at most one output.
+   * event already carried it. A node produces at most one output. Once the node delegates its
+   * output to a {@code useAsOutput} child, an output it produces itself is dropped, as in Python
+   * ADK.
    *
-   * @throws IllegalStateException if the node already has an output.
+   * @throws IllegalStateException if the node already produced an output of its own, even one that
+   *     was dropped
    */
   public void produceOutput(Object output) {
+    tryProduceOutput(output);
+  }
+
+  /**
+   * Records {@code output} as {@link #produceOutput} does, and returns {@code false} if it was
+   * dropped because a {@code useAsOutput} child holds the node's output.
+   *
+   * @throws IllegalStateException if the node already produced an output of its own, even one that
+   *     was dropped
+   */
+  @CanIgnoreReturnValue
+  boolean tryProduceOutput(Object output) {
     checkNotNull(output);
-    checkState(
-        this.output == null,
-        "Node '%s' produced a second output; a node produces at most one output.",
-        node.name());
-    this.output = output;
+    OutputState updated =
+        outputState.updateAndGet(
+            current -> {
+              if (current.status().isDelegated()) {
+                return current;
+              }
+              checkState(
+                  current.status() == OutputStatus.NONE && !droppedOwnOutput.get(),
+                  SECOND_OUTPUT_MESSAGE,
+                  node.name());
+              return new OutputState(OutputStatus.PRODUCED, output);
+            });
+    if (!updated.status().isDelegated()) {
+      return true;
+    }
+    // As in Python ADK, a dropped output still counts, so a later one fails as a second output.
+    checkState(droppedOwnOutput.compareAndSet(false, true), SECOND_OUTPUT_MESSAGE, node.name());
+    return false;
   }
 
   /**
@@ -160,6 +236,15 @@ public final class NodeExecutionState {
     return ImmutableSet.copyOf(interruptIds);
   }
 
+  /**
+   * Returns the user's answers to the requests for input and long-running calls that this node or
+   * its descendants raised in an earlier turn, keyed by interrupt ID. A null answer has a null
+   * value in the map. The map is empty unless the node reruns on resume.
+   */
+  public Map<String, @Nullable Object> resumeInputs() {
+    return resumeInputs;
+  }
+
   NodeRunner.EventSink eventSink() {
     return eventSink;
   }
@@ -172,18 +257,170 @@ public final class NodeExecutionState {
     return outputFor;
   }
 
+  /**
+   * Returns whether a non-workflow node takes this run's output, directly or through enclosing
+   * workflows, as with {@code useAsOutput}.
+   */
+  boolean isDelegatedToANode() {
+    for (NodeExecutionState parent = outputParent; parent != null; parent = parent.outputParent) {
+      if (!(parent.node instanceof Workflow)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Returns the next run ID for a child node named {@code name}, counting from {@code "1"}. */
   String nextChildRunId(String name) {
     return String.valueOf(childRunCounts.merge(name, 1, Integer::sum));
   }
 
-  /** Returns whether an event has carried the node's output. */
-  boolean outputEmitted() {
-    return outputEmitted;
+  /**
+   * Returns the runs of the children this node runs itself, keyed by {@code name@runId}, which
+   * calls with the same run ID share.
+   */
+  ConcurrentMap<String, NodeRunner.SharedChildRun> childRuns() {
+    return childRuns;
   }
 
+  /** Records that this run started; it counts as canceled mid-run until it finishes. */
+  void markStarted() {
+    unfinishedNodePaths.add(nodePath);
+  }
+
+  /** Records that this run finished, with or without a result. */
+  void markFinished() {
+    unfinishedNodePaths.remove(nodePath);
+    if (failure == null) {
+      failedNodePaths.remove(nodePath);
+    } else {
+      failedNodePaths.add(nodePath);
+    }
+  }
+
+  /**
+   * Returns whether this run's child {@code childKey}, a {@code name@runId} segment, started in
+   * this turn and has not finished. When read before the child runs again, this means a failing
+   * sibling or caller canceled it.
+   */
+  boolean childCanceledMidRun(String childKey) {
+    return unfinishedNodePaths.contains(nodePath + "/" + childKey);
+  }
+
+  /**
+   * Returns whether this run's child {@code childKey} failed in this turn and has not finished
+   * cleanly since. A child that takes on its own child's failure leaves no error event to show it.
+   */
+  boolean childFailedThisTurn(String childKey) {
+    return failedNodePaths.contains(nodePath + "/" + childKey);
+  }
+
+  /**
+   * Returns the states of this node's children from earlier turns, keyed by {@code name@runId},
+   * which the first call reconstructs from the events of {@code invocationContext}.
+   */
+  synchronized ImmutableMap<String, ResumeScan.RecoveredNode> recoveredChildren(
+      InvocationContext invocationContext) {
+    if (recoveredChildren == null) {
+      recoveredChildren = ResumeScan.scan(invocationContext, nodePath);
+    }
+    return recoveredChildren;
+  }
+
+  /** Returns the parent's state if this run's output is also the parent's, or null. */
+  @Nullable NodeExecutionState outputParent() {
+    return outputParent;
+  }
+
+  /** Returns whether an event has carried the node's own or delegated output. */
+  boolean outputEmitted() {
+    OutputStatus status = outputState.get().status();
+    return status == OutputStatus.EMITTED || status == OutputStatus.DELEGATE_EMITTED;
+  }
+
+  /**
+   * Records that an event carried the output the node produced, which also makes it the output of
+   * each ancestor that delegated its output to this run.
+   *
+   * @throws IllegalStateException if the node has no unsent output.
+   */
   void markOutputEmitted() {
-    outputEmitted = true;
+    Object emitted =
+        outputState
+            .updateAndGet(
+                current -> {
+                  checkState(
+                      current.status() == OutputStatus.PRODUCED
+                          || current.status() == OutputStatus.DELEGATE_PRODUCED,
+                      "Node '%s' has no unsent output to mark as emitted.",
+                      node.name());
+                  // It stays delegated, so an output the node produces later is still dropped.
+                  return new OutputState(
+                      current.status().isDelegated()
+                          ? OutputStatus.DELEGATE_EMITTED
+                          : OutputStatus.EMITTED,
+                      current.value());
+                })
+            .value();
+    for (NodeExecutionState ancestor = outputParent;
+        ancestor != null;
+        ancestor = ancestor.outputParent) {
+      ancestor.recordDelegatedOutput(emitted);
+    }
+  }
+
+  /**
+   * Records {@code output}, emitted by a {@code useAsOutput} descendant, as the node's output if
+   * the node delegated its output. A later output replaces an earlier one, as when a workflow
+   * records its own output after its terminal node's.
+   */
+  private void recordDelegatedOutput(@Nullable Object output) {
+    outputState.updateAndGet(
+        current ->
+            current.status() == OutputStatus.DELEGATED
+                    || current.status() == OutputStatus.DELEGATE_EMITTED
+                ? new OutputState(OutputStatus.DELEGATE_EMITTED, output)
+                : current);
+  }
+
+  /**
+   * Delegates the node's output to a {@code useAsOutput} child.
+   *
+   * @throws IllegalStateException if the node already has an output or a delegate.
+   */
+  void claimOutputDelegation() {
+    outputState.updateAndGet(
+        current -> {
+          checkState(
+              !current.status().isDelegated(),
+              "Node '%s' already delegated its output to a useAsOutput child.",
+              node.name());
+          checkState(
+              current.status() == OutputStatus.NONE,
+              "Node '%s' already produced an output and cannot delegate it to a useAsOutput child.",
+              node.name());
+          return DELEGATED_OUTPUT;
+        });
+  }
+
+  /** Withdraws the delegation of the node's output, unless the delegate has emitted an output. */
+  void releaseOutputDelegation() {
+    outputState.compareAndSet(DELEGATED_OUTPUT, NO_OUTPUT);
+  }
+
+  /**
+   * Records {@code output} from a {@code useAsOutput} child as this node's own unsent output when
+   * no event carried it for this run, as when the child replays an earlier turn's output.
+   *
+   * @throws IllegalStateException if the node has no pending delegation
+   */
+  void adoptReplayedOutput(Object output) {
+    checkState(
+        outputState.compareAndSet(
+            DELEGATED_OUTPUT,
+            new OutputState(OutputStatus.DELEGATE_PRODUCED, checkNotNull(output))),
+        "Node '%s' adopted a replayed output without a pending delegation.",
+        node.name());
   }
 
   /** Returns whether an event has carried the node's current route selection. */
@@ -204,9 +441,50 @@ public final class NodeExecutionState {
     return Optional.ofNullable(failure);
   }
 
+  /** Records that the node failed with {@code failure}, which it raised itself. */
   void failure(Exception failure) {
-    this.failure = checkNotNull(failure);
+    failure(failure, nodePath);
   }
+
+  /**
+   * Records that the node failed with {@code failure}, which the node at {@code failureNodePath}
+   * raised.
+   */
+  void failure(Exception failure, String failureNodePath) {
+    this.failure = checkNotNull(failure);
+    this.failureNodePath = checkNotNull(failureNodePath);
+  }
+
+  /**
+   * Returns the path of the node that raised {@link #failure()}: this run's path, or the path of a
+   * descendant whose failure the node carried up. Empty if the node has not failed.
+   */
+  Optional<String> failureNodePath() {
+    return Optional.ofNullable(failureNodePath);
+  }
+
+  /** Status of a run's output. */
+  private enum OutputStatus {
+    /** The run has no output and no delegate. */
+    NONE,
+    /** A {@code useAsOutput} child owns the run's output and has emitted none yet. */
+    DELEGATED,
+    /** The run produced an output that no event has carried yet. */
+    PRODUCED,
+    /** An event carried the output the run produced. */
+    EMITTED,
+    /** The run holds a delegate's output, such as a replayed child's, to send on its own event. */
+    DELEGATE_PRODUCED,
+    /** An event carried the run's delegated output, sent by a descendant or by the run. */
+    DELEGATE_EMITTED;
+
+    boolean isDelegated() {
+      return this == DELEGATED || this == DELEGATE_PRODUCED || this == DELEGATE_EMITTED;
+    }
+  }
+
+  /** A run's output status and its output, held together so that each update is atomic. */
+  private record OutputState(OutputStatus status, @Nullable Object value) {}
 
   /** Builder for {@link NodeExecutionState}. */
   @Experimental
@@ -216,6 +494,8 @@ public final class NodeExecutionState {
     private @Nullable Context parent;
     private @Nullable String runId;
     private boolean useAsOutput;
+    private Map<String, @Nullable Object> resumeInputs = ImmutableMap.of();
+    private @Nullable NodeExecutionState previousAttempt;
 
     private Builder() {}
 
@@ -254,6 +534,24 @@ public final class NodeExecutionState {
     @CanIgnoreReturnValue
     Builder useAsOutput(boolean useAsOutput) {
       this.useAsOutput = useAsOutput;
+      return this;
+    }
+
+    /** Sets the answers the node resumes with, keyed by interrupt ID. */
+    @CanIgnoreReturnValue
+    Builder resumeInputs(Map<String, @Nullable Object> resumeInputs) {
+      this.resumeInputs = checkNotNull(resumeInputs);
+      return this;
+    }
+
+    /**
+     * Sets the state of the run's previous attempt, or null for a first attempt. A later attempt's
+     * count is one higher. It shares the previous attempt's records of unfinished and failed runs
+     * and, unless the node is a workflow, its child run IDs and child runs.
+     */
+    @CanIgnoreReturnValue
+    Builder previousAttempt(@Nullable NodeExecutionState previousAttempt) {
+      this.previousAttempt = previousAttempt;
       return this;
     }
 

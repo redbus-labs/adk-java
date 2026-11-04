@@ -23,6 +23,7 @@ import com.google.adk.workflow.NodeInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.genai.types.CodeExecutionResult;
 import com.google.genai.types.Content;
 import com.google.genai.types.FinishReason;
 import com.google.genai.types.FunctionCall;
@@ -276,6 +277,36 @@ public final class EventTest {
   }
 
   @Test
+  public void nodeName_isTheEmittingNodesName() {
+    Event event = EVENT.toBuilder().nodeInfo(NodeInfo.builder().path("wf@1/a@2").build()).build();
+
+    assertThat(event.nodeName()).hasValue("a");
+  }
+
+  @Test
+  public void nodeName_emptyOutsideAWorkflow() {
+    assertThat(EVENT.nodeName()).isEmpty();
+    assertThat(EVENT.toBuilder().nodeInfo(NodeInfo.builder().build()).build().nodeName()).isEmpty();
+  }
+
+  @Test
+  public void nodeName_emptyForAgentStateAndEndOfAgentEvents() {
+    Event endOfAgent =
+        EVENT.toBuilder()
+            .nodeInfo(NODE_INFO)
+            .actions(EventActions.builder().endOfAgent(true).build())
+            .build();
+    Event agentState =
+        EVENT.toBuilder()
+            .nodeInfo(NODE_INFO)
+            .actions(EventActions.builder().agentState(ImmutableMap.of()).build())
+            .build();
+
+    assertThat(endOfAgent.nodeName()).isEmpty();
+    assertThat(agentState.nodeName()).isEmpty();
+  }
+
+  @Test
   public void event_builder_with_transcriptions_works() {
     Transcription inputTranscription =
         Transcription.builder().text("user said hello").finished(true).build();
@@ -377,6 +408,31 @@ public final class EventTest {
   }
 
   @Test
+  public void event_isolationScope_survivesJsonAndToBuilder() {
+    Event event = EVENT.toBuilder().isolationScope("wf@1/task@1").build();
+
+    assertThat(event.isolationScope()).hasValue("wf@1/task@1");
+    assertThat(event.toBuilder().build()).isEqualTo(event);
+    assertThat(Event.fromJson(event.toJson())).isEqualTo(event);
+    assertThat(event).isNotEqualTo(EVENT);
+    assertThat(event.hashCode()).isNotEqualTo(EVENT.hashCode());
+  }
+
+  @Test
+  public void event_isolationScope_emptyByDefault() {
+    assertThat(EVENT.isolationScope()).isEmpty();
+    assertThat(EVENT.toJson()).doesNotContain("isolationScope");
+  }
+
+  @Test
+  public void fromJson_readsIsolationScope() {
+    Event event =
+        Event.fromJson("{\"id\":\"event_id\",\"author\":\"agent\",\"isolationScope\":\"fc-1\"}");
+
+    assertThat(event.isolationScope()).hasValue("fc-1");
+  }
+
+  @Test
   public void finalResponse_returnsTrueIfNoToolCalls() {
     Event event =
         Event.builder()
@@ -435,6 +491,115 @@ public final class EventTest {
             .author("agent")
             .content(Content.fromParts(Part.fromFunctionCall("tool", ImmutableMap.of("k", "v"))))
             .actions(EventActions.builder().skipSummarization(true).build())
+            .build();
+    assertThat(event.finalResponse()).isTrue();
+  }
+
+  @Test
+  public void finalResponse_isTrueForErrorEvent() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromText("hello")))
+            .errorCode(new FinishReason("SOME_ERROR"))
+            .errorMessage("Something went wrong")
+            .build();
+    assertThat(event.finalResponse()).isTrue();
+  }
+
+  @Test
+  public void finalResponse_isTrueForErrorEventWithFunctionResponse() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(
+                Content.fromParts(Part.fromFunctionResponse("tool", ImmutableMap.of("k", "v"))))
+            .errorCode(new FinishReason("SOME_ERROR"))
+            .errorMessage("Something went wrong")
+            .build();
+    assertThat(event.finalResponse()).isTrue();
+  }
+
+  @Test
+  public void finalResponse_isFalseForErrorEventWithFunctionCall() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromFunctionCall("tool", ImmutableMap.of("k", "v"))))
+            .errorCode(new FinishReason("SOME_ERROR"))
+            .errorMessage("Something went wrong")
+            .build();
+    assertThat(event.finalResponse()).isFalse();
+  }
+
+  @Test
+  public void finalResponse_isFalseForPartialErrorEvent() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(Content.fromParts(Part.fromText("hello")))
+            .errorCode(new FinishReason("SOME_ERROR"))
+            .errorMessage("Something went wrong")
+            .partial(true)
+            .build();
+    assertThat(event.finalResponse()).isFalse();
+  }
+
+  @Test
+  public void finalResponse_isFalseForFunctionResponse() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(
+                Content.fromParts(Part.fromFunctionResponse("tool", ImmutableMap.of("k", "v"))))
+            .build();
+    assertThat(event.finalResponse()).isFalse();
+  }
+
+  @Test
+  public void finalResponse_isFalseForTrailingCodeExecutionResult() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(
+                Content.fromParts(
+                    Part.fromText("hello"),
+                    Part.builder()
+                        .codeExecutionResult(
+                            CodeExecutionResult.builder().outcome("OK").output("42").build())
+                        .build()))
+            .build();
+    assertThat(event.finalResponse()).isFalse();
+  }
+
+  @Test
+  public void finalResponse_isTrueForErrorEventWithTrailingCodeExecutionResult() {
+    Event event =
+        Event.builder()
+            .id("e1")
+            .invocationId("i1")
+            .author("agent")
+            .content(
+                Content.fromParts(
+                    Part.fromText("hello"),
+                    Part.builder()
+                        .codeExecutionResult(
+                            CodeExecutionResult.builder().outcome("OK").output("42").build())
+                        .build()))
+            .errorCode(new FinishReason("SOME_ERROR"))
+            .errorMessage("Something went wrong")
             .build();
     assertThat(event.finalResponse()).isTrue();
   }

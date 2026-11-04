@@ -17,19 +17,22 @@
 package com.google.adk.workflow;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.google.adk.annotations.Experimental;
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Random;
 import org.jspecify.annotations.Nullable;
 
 /**
  * How a node is retried when it fails. The builder initializes each property to its {@code
- * DEFAULT_} constant, except {@link #exceptions}, which starts unset.
+ * DEFAULT_} constant, except {@link #exceptions} and {@link #exceptionClasses}, which start unset.
  */
 @Experimental
 @AutoValue
@@ -70,9 +73,19 @@ public abstract class RetryConfig {
 
   /**
    * Returns the simple type names of the failures to retry on, matched exactly with no subclass
-   * match. When unset, any failure is retried; an empty list retries none.
+   * match. A failure is retried when it matches this list or {@link #exceptionClasses}, and any
+   * failure is retried when both are unset. A {@link WorkflowConfigurationException} is never
+   * retried, even when listed, because a retry fails the same way.
    */
   public abstract Optional<ImmutableList<String>> exceptions();
+
+  /**
+   * Returns the types of the failures to retry on, each also matching its subclasses. A failure is
+   * retried when it matches this list or {@link #exceptions}, and any failure is retried when both
+   * are unset. A {@link WorkflowConfigurationException} is never retried, even when its class is
+   * listed.
+   */
+  public abstract Optional<ImmutableList<Class<? extends Exception>>> exceptionClasses();
 
   public static Builder builder() {
     return new AutoValue_RetryConfig.Builder()
@@ -84,6 +97,49 @@ public abstract class RetryConfig {
   }
 
   public abstract Builder toBuilder();
+
+  /**
+   * Returns whether a node that failed with {@code failure} on attempt {@code attempt}, counting
+   * from 1, has an attempt left and failed with a type this config retries.
+   */
+  boolean shouldRetry(Exception failure, int attempt) {
+    if (attempt >= maxAttempts() || failure instanceof WorkflowConfigurationException) {
+      return false;
+    }
+    if (exceptions().isEmpty() && exceptionClasses().isEmpty()) {
+      return true;
+    }
+    return exceptions().map(names -> names.contains(errorTypeName(failure))).orElse(false)
+        || exceptionClasses()
+            .map(types -> types.stream().anyMatch(type -> type.isInstance(failure)))
+            .orElse(false);
+  }
+
+  /**
+   * Returns how long to wait after the failed attempt {@code attempt}, counting from 1, before the
+   * next one, drawing the jitter from {@code random}.
+   */
+  Duration delayFor(int attempt, Random random) {
+    // TimeUnit.convert saturates instead of overflowing past about 292 years.
+    double maxNanos = NANOSECONDS.convert(maxDelay());
+    // Clamped, as an infinite power times a zero initial delay would be NaN.
+    double delay =
+        NANOSECONDS.convert(initialDelay())
+            * Math.min(Math.pow(backoffFactor(), attempt - 1), Double.MAX_VALUE);
+    // Capped before jittering, so jitter keeps spreading the delays near the cap.
+    double capped = Math.min(delay, maxNanos / (1.0 + jitter()));
+    double spread = jitter() * (2.0 * random.nextDouble() - 1.0);
+    return Duration.ofNanos((long) Math.max(0.0, Math.min(capped * (1.0 + spread), maxNanos)));
+  }
+
+  /**
+   * Returns the name that a node's error event reports and {@link #exceptions} matches: the simple
+   * name of the failure's type, or its full name for an anonymous class.
+   */
+  static String errorTypeName(Exception failure) {
+    String name = failure.getClass().getSimpleName();
+    return name.isEmpty() ? failure.getClass().getName() : name;
+  }
 
   /** Builder for {@link RetryConfig}. */
   @AutoValue.Builder
@@ -107,9 +163,46 @@ public abstract class RetryConfig {
     @CanIgnoreReturnValue
     abstract Builder exceptions(@Nullable ImmutableList<String> exceptions);
 
+    /**
+     * Sets {@link RetryConfig#exceptions}, the type names of failures to retry on, or unsets it if
+     * null. Leaves {@link RetryConfig#exceptionClasses} unchanged.
+     */
     @CanIgnoreReturnValue
     public Builder exceptions(@Nullable List<String> exceptions) {
       return exceptions(exceptions == null ? null : ImmutableList.copyOf(exceptions));
+    }
+
+    /** Sets {@link RetryConfig#exceptions} from the given names, like {@link #exceptions(List)}. */
+    @CanIgnoreReturnValue
+    public Builder exceptions(String exception, String... moreExceptions) {
+      return exceptions(Lists.asList(exception, moreExceptions));
+    }
+
+    @CanIgnoreReturnValue
+    abstract Builder exceptionClasses(
+        @Nullable ImmutableList<Class<? extends Exception>> exceptionClasses);
+
+    /**
+     * Sets {@link RetryConfig#exceptionClasses}, the types of failures to retry on, or unsets it if
+     * null. Leaves {@link RetryConfig#exceptions} unchanged.
+     */
+    @CanIgnoreReturnValue
+    public Builder exceptionClasses(
+        @Nullable List<? extends Class<? extends Exception>> exceptionClasses) {
+      return exceptionClasses(
+          exceptionClasses == null ? null : ImmutableList.copyOf(exceptionClasses));
+    }
+
+    /**
+     * Sets {@link RetryConfig#exceptionClasses} from the given types, like {@link
+     * #exceptionClasses(List)}.
+     */
+    @CanIgnoreReturnValue
+    @SafeVarargs
+    public final Builder exceptionClasses(
+        Class<? extends Exception> exceptionClass,
+        Class<? extends Exception>... moreExceptionClasses) {
+      return exceptionClasses(Lists.asList(exceptionClass, moreExceptionClasses));
     }
 
     abstract RetryConfig autoBuild();

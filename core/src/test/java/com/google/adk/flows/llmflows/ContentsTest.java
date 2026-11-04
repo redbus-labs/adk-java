@@ -20,6 +20,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Correspondence.transforming;
 import static com.google.common.truth.Truth.assertThat;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.stream.Collectors.joining;
 import static org.junit.Assert.assertThrows;
 
 import com.google.adk.agents.InvocationContext;
@@ -41,6 +42,7 @@ import com.google.genai.types.FunctionResponse;
 import com.google.genai.types.Part;
 import com.google.genai.types.ToolCall;
 import com.google.genai.types.ToolResponse;
+import com.google.genai.types.Transcription;
 import java.util.ArrayList;
 import java.util.ConcurrentModificationException;
 import java.util.Iterator;
@@ -50,6 +52,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -740,6 +743,75 @@ public final class ContentsTest {
   }
 
   @Test
+  public void rearrangeHistory_reusedCallIdWithoutCompaction_pairsEachCallWithItsOwnResponse() {
+    Event fc1 = createFunctionCallEvent("fc1", "site_posture", "call_807");
+    Event fr1 =
+        createFunctionResponseEvent(
+            "fr1", "site_posture", "call_807", ImmutableMap.of("result", "site"));
+    Event fc2 = createFunctionCallEvent("fc2", "fleet_summary", "call_807");
+    Event fr2 =
+        createFunctionResponseEvent(
+            "fr2", "fleet_summary", "call_807", ImmutableMap.of("result", "fleet"));
+    Event u2 = createUserEvent("u2", "Follow-up question");
+    ImmutableList<Event> inputEvents = ImmutableList.of(fc1, fr1, fc2, fr2, u2);
+
+    List<Content> result = runContentsProcessor(inputEvents);
+
+    assertThat(result)
+        .containsExactly(
+            fc1.content().get(),
+            fr1.content().get(),
+            fc2.content().get(),
+            fr2.content().get(),
+            u2.content().get())
+        .inOrder();
+  }
+
+  @Test
+  public void rearrangeHistory_reusedCallIdWithoutCompaction_keepsLastUpdatePerCall() {
+    Event fc1 = createFunctionCallEvent("fc1", "watch", "call_7");
+    Event fr1Progress =
+        createFunctionResponseEvent(
+            "fr1_progress", "watch", "call_7", ImmutableMap.of("result", "progress"));
+    Event fr1Done =
+        createFunctionResponseEvent(
+            "fr1_done", "watch", "call_7", ImmutableMap.of("result", "done"));
+    Event fc2 = createFunctionCallEvent("fc2", "watch", "call_7");
+    Event fr2 =
+        createFunctionResponseEvent(
+            "fr2", "watch", "call_7", ImmutableMap.of("result", "second_call"));
+    Event u2 = createUserEvent("u2", "Follow-up question");
+    ImmutableList<Event> inputEvents = ImmutableList.of(fc1, fr1Progress, fr1Done, fc2, fr2, u2);
+
+    List<Content> result = runContentsProcessor(inputEvents);
+
+    assertThat(result)
+        .containsExactly(
+            fc1.content().get(),
+            fr1Done.content().get(),
+            fc2.content().get(),
+            fr2.content().get(),
+            u2.content().get())
+        .inOrder();
+  }
+
+  @Test
+  public void rearrangeHistory_responsePrecedingFirstCallWithSameId_pairsWithFirstCall() {
+    Event fr1 =
+        createFunctionResponseEvent(
+            "fr1", "lookup", "call_1", ImmutableMap.of("result", "early_response"));
+    Event fc1 = createFunctionCallEvent("fc1", "lookup", "call_1");
+    Event u2 = createUserEvent("u2", "Follow-up question");
+    ImmutableList<Event> inputEvents = ImmutableList.of(fr1, fc1, u2);
+
+    List<Content> result = runContentsProcessor(inputEvents);
+
+    assertThat(result)
+        .containsExactly(fc1.content().get(), fr1.content().get(), u2.content().get())
+        .inOrder();
+  }
+
+  @Test
   public void processRequest_singleCompaction() {
     ImmutableList<Event> events =
         ImmutableList.of(
@@ -923,6 +995,453 @@ public final class ContentsTest {
         .comparingElementsUsing(
             transforming((Content c) -> c.parts().get().get(0).text().get(), "content text"))
         .containsExactly("C1", "C2", "E4", "E5");
+  }
+
+  @Test
+  public void processRequest_compaction_recoversCompactedFunctionCallForResumedResponse() {
+    Event u1 = createUserEvent("u1", "Start workflow", "inv1", 1);
+    Event fcEvent =
+        createFunctionCallEvent("fc1", "tool1", "call1").toBuilder().timestamp(2).build();
+    Event frPlaceholder =
+        createFunctionResponseEvent("fr1", "tool1", "call1", ImmutableMap.of("status", "pending"))
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 3, "Summary 1-3");
+    Event frResumed =
+        createFunctionResponseEvent("fr2", "tool1", "call1", ImmutableMap.of("result", "done"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(u1, fcEvent, frPlaceholder, compactionEvent, frResumed);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(3);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-3");
+    assertThat(contents.get(1)).isEqualTo(fcEvent.content().get());
+    assertThat(contents.get(2)).isEqualTo(frResumed.content().get());
+  }
+
+  @Test
+  public void processRequest_compaction_recoversCompactedFunctionCallInHistory() {
+    Event u1 = createUserEvent("u1", "Start workflow", "inv1", 1);
+    Event fcEvent =
+        createFunctionCallEvent("fc1", "tool1", "call1").toBuilder().timestamp(2).build();
+    Event frPlaceholder =
+        createFunctionResponseEvent("fr1", "tool1", "call1", ImmutableMap.of("status", "pending"))
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 3, "Summary 1-3");
+    Event frResumed =
+        createFunctionResponseEvent("fr2", "tool1", "call1", ImmutableMap.of("result", "done"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event u2 = createUserEvent("u2", "Follow up", "inv2", 5);
+
+    ImmutableList<Event> events =
+        ImmutableList.of(u1, fcEvent, frPlaceholder, compactionEvent, frResumed, u2);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(4);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-3");
+    assertThat(contents.get(1)).isEqualTo(fcEvent.content().get());
+    assertThat(contents.get(2)).isEqualTo(frResumed.content().get());
+    assertThat(contents.get(3)).isEqualTo(u2.content().get());
+  }
+
+  @Test
+  public void processRequest_compaction_recoversParallelFunctionCallWithLatestSiblingResponse() {
+    Event u1 = createUserEvent("u1", "Start parallel workflows", "inv1", 1);
+    Event parallelFc =
+        createParallelFunctionCallEvent("fc1", "tool1", "call1", "tool2", "call2").toBuilder()
+            .timestamp(2)
+            .build();
+    Event fr2Placeholder =
+        createFunctionResponseEvent(
+                "fr2_pending", "tool2", "call2", ImmutableMap.of("status", "pending"))
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event fr2Done =
+        createFunctionResponseEvent(
+                "fr2_done", "tool2", "call2", ImmutableMap.of("result", "done-2"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 4, "Summary 1-4");
+    Event fr1Done =
+        createFunctionResponseEvent(
+                "fr1_done", "tool1", "call1", ImmutableMap.of("result", "done-1"))
+            .toBuilder()
+            .timestamp(5)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(u1, parallelFc, fr2Placeholder, fr2Done, compactionEvent, fr1Done);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(3);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-4");
+    assertThat(contents.get(1)).isEqualTo(parallelFc.content().get());
+    Content mergedResponse = contents.get(2);
+    assertThat(mergedResponse.parts().get()).hasSize(2);
+    assertThat(mergedResponse.parts().get().get(0).functionResponse().get().response().get())
+        .containsExactly("result", "done-2");
+    assertThat(mergedResponse.parts().get().get(1).functionResponse().get().response().get())
+        .containsExactly("result", "done-1");
+  }
+
+  @Test
+  public void processRequest_compaction_reinjectsSharedParallelCallEventOnlyOnce() {
+    Event u1 = createUserEvent("u1", "Start parallel workflows", "inv1", 1);
+    Event parallelFc =
+        createParallelFunctionCallEvent("fc1", "tool1", "call1", "tool2", "call2").toBuilder()
+            .timestamp(2)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 2, "Summary 1-2");
+    Event fr1Done =
+        createFunctionResponseEvent(
+                "fr1_done", "tool1", "call1", ImmutableMap.of("result", "done-1"))
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event fr2Done =
+        createFunctionResponseEvent(
+                "fr2_done", "tool2", "call2", ImmutableMap.of("result", "done-2"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(u1, parallelFc, compactionEvent, fr1Done, fr2Done);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(3);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-2");
+    assertThat(contents.get(1)).isEqualTo(parallelFc.content().get());
+    Content mergedResponse = contents.get(2);
+    assertThat(mergedResponse.parts().get()).hasSize(2);
+    assertThat(mergedResponse.parts().get().get(0).functionResponse().get().response().get())
+        .containsExactly("result", "done-1");
+    assertThat(mergedResponse.parts().get().get(1).functionResponse().get().response().get())
+        .containsExactly("result", "done-2");
+  }
+
+  @Test
+  public void processRequest_compaction_deduplicatesAndOrdersMergedSiblingResponses() {
+    Event u1 = createUserEvent("u1", "Start three parallel calls", "inv1", 1);
+    Event parallelFc =
+        createParallelFunctionCallEvent("fc1", "tool1", "call1", "tool2", "call2", "tool3", "call3")
+            .toBuilder()
+            .invocationId("inv1")
+            .timestamp(2)
+            .build();
+    Event initialMergedResponse =
+        createFunctionResponseEvent(
+                "fr_init",
+                FunctionResponse.builder()
+                    .name("tool1")
+                    .id("call1")
+                    .response(ImmutableMap.of("status", "pending"))
+                    .build(),
+                FunctionResponse.builder()
+                    .name("tool2")
+                    .id("call2")
+                    .response(ImmutableMap.of("result", "done-2"))
+                    .build(),
+                FunctionResponse.builder()
+                    .name("tool3")
+                    .id("call3")
+                    .response(ImmutableMap.of("status", "pending"))
+                    .build())
+            .toBuilder()
+            .invocationId("inv1")
+            .timestamp(3)
+            .build();
+    Event call1Done =
+        createFunctionResponseEvent(
+                "fr1_done", "tool1", "call1", ImmutableMap.of("result", "done-1"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 4, "Summary 1-4");
+    Event call3Done =
+        createFunctionResponseEvent(
+                "fr3_done", "tool3", "call3", ImmutableMap.of("result", "done-3"))
+            .toBuilder()
+            .timestamp(5)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            u1, parallelFc, initialMergedResponse, call1Done, compactionEvent, call3Done);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(3);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-4");
+    assertThat(contents.get(1)).isEqualTo(parallelFc.content().get());
+    Content mergedResponse = contents.get(2);
+    assertThat(mergedResponse.parts().get()).hasSize(3);
+    assertThat(mergedResponse.parts().get().get(0).functionResponse().get().response().get())
+        .containsExactly("result", "done-1");
+    assertThat(mergedResponse.parts().get().get(1).functionResponse().get().response().get())
+        .containsExactly("result", "done-2");
+    assertThat(mergedResponse.parts().get().get(2).functionResponse().get().response().get())
+        .containsExactly("result", "done-3");
+  }
+
+  @Test
+  public void
+      processRequest_compaction_sharedCompactedSiblingResponseAcrossTwoRecoveredCalls_reinjectedOnce() {
+    Event callA =
+        createParallelFunctionCallEvent("fc_a", "toolA1", "a1", "toolA2", "a2").toBuilder()
+            .timestamp(1)
+            .build();
+    Event callB =
+        createParallelFunctionCallEvent("fc_b", "toolB1", "b1", "toolB2", "b2").toBuilder()
+            .timestamp(2)
+            .build();
+    Event sharedSiblingResponse =
+        createFunctionResponseEvent(
+                "fr_shared",
+                FunctionResponse.builder()
+                    .name("toolA2")
+                    .id("a2")
+                    .response(ImmutableMap.of("result", "done-a2"))
+                    .build(),
+                FunctionResponse.builder()
+                    .name("toolB2")
+                    .id("b2")
+                    .response(ImmutableMap.of("result", "done-b2"))
+                    .build())
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 3, "Summary 1-3");
+    Event a1Done =
+        createFunctionResponseEvent("fr_a1", "toolA1", "a1", ImmutableMap.of("result", "done-a1"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event b1Done =
+        createFunctionResponseEvent("fr_b1", "toolB1", "b1", ImmutableMap.of("result", "done-b1"))
+            .toBuilder()
+            .timestamp(5)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(callA, callB, sharedSiblingResponse, compactionEvent, a1Done, b1Done);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(5);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-3");
+    assertThat(contents.get(1)).isEqualTo(callA.content().get());
+    Content mergedResponseA = contents.get(2);
+    assertThat(mergedResponseA.parts().get()).hasSize(3);
+    assertThat(mergedResponseA.parts().get().get(0).functionResponse().get().response().get())
+        .containsExactly("result", "done-a2");
+    assertThat(mergedResponseA.parts().get().get(1).functionResponse().get().response().get())
+        .containsExactly("result", "done-b2");
+    assertThat(mergedResponseA.parts().get().get(2).functionResponse().get().response().get())
+        .containsExactly("result", "done-a1");
+    assertThat(contents.get(3)).isEqualTo(callB.content().get());
+    assertThat(contents.get(4)).isEqualTo(b1Done.content().get());
+  }
+
+  @Test
+  public void processRequest_compaction_reusedCallIdForMultipleResponsesOfSingleLongRunningTool() {
+    Event u1 = createUserEvent("u1", "Start long workflow", "inv1", 1);
+    Event fcEvent =
+        createFunctionCallEvent("fc1", "workflow_tool", "call1").toBuilder().timestamp(2).build();
+    Event frPending =
+        createFunctionResponseEvent(
+                "fr1", "workflow_tool", "call1", ImmutableMap.of("status", "pending"))
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 3, "Summary 1-3");
+    Event frProgress =
+        createFunctionResponseEvent(
+                "fr2", "workflow_tool", "call1", ImmutableMap.of("status", "running"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event frFinal =
+        createFunctionResponseEvent(
+                "fr3", "workflow_tool", "call1", ImmutableMap.of("result", "completed"))
+            .toBuilder()
+            .timestamp(5)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(u1, fcEvent, frPending, compactionEvent, frProgress, frFinal);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(3);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-3");
+    assertThat(contents.get(1)).isEqualTo(fcEvent.content().get());
+    assertThat(contents.get(2).parts().get()).hasSize(1);
+    assertThat(contents.get(2).parts().get().get(0).functionResponse().get().response().get())
+        .containsExactly("result", "completed");
+  }
+
+  @Test
+  public void processRequest_compaction_reusedCallIdAcrossTurns_pairsWithLatestPrecedingCall() {
+    Event oldCall =
+        createAgentEventWithTextAndFunctionCall(
+                AGENT, "fc_old", "Old call", "lookup", "shared", ImmutableMap.of("item", "old"))
+            .toBuilder()
+            .timestamp(1)
+            .build();
+    Event oldResponse =
+        createFunctionResponseEvent(
+                "fr_old", "lookup", "shared", ImmutableMap.of("result", "old-result"))
+            .toBuilder()
+            .timestamp(2)
+            .build();
+    Event currentCall =
+        createAgentEventWithTextAndFunctionCall(
+                AGENT,
+                "fc_current",
+                "Current call",
+                "lookup",
+                "shared",
+                ImmutableMap.of("item", "current"))
+            .toBuilder()
+            .timestamp(3)
+            .build();
+    Event pendingResponse =
+        createFunctionResponseEvent(
+                "fr_pending", "lookup", "shared", ImmutableMap.of("status", "pending"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event compactionEvent = createCompactedEvent(3, 4, "Summary 3-4");
+    Event resumedResponse =
+        createFunctionResponseEvent(
+                "fr_resumed", "lookup", "shared", ImmutableMap.of("result", "current-result"))
+            .toBuilder()
+            .timestamp(5)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            oldCall, oldResponse, currentCall, pendingResponse, compactionEvent, resumedResponse);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(5);
+    assertThat(contents.get(0)).isEqualTo(oldCall.content().get());
+    assertThat(contents.get(1)).isEqualTo(oldResponse.content().get());
+    assertThat(contents.get(2).parts().get().get(0).text()).hasValue("Summary 3-4");
+    assertThat(contents.get(3)).isEqualTo(currentCall.content().get());
+    assertThat(contents.get(4)).isEqualTo(resumedResponse.content().get());
+  }
+
+  @Test
+  public void
+      processRequest_compaction_recoveredParallelCallKeepsItsOwnSiblingResultWhenIdReused() {
+    Event parallelCall =
+        createParallelFunctionCallEvent("fc_parallel", "wait", "pending-1", "done", "reused")
+            .toBuilder()
+            .timestamp(1)
+            .build();
+    Event siblingResponse =
+        createFunctionResponseEvent(
+                "fr_sibling", "done", "reused", ImmutableMap.of("result", "first"))
+            .toBuilder()
+            .timestamp(2)
+            .build();
+    Event laterCall =
+        createFunctionCallEvent("fc_later", "done", "reused").toBuilder().timestamp(3).build();
+    Event laterResponse =
+        createFunctionResponseEvent(
+                "fr_later", "done", "reused", ImmutableMap.of("result", "second"))
+            .toBuilder()
+            .timestamp(4)
+            .build();
+    Event compactionEvent = createCompactedEvent(1, 4, "Summary 1-4");
+    Event resumedResponse =
+        createFunctionResponseEvent(
+                "fr_resumed", "wait", "pending-1", ImmutableMap.of("result", "finally"))
+            .toBuilder()
+            .timestamp(5)
+            .build();
+
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            parallelCall,
+            siblingResponse,
+            laterCall,
+            laterResponse,
+            compactionEvent,
+            resumedResponse);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(3);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-4");
+    assertThat(contents.get(1)).isEqualTo(parallelCall.content().get());
+    Content mergedResponse = contents.get(2);
+    assertThat(mergedResponse.parts().get()).hasSize(2);
+    assertThat(mergedResponse.parts().get().get(0).functionResponse().get().response().get())
+        .containsExactly("result", "first");
+    assertThat(mergedResponse.parts().get().get(1).functionResponse().get().response().get())
+        .containsExactly("result", "finally");
+  }
+
+  @Test
+  public void processRequest_compaction_ignoresResponsesWithoutMatchingCallOrId() {
+    Event fcEmptyId =
+        createFunctionCallEvent("fc_empty", "tool_empty", "").toBuilder().timestamp(1).build();
+    Event fcEvent =
+        createFunctionCallEvent("fc1", "tool1", "call1").toBuilder().timestamp(2).build();
+    Event compactionEvent = createCompactedEvent(1, 2, "Summary 1-2");
+    Event frMixed =
+        createFunctionResponseEvent(
+                "fr_mixed",
+                FunctionResponse.builder()
+                    .name("tool_empty")
+                    .id("")
+                    .response(ImmutableMap.of("status", "ignored"))
+                    .build(),
+                FunctionResponse.builder()
+                    .name("tool_orphan")
+                    .id("orphan")
+                    .response(ImmutableMap.of("status", "unmatched"))
+                    .build(),
+                FunctionResponse.builder()
+                    .name("tool1")
+                    .id("call1")
+                    .response(ImmutableMap.of("result", "done"))
+                    .build())
+            .toBuilder()
+            .invocationId("inv1")
+            .timestamp(3)
+            .build();
+    Event u2 = createUserEvent("u2", "Follow up", "inv2", 4);
+
+    ImmutableList<Event> events =
+        ImmutableList.of(fcEmptyId, fcEvent, compactionEvent, frMixed, u2);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents).hasSize(4);
+    assertThat(contents.get(0).parts().get().get(0).text()).hasValue("Summary 1-2");
+    assertThat(contents.get(1)).isEqualTo(fcEvent.content().get());
+    assertThat(contents.get(2)).isEqualTo(frMixed.content().get());
+    assertThat(contents.get(3)).isEqualTo(u2.content().get());
   }
 
   @Test
@@ -1372,6 +1891,522 @@ public final class ContentsTest {
                 otherAgentPreamblePart(), otherAgentPart("[agent_1] said:", "sibling output")));
   }
 
+  // A live run stores what was said as transcription chunks; a later run replays them.
+  @Test
+  public void processRequest_transcriptionOnlyEvents_becomeUserAndModelText() {
+    ImmutableList<Event> events =
+        ImmutableList.of(heard("My name "), heard("is Ada."), spoken("Hi "), spoken("Ada!"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents))
+        .containsExactly("user: My name is Ada.", "model: Hi Ada!")
+        .inOrder();
+  }
+
+  @Test
+  public void processRequest_typedAndSpokenTurns_keepTheirOrder() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Hello."),
+            createAgentEvent("a1", "Hi, who is this?"),
+            heard("It is Ada."),
+            spoken("Nice to meet you, "),
+            spoken("Ada."),
+            createUserEvent("u2", "What is my name?"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents))
+        .containsExactly(
+            "user: Hello.",
+            "model: Hi, who is this?",
+            "user: It is Ada.",
+            "model: Nice to meet you, Ada.",
+            "user: What is my name?")
+        .inOrder();
+  }
+
+  @Test
+  public void processRequest_alternatingSpokenTurns_staySeparate() {
+    ImmutableList<Event> events =
+        ImmutableList.of(heard("a"), spoken("b"), heard("c"), spoken("d"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents))
+        .containsExactly("user: a", "model: b", "user: c", "model: d")
+        .inOrder();
+  }
+
+  @Test
+  public void processRequest_spokenRunsSplitByATypedTurn_stayApart() {
+    ImmutableList<Event> events =
+        ImmutableList.of(heard("a"), createUserEvent("u1", "typed"), heard("b"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: a", "user: typed", "user: b").inOrder();
+  }
+
+  // The event with content is kept as it is, so the run before it must not carry over past it.
+  @Test
+  public void processRequest_runBeforeAnEventWithContent_isFlushedFirst() {
+    Event typed =
+        createUserEvent("u1", "typed").toBuilder().inputTranscription(transcription("x")).build();
+    ImmutableList<Event> events = ImmutableList.of(heard("a"), typed, heard("b"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: a", "user: typed", "user: b").inOrder();
+  }
+
+  @Test
+  public void processRequest_eventWithContentAndTranscription_keepsOnlyItsContent() {
+    Event typed =
+        createUserEvent("u1", "typed").toBuilder().inputTranscription(transcription("x")).build();
+
+    List<Content> contents = runContentsProcessor(ImmutableList.of(typed));
+
+    assertThat(turns(contents)).containsExactly("user: typed");
+  }
+
+  @Test
+  public void processRequest_emptyChunkInsideRun_doesNotSplitIt() {
+    Event noText =
+        Event.builder()
+            .author(AGENT)
+            .inputTranscription(Transcription.builder().finished(false).build())
+            .build();
+    ImmutableList<Event> events = ImmutableList.of(heard("My "), heard(""), noText, heard("name."));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: My name.");
+  }
+
+  @Test
+  public void processRequest_emptyTranscription_isDropped() {
+    ImmutableList<Event> events =
+        ImmutableList.of(heard(""), spoken(""), createUserEvent("u1", "Hello."));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: Hello.");
+  }
+
+  @Test
+  public void processRequest_spaceChunkBetweenWords_isKept() {
+    ImmutableList<Event> events = ImmutableList.of(heard("Hello"), heard(" "), heard("world."));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: Hello world.");
+  }
+
+  @Test
+  public void processRequest_blankSpokenRun_isDropped() {
+    ImmutableList<Event> events = ImmutableList.of(heard("Hi."), spoken(" "), spoken("  "));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: Hi.");
+  }
+
+  // Thoughts or an empty part list say nothing, so they must not hide what was said.
+  @Test
+  public void processRequest_emptyOrThoughtOnlyContentWithTranscription_isMergedAsTranscription() {
+    Event emptyContent =
+        heard("Hi.").toBuilder()
+            .content(Content.builder().role(USER).parts(ImmutableList.of()).build())
+            .build();
+    Event thoughtOnly =
+        spoken("Hello.").toBuilder()
+            .content(
+                Content.builder()
+                    .role("model")
+                    .parts(Part.builder().text("Greet them.").thought(true).build())
+                    .build())
+            .build();
+
+    List<Content> contents = runContentsProcessor(ImmutableList.of(emptyContent, thoughtOnly));
+
+    assertThat(turns(contents)).containsExactly("user: Hi.", "model: Hello.").inOrder();
+  }
+
+  @Test
+  public void processRequest_otherAgentsSpokenReply_isPresentedAsContext() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            heard("Is it sunny?"), spoken(OTHER_AGENT, "Yes, "), spoken(OTHER_AGENT, "sunny."));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(Part.fromText("Is it sunny?")),
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Yes, sunny.")))
+        .inOrder();
+  }
+
+  @Test
+  public void processRequest_spokenRepliesFromTwoAgents_stayAttributedToEach() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            heard("Weather and time?"),
+            spoken(OTHER_AGENT, "Sunny."),
+            spoken("clock_agent", "Noon."));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(Part.fromText("Weather and time?")),
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Sunny.")),
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[clock_agent] said:", "Noon.")))
+        .inOrder();
+  }
+
+  // A live run stores the user's speech under the listening agent's name; it is still the user's.
+  @Test
+  public void processRequest_speechHeardByAnotherAgent_isTheUsersTurn() {
+    ImmutableList<Event> events = ImmutableList.of(heard(OTHER_AGENT, "Is it sunny?"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: Is it sunny?");
+  }
+
+  @Test
+  public void processRequest_speechHeardByTwoAgents_staysOneTurn() {
+    ImmutableList<Event> events =
+        ImmutableList.of(heard(OTHER_AGENT, "Is it "), heard(AGENT, "sunny?"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: Is it sunny?");
+  }
+
+  @Test
+  public void processRequest_compactionEndingInsideASpokenRun_keepsOnlyTheUncoveredChunks() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            heard("one ").toBuilder().timestamp(100).build(),
+            heard("two").toBuilder().timestamp(200).build(),
+            createCompactedEvent(100, 150, "Summary"));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("model: Summary", "user: two").inOrder();
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_keepsTheWholeSpokenRun() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Earlier question."),
+            createAgentEvent("a1", "Earlier answer."),
+            heard("My name "),
+            heard("is Ada."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: My name is Ada.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_userAuthoredSpeech_keepsTheWholeSpokenRun() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Earlier question."),
+            heard(USER, "My name "),
+            heard(USER, "is Ada."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: My name is Ada.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_keepsAnotherAgentsWholeSpokenRun() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Is it sunny?"),
+            spoken(OTHER_AGENT, "Yes, "),
+            spoken(OTHER_AGENT, "sunny."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Yes, sunny.")));
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_otherAgentsSpokenRunWithThoughts_startsTheTurn() {
+    Content thought =
+        Content.builder()
+            .role("model")
+            .parts(Part.builder().text("Look it up.").thought(true).build())
+            .build();
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Is it sunny?"),
+            spoken(OTHER_AGENT, "Yes, ").toBuilder().content(thought).build(),
+            spoken(OTHER_AGENT, "sunny.").toBuilder().content(thought).build());
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Yes, sunny.")));
+  }
+
+  // The agent's own speech answers the turn rather than starting one.
+  @Test
+  public void processRequest_includeContentsNone_ownSpokenReply_staysInTheUsersTurn() {
+    ImmutableList<Event> events =
+        ImmutableList.of(createUserEvent("u1", "Is it sunny?"), spoken("Yes, "), spoken("sunny."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents))
+        .containsExactly("user: Is it sunny?", "model: Yes, sunny.")
+        .inOrder();
+  }
+
+  // Speech heard on a sibling branch is outside this agent's context, so it cannot start the turn.
+  @Test
+  public void processRequest_includeContentsNone_speechOnAnotherBranch_doesNotStartTheTurn() {
+    Event offBranch = heard("agent_1", "Hi.").toBuilder().branch("root.agent_1").build();
+    ImmutableList<Event> events =
+        ImmutableList.of(createUserEvent("u1", "Is it sunny?"), offBranch);
+
+    List<Content> contents =
+        runContentsProcessorOnBranch(
+            events, "agent_10", "root.agent_10", LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Is it sunny?");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_replyOnAnotherBranch_doesNotStartTheTurn() {
+    Event offBranch =
+        createAgentEvent("agent_1", "o1", "Sibling reply.").toBuilder()
+            .branch("root.agent_1")
+            .build();
+    ImmutableList<Event> events =
+        ImmutableList.of(createUserEvent("u1", "Is it sunny?"), offBranch);
+
+    List<Content> contents =
+        runContentsProcessorOnBranch(
+            events, "agent_10", "root.agent_10", LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Is it sunny?");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_trailingEmptyChunk_keepsTheTurn() {
+    ImmutableList<Event> events = ImmutableList.of(heard(USER, "Hello."), heard(USER, ""));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Hello.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_runWithAnExcludedChunk_staysWhole() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Earlier question."), heard("My "), heard(""), heard("name."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: My name.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_blankSpokenRun_doesNotBlankTheTurn() {
+    ImmutableList<Event> events =
+        ImmutableList.of(createUserEvent("u1", "Is it sunny?"), spoken(OTHER_AGENT, "   "));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Is it sunny?");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_otherAgentsTextReplies_keepsOnlyTheLast() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Is it sunny?"),
+            createAgentEvent(OTHER_AGENT, "o1", "Checking."),
+            createAgentEvent(OTHER_AGENT, "o2", "Sunny."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Sunny.")));
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_otherAgentsTrailingEmptyChunk_keepsTheTurn() {
+    ImmutableList<Event> events = ImmutableList.of(heard("Hello."), heard(OTHER_AGENT, ""));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Hello.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_otherAgentsRunWithTrailingEmptyChunk_staysWhole() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Is it sunny?"),
+            spoken(OTHER_AGENT, "Yes, "),
+            spoken(OTHER_AGENT, "sunny."),
+            spoken(OTHER_AGENT, ""));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Yes, sunny.")));
+  }
+
+  // A live run stores a turnComplete-only event after each turn, under the agent that spoke.
+  @Test
+  public void
+      processRequest_includeContentsNone_otherAgentsRunBeforeItsTurnComplete_startsTheTurn() {
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            createUserEvent("u1", "Is it sunny?"),
+            spoken(OTHER_AGENT, "Yes."),
+            Event.builder().author(OTHER_AGENT).turnComplete(true).build());
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(contents)
+        .containsExactly(
+            Content.fromParts(
+                otherAgentPreamblePart(), otherAgentPart("[other_agent] said:", "Yes.")));
+  }
+
+  // The confirmation response is left out of the context, so the turn starts at the user's message.
+  @Test
+  public void processRequest_includeContentsNone_trailingConfirmationResponse_keepsTheUsersTurn() {
+    Event confirmationResponse =
+        Event.builder()
+            .author(USER)
+            .content(
+                Content.fromParts(
+                    Part.fromFunctionResponse(
+                        Functions.REQUEST_CONFIRMATION_FUNCTION_CALL_NAME,
+                        ImmutableMap.of("confirmed", true))))
+            .build();
+    ImmutableList<Event> events =
+        ImmutableList.of(createUserEvent("u1", "Delete it."), confirmationResponse);
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Delete it.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_spokenRunOpeningTheSession_staysWhole() {
+    ImmutableList<Event> events = ImmutableList.of(heard("My name "), heard("is Ada."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: My name is Ada.");
+  }
+
+  @Test
+  public void processRequest_includeContentsNone_earlierSpokenRunBeforeAReply_isLeftOut() {
+    ImmutableList<Event> events =
+        ImmutableList.of(heard("Earlier."), createAgentEvent("a1", "Answer."), heard("Now."));
+
+    List<Content> contents =
+        runContentsProcessorWithIncludeContents(events, LlmAgent.IncludeContents.NONE);
+
+    assertThat(turns(contents)).containsExactly("user: Now.");
+  }
+
+  @Test
+  public void processRequest_blankRunBeforeAnotherRun_addsNothingToIt() {
+    ImmutableList<Event> events = ImmutableList.of(spoken(" "), heard("Hi."));
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents)).containsExactly("user: Hi.");
+  }
+
+  // Pins today's behavior: an event carrying both transcriptions is merged as input, as ADK
+  // Python's merge does, and its output is lost.
+  @Test
+  public void processRequest_eventWithBothTranscriptions_isMergedAsInput() {
+    Event both = heard("Hi.").toBuilder().outputTranscription(transcription("Hello.")).build();
+
+    List<Content> contents = runContentsProcessor(ImmutableList.of(both));
+
+    assertThat(turns(contents)).containsExactly("user: Hi.");
+  }
+
+  // Content with no role is not visible, so it does not hide a transcription.
+  @Test
+  public void processRequest_rolelessContentWithTranscription_isMergedAsTranscription() {
+    Event event =
+        spoken("said").toBuilder()
+            .content(Content.builder().parts(Part.fromText("raw")).build())
+            .build();
+
+    List<Content> contents = runContentsProcessor(ImmutableList.of(event));
+
+    assertThat(turns(contents)).containsExactly("model: said");
+  }
+
+  // A live run stores a turnComplete-only event after each turn, which must not split a run.
+  @Test
+  public void processRequest_turnCompleteEventsBetweenChunks_doNotSplitARun() {
+    Event turnComplete = Event.builder().author(AGENT).turnComplete(true).build();
+    ImmutableList<Event> events =
+        ImmutableList.of(
+            heard("My name "),
+            heard("is Ada."),
+            spoken("Hi "),
+            turnComplete,
+            spoken("Ada!"),
+            turnComplete);
+
+    List<Content> contents = runContentsProcessor(events);
+
+    assertThat(turns(contents))
+        .containsExactly("user: My name is Ada.", "model: Hi Ada!")
+        .inOrder();
+  }
+
   private static Event createUserEvent(String id, String text) {
     return Event.builder()
         .id(id)
@@ -1379,14 +2414,6 @@ public final class ContentsTest {
         .content(Content.fromParts(Part.fromText(text)))
         .invocationId("invocationId")
         .build();
-  }
-
-  private static Part otherAgentPreamblePart() {
-    return Part.fromText(Fencing.OTHER_AGENT_CONTEXT_PREAMBLE);
-  }
-
-  private static Part otherAgentPart(String attribution, String payload) {
-    return Part.fromText(attribution + "\n" + Fencing.quoteUntrusted(payload));
   }
 
   private static Event createUserEvent(
@@ -1398,6 +2425,14 @@ public final class ContentsTest {
         .invocationId(invocationId)
         .timestamp(timestamp)
         .build();
+  }
+
+  private static Part otherAgentPreamblePart() {
+    return Part.fromText(Fencing.OTHER_AGENT_CONTEXT_PREAMBLE);
+  }
+
+  private static Part otherAgentPart(String attribution, String payload) {
+    return Part.fromText(attribution + "\n" + Fencing.quoteUntrusted(payload));
   }
 
   private static Event createModelEvent(String id, Part part) {
@@ -1482,26 +2517,36 @@ public final class ContentsTest {
         .build();
   }
 
-  private static Event createParallelFunctionCallEvent(
-      String id, String toolName1, String callId1, String toolName2, String callId2) {
+  private static Event createParallelFunctionCallEvent(String id, String... toolNamesAndCallIds) {
+    ImmutableList.Builder<Part> parts = ImmutableList.builder();
+    for (int i = 0; i < toolNamesAndCallIds.length; i += 2) {
+      parts.add(
+          Part.builder()
+              .functionCall(
+                  FunctionCall.builder()
+                      .name(toolNamesAndCallIds[i])
+                      .id(toolNamesAndCallIds[i + 1])
+                      .build())
+              .build());
+    }
     return Event.builder()
         .id(id)
         .author(AGENT)
-        .content(
-            Content.builder()
-                .role("model")
-                .parts(
-                    ImmutableList.of(
-                        Part.builder()
-                            .functionCall(
-                                FunctionCall.builder().name(toolName1).id(callId1).build())
-                            .build(),
-                        Part.builder()
-                            .functionCall(
-                                FunctionCall.builder().name(toolName2).id(callId2).build())
-                            .build()))
-                .build())
+        .content(Content.builder().role("model").parts(parts.build()).build())
         .invocationId("invocationId")
+        .build();
+  }
+
+  private static Event createFunctionResponseEvent(String id, FunctionResponse... responses) {
+    return Event.builder()
+        .id(id)
+        .author(AGENT)
+        .invocationId("invocationId")
+        .content(
+            Content.fromParts(
+                Stream.of(responses)
+                    .map(response -> Part.builder().functionResponse(response).build())
+                    .toArray(Part[]::new)))
         .build();
   }
 
@@ -1620,12 +2665,17 @@ public final class ContentsTest {
   }
 
   private List<Content> runContentsProcessorOnBranch(
-      List<Event> events, String agentName, String invocationBranch) {
-    LlmAgent agent =
-        LlmAgent.builder()
-            .name(agentName)
-            .includeContents(LlmAgent.IncludeContents.DEFAULT)
-            .build();
+      List<Event> events, String agentName, @Nullable String invocationBranch) {
+    return runContentsProcessorOnBranch(
+        events, agentName, invocationBranch, LlmAgent.IncludeContents.DEFAULT);
+  }
+
+  private List<Content> runContentsProcessorOnBranch(
+      List<Event> events,
+      String agentName,
+      @Nullable String invocationBranch,
+      LlmAgent.IncludeContents includeContents) {
+    LlmAgent agent = LlmAgent.builder().name(agentName).includeContents(includeContents).build();
     Session session =
         sessionService.createSession("test-app", "test-user", null, "test-session").blockingGet();
     session.addEvents(events);
@@ -1695,5 +2745,40 @@ public final class ContentsTest {
                         .build())
                 .build())
         .build();
+  }
+
+  /** A chunk of the user's speech, stored under the listening agent's name as a live run does. */
+  private static Event heard(String text) {
+    return heard(AGENT, text);
+  }
+
+  private static Event heard(String author, String text) {
+    return Event.builder().author(author).inputTranscription(transcription(text)).build();
+  }
+
+  /** A chunk of an agent's speech. */
+  private static Event spoken(String text) {
+    return spoken(AGENT, text);
+  }
+
+  private static Event spoken(String author, String text) {
+    return Event.builder().author(author).outputTranscription(transcription(text)).build();
+  }
+
+  private static Transcription transcription(String text) {
+    return Transcription.builder().text(text).build();
+  }
+
+  /** Each content as "role: text", joining the text of its parts. */
+  private static ImmutableList<String> turns(List<Content> contents) {
+    return contents.stream()
+        .map(
+            content ->
+                content.role().orElse("")
+                    + ": "
+                    + content.parts().orElse(ImmutableList.of()).stream()
+                        .map(part -> part.text().orElse(""))
+                        .collect(joining(" | ")))
+        .collect(toImmutableList());
   }
 }

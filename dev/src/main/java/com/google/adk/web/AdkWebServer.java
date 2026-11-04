@@ -19,6 +19,7 @@ package com.google.adk.web;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.adk.JsonBaseModel;
 import com.google.adk.agents.BaseAgent;
+import com.google.adk.apps.App;
 import com.google.adk.artifacts.BaseArtifactService;
 import com.google.adk.artifacts.InMemoryArtifactService;
 import com.google.adk.artifacts.MapDbArtifactService;
@@ -31,6 +32,8 @@ import com.google.adk.sessions.InMemorySessionService;
 import com.google.adk.sessions.MapDbSessionService;
 import com.google.adk.web.config.BackendUrl;
 import com.google.adk.web.config.DevUiAssets;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ObjectArrays;
 import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -209,6 +212,28 @@ public class AdkWebServer implements WebMvcConfigurer {
 
   // TODO: return a Closeable that stops the server and resets the static state.
   public static void start(BaseAgent... agents) {
+    startWithLoader(new String[0], "agentLoader", new AgentStaticLoader(agents));
+  }
+
+  /**
+   * Starts the server with {@code app} and {@code moreApps}, each served under its name. An app can
+   * run an agent or a workflow.
+   *
+   * @throws IllegalArgumentException if two apps share a name
+   */
+  public static void start(App app, App... moreApps) {
+    startApps(new String[0], app, moreApps);
+  }
+
+  /** Like {@link #start(App, App...)}, passing {@code args} to Spring and returning its context. */
+  @VisibleForTesting
+  static ConfigurableApplicationContext startApps(String[] args, App app, App... moreApps) {
+    return startWithLoader(
+        args, "appLoader", new InMemoryAppLoader(ObjectArrays.concat(app, moreApps)));
+  }
+
+  private static ConfigurableApplicationContext startWithLoader(
+      String[] args, String loaderBeanName, Object loader) {
     // Disable CompiledAgentLoader by setting property to prevent its creation
     System.setProperty("adk.agents.loader", "static");
     // Increase the default websocket buffer size to 10MB to accommodate live API messages.
@@ -221,13 +246,13 @@ public class AdkWebServer implements WebMvcConfigurer {
         new ApplicationContextInitializer<ConfigurableApplicationContext>() {
           @Override
           public void initialize(ConfigurableApplicationContext context) {
-            // Register the AgentStaticLoader bean before context refresh
+            // Register the loader bean before context refresh
             DefaultListableBeanFactory beanFactory =
                 (DefaultListableBeanFactory) context.getBeanFactory();
-            beanFactory.registerSingleton("agentLoader", new AgentStaticLoader(agents));
+            beanFactory.registerSingleton(loaderBeanName, loader);
           }
         });
 
-    app.run(new String[0]);
+    return app.run(args);
   }
 }

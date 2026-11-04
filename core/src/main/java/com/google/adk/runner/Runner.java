@@ -111,8 +111,6 @@ public class Runner {
   private final UuidProvider uuidProvider;
   private final ConcurrentMap<String, Completable> activeSessionCompletables =
       new MapMaker().weakValues().makeMap();
-  private static final String NODE_ROOT_RESUME_UNSUPPORTED =
-      "Resuming an invocation of a workflow node root is not supported.";
 
   /** Builder for {@link Runner}. */
   public static class Builder {
@@ -186,10 +184,11 @@ public class Runner {
     /**
      * Sets the {@link Scheduler} for the work ADK hands off to worker threads in this runner's
      * invocations: the sub-agents of a {@code ParallelAgent}, tool calls in {@link
-     * RunConfig.ToolExecutionMode#PARALLEL_SUBSCRIBE} mode, and the hop that starts the live send
-     * loop. The runs that an {@code AgentTool} nests inherit it. An agent-level {@code
-     * ParallelAgent.Builder#scheduler} or {@code LlmAgent.Builder#executor} takes precedence.
-     * {@code null} (the default) selects {@code Schedulers.io()}.
+     * RunConfig.ToolExecutionMode#PARALLEL_SUBSCRIBE} mode, workflow node retries and attempts with
+     * a timeout, and the hop that starts the live send loop. The runs that an {@code AgentTool}
+     * nests inherit it. An agent-level {@code ParallelAgent.Builder#scheduler} or {@code
+     * LlmAgent.Builder#executor} takes precedence. {@code null} (the default) selects {@code
+     * Schedulers.io()}.
      *
      * <p>Only these hand-offs are affected; work that completes asynchronously elsewhere (model
      * clients, session services, MCP, plugins) stays on its own threads. {@code
@@ -668,7 +667,8 @@ public class Runner {
    * Runs the agent, resuming an existing invocation instead of starting a new one. The invocation
    * is resolved from {@code invocationId}, or from a function response carried by {@code
    * newMessage}. Agent checkpoints are rehydrated from history and an invocation whose active agent
-   * already finished resolves to a no-op.
+   * already finished resolves to a no-op, while a workflow node root rebuilds its progress from the
+   * invocation's events even when the app is not resumable.
    *
    * @param userId the user id of the session.
    * @param sessionId the session id.
@@ -679,7 +679,7 @@ public class Runner {
    * @param stateDelta optional state updates to merge into the session for this run.
    * @return the events generated while resuming, or an empty stream when there is nothing to
    *     resume.
-   * @throws IllegalStateException if the app is not resumable.
+   * @throws IllegalStateException if the app is not resumable and its root is an agent.
    * @throws IllegalArgumentException if the invocation cannot be resolved.
    */
   @Experimental
@@ -691,7 +691,7 @@ public class Runner {
       RunConfig runConfig,
       @Nullable Map<String, Object> stateDelta) {
     checkState(
-        isResumable(),
+        isResumable() || node != null,
         "Resuming an invocation requires an App configured with a resumable ResumabilityConfig.");
     Flowable<Event> result =
         Flowable.defer(
@@ -782,14 +782,18 @@ public class Runner {
     Preconditions.checkNotNull(session, "session cannot be null");
     Preconditions.checkNotNull(newMessage, "newMessage cannot be null");
     Preconditions.checkNotNull(runConfig, "runConfig cannot be null");
-    if (isResumable()) {
+    // A node root rebuilds its progress from its invocation's events, so it resumes on any app.
+    if (isResumable() || node != null) {
       return runResumableFromSession(
           session, /* providedInvocationId= */ null, newMessage, runConfig, stateDelta);
     }
     return runNewInvocation(session, newMessage, runConfig, stateDelta);
   }
 
-  /** Starts a brand-new invocation for {@code newMessage} (the default, non-resume flow). */
+  /**
+   * Starts an invocation for {@code newMessage}; a node root joins the one a plugin's answers
+   * resolve to.
+   */
   private Flowable<Event> runNewInvocation(
       Session session,
       Content newMessage,
@@ -797,11 +801,6 @@ public class Runner {
       @Nullable Map<String, Object> stateDelta) {
     return Flowable.defer(
             () -> {
-              // Rejected before any callback or append; defer turns the throw into an error signal.
-              if (node != null) {
-                checkNoTextWithFunctionResponses(newMessage);
-                checkNoAnswerToAnEarlierInvocation(session, newMessage);
-              }
               Context capturedContext = Context.current();
               BaseAgent rootAgent = this.agent;
               String invocationId = InvocationContext.newInvocationContextId(this.uuidProvider);
@@ -825,18 +824,21 @@ public class Runner {
                   .onUserMessageCallback(initialContext, newMessage)
                   .compose(Tracing.<Content>withContext(capturedContext))
                   .defaultIfEmpty(newMessage)
-                  .flatMap(
-                      content ->
-                          createUserMessageEvent(
-                              session,
-                              content,
-                              initialContext,
-                              runConfig.saveInputBlobsAsArtifacts(),
-                              stateDelta))
                   .flatMapPublisher(
-                      userEvent ->
-                          runAgentForUserEvent(initialContext, session, userEvent, rootAgent)
-                              .compose(Tracing.<Event>withContext(capturedContext)))
+                      content -> {
+                        InvocationContext context =
+                            resolveNodeRootContext(session, initialContext, content);
+                        return createUserMessageEvent(
+                                session,
+                                content,
+                                context,
+                                runConfig.saveInputBlobsAsArtifacts(),
+                                stateDelta)
+                            .flatMapPublisher(
+                                userEvent ->
+                                    runAgentForUserEvent(context, session, userEvent, rootAgent)
+                                        .compose(Tracing.<Event>withContext(capturedContext)));
+                      })
                   .doOnError(throwable -> runOnRunError(initialContext, throwable));
             })
         .doOnError(
@@ -893,7 +895,11 @@ public class Runner {
         initialContext.toBuilder()
             .session(updatedSession)
             .agent(agentToRun)
-            .userContent(event.content().orElseGet(Content::fromParts))
+            .userContent(
+                userContentFor(
+                    updatedSession,
+                    initialContext.invocationId(),
+                    event.content().orElseGet(Content::fromParts)))
             .branch(routedAgentParentBranch(updatedSession, agentToRun, rootAgent))
             .build();
 
@@ -1006,7 +1012,7 @@ public class Runner {
   /**
    * Resumes an existing invocation when one resolves from {@code providedInvocationId} or a
    * function response in {@code rawMessage}; otherwise starts a new invocation. Requires
-   * resumability.
+   * resumability or a workflow node root.
    */
   private Flowable<Event> runResumableFromSession(
       Session session,
@@ -1043,11 +1049,6 @@ public class Runner {
             return Flowable.<Event>error(
                 new IllegalArgumentException("Session has no events to resume."));
           }
-          if (node != null) {
-            // Without replay, resuming would run the node again and repeat its side effects.
-            return Flowable.<Event>error(
-                new UnsupportedOperationException(NODE_ROOT_RESUME_UNSUPPORTED));
-          }
           return resumeCore(session, resolvedInvocationId, newMessage, runConfig, stateDelta);
         });
   }
@@ -1067,15 +1068,18 @@ public class Runner {
         () -> {
           Context capturedContext = Context.current();
 
-          // Not new input: Python drops it and its state delta rather than adding a second prompt.
+          // Not new input: Python drops newMessage, and outside the node path stateDelta too.
           boolean supersededByOriginalMessage =
               newMessage != null
                   && !carriesFunctionResponse(newMessage)
                   && findOriginalUserMessage(session, resolvedInvocationId).isPresent();
+          Content message = supersededByOriginalMessage ? null : newMessage;
+          Map<String, Object> delta =
+              supersededByOriginalMessage && node == null ? null : stateDelta;
 
           // Merged eagerly so the on-user-message callback sees it.
-          if (!supersededByOriginalMessage && stateDelta != null && !stateDelta.isEmpty()) {
-            stateDelta.forEach((key, value) -> session.state().put(key, value));
+          if (delta != null && !delta.isEmpty()) {
+            delta.forEach((key, value) -> session.state().put(key, value));
           }
 
           // For the pre-run plugin callbacks; the agent is resolved later, in runResumedAgent.
@@ -1083,44 +1087,39 @@ public class Runner {
               newInvocationContextBuilder(session)
                   .invocationId(resolvedInvocationId)
                   .runConfig(runConfig)
-                  .userContent(
-                      newMessage != null
-                          ? newMessage
-                          : originalUserMessage(session, resolvedInvocationId))
+                  .userContent(userContentFor(session, resolvedInvocationId, newMessage))
                   .build();
 
           Flowable<Event> events;
-          if (supersededByOriginalMessage) {
-            events =
-                runResumedAgent(session, resolvedInvocationId, /* userContent= */ null, runConfig);
-          } else if (newMessage != null) {
+          if (message != null) {
             // Inherit the branch of the call it answers, so routing and rehydration see it.
             String branch =
-                matchingFunctionCallEvent(session, newMessage).flatMap(Event::branch).orElse(null);
+                matchingFunctionCallEvent(session, message).flatMap(Event::branch).orElse(null);
             events =
                 this.pluginManager
-                    .onUserMessageCallback(initialContext, newMessage)
+                    .onUserMessageCallback(initialContext, message)
                     .compose(Tracing.<Content>withContext(capturedContext))
-                    .defaultIfEmpty(newMessage)
+                    .defaultIfEmpty(message)
                     .flatMap(
-                        content ->
-                            appendNewMessageToSession(
-                                session,
-                                content,
-                                initialContext,
-                                runConfig.saveInputBlobsAsArtifacts(),
-                                stateDelta,
-                                branch))
+                        content -> {
+                          // A plugin's message must not mix answers and text either.
+                          if (node != null) {
+                            checkNoTextWithFunctionResponses(content);
+                          }
+                          return appendNewMessageToSession(
+                              session,
+                              content,
+                              initialContext,
+                              runConfig.saveInputBlobsAsArtifacts(),
+                              delta,
+                              branch);
+                        })
                     // Persist first: an unpersisted response leaves the call looking unanswered.
                     .flatMap(userEvent -> this.sessionService.appendEvent(session, userEvent))
                     .flatMapPublisher(
                         userEvent ->
-                            runResumedAgent(
-                                session,
-                                resolvedInvocationId,
-                                userEvent.content().orElse(null),
-                                runConfig));
-          } else if (stateDelta != null && !stateDelta.isEmpty()) {
+                            runResumedAgent(initialContext, userEvent.content().orElse(null)));
+          } else if (delta != null && !delta.isEmpty()) {
             // No message to carry the delta, so persist a content-less event, as Python does.
             Event stateDeltaEvent =
                 Event.builder()
@@ -1129,20 +1128,15 @@ public class Runner {
                     .invocationId(resolvedInvocationId)
                     .author(Role.USER)
                     .actions(
-                        EventActions.builder()
-                            .stateDelta(new ConcurrentHashMap<>(stateDelta))
-                            .build())
+                        EventActions.builder().stateDelta(new ConcurrentHashMap<>(delta)).build())
                     .build();
             events =
                 this.sessionService
                     .appendEvent(session, stateDeltaEvent)
                     .ignoreElement()
-                    .andThen(
-                        runResumedAgent(
-                            session, resolvedInvocationId, /* userContent= */ null, runConfig));
+                    .andThen(runResumedAgent(initialContext, /* userContent= */ null));
           } else {
-            events =
-                runResumedAgent(session, resolvedInvocationId, /* userContent= */ null, runConfig);
+            events = runResumedAgent(initialContext, /* userContent= */ null);
           }
 
           return events
@@ -1155,23 +1149,20 @@ public class Runner {
    * Runs the resolved agent for a resumed invocation with the same before-run / after-run plugin
    * bracket as the new-invocation path. Rehydrates checkpoints, skips a completed invocation, and
    * persists each event.
+   *
+   * @param initialContext the context created for the resumed invocation's pre-run callbacks, used
+   *     to preserve metadata and callback data.
    */
   private Flowable<Event> runResumedAgent(
-      Session session,
-      String resolvedInvocationId,
-      @Nullable Content userContent,
-      RunConfig runConfig) {
+      InvocationContext initialContext, @Nullable Content userContent) {
     return Flowable.defer(
         () -> {
+          Session session = initialContext.session();
           BaseAgent rootAgent = this.agent;
           InvocationContext rootContext =
-              newInvocationContextBuilder(session, rootAgent)
-                  .invocationId(resolvedInvocationId)
-                  .runConfig(runConfig)
-                  .userContent(
-                      userContent != null
-                          ? userContent
-                          : originalUserMessage(session, resolvedInvocationId))
+              initialContext.toBuilder()
+                  .agent(rootAgent)
+                  .userContent(userContentFor(session, initialContext.invocationId(), userContent))
                   .build();
           // Rehydrate before routing, as Python does, so a root that checkpointed re-enters itself.
           rootContext.populateInvocationAgentStates();
@@ -1184,7 +1175,8 @@ public class Runner {
                   ? rootContext
                   : rootContext.toBuilder()
                       .agent(resumeAgent)
-                      .branch(resumeParentBranch(session, resolvedInvocationId, resumeAgent))
+                      .branch(
+                          resumeParentBranch(session, initialContext.invocationId(), resumeAgent))
                       .build();
 
           // No-op guard: a completed invocation (its active agent already finished) is not re-run.
@@ -1340,18 +1332,24 @@ public class Runner {
   }
 
   /**
-   * For a node root, rejects a message whose function responses answer calls from an earlier
-   * invocation: without replay, running the node again would repeat its side effects. As in Python
-   * and Kotlin, responses without an id are ignored, so they start a new invocation.
+   * Returns {@code context} moved to the invocation whose calls {@code message} answers when the
+   * root is a workflow node, or unchanged otherwise. A plugin may replace the user's message with
+   * {@code message}, so it is checked again.
    *
-   * @throws IllegalArgumentException if a response id matches no call, or the ids span invocations.
-   * @throws UnsupportedOperationException if the responses answer an earlier invocation.
+   * @throws IllegalArgumentException if {@code message} mixes answers and text, or its answers do
+   *     not resolve to one invocation.
    */
-  private static void checkNoAnswerToAnEarlierInvocation(Session session, Content message) {
-    validateResumeMessage(session, message, /* requireFirstId= */ false);
-    if (matchingFunctionCallEvent(session, message).isPresent()) {
-      throw new UnsupportedOperationException(NODE_ROOT_RESUME_UNSUPPORTED);
+  private InvocationContext resolveNodeRootContext(
+      Session session, InvocationContext context, Content message) {
+    if (node == null) {
+      return context;
     }
+    checkNoTextWithFunctionResponses(message);
+    validateResumeMessage(session, message, /* requireFirstId= */ false);
+    String answeredInvocationId = resolveInvocationId(session, message, /* invocationId= */ null);
+    return answeredInvocationId == null
+        ? context
+        : context.toBuilder().invocationId(answeredInvocationId).build();
   }
 
   /**
@@ -1425,6 +1423,23 @@ public class Runner {
             () ->
                 new IllegalArgumentException(
                     "No user message to resume the requested invocation from."));
+  }
+
+  /**
+   * Returns the user content for a run of {@code invocationId}: {@code message}, or the message
+   * that started the invocation when there is none. As in Python, a workflow node root also gets
+   * that message when {@code message} answers calls.
+   *
+   * @throws IllegalArgumentException if there is no message and the invocation has no user message
+   */
+  private Content userContentFor(Session session, String invocationId, @Nullable Content message) {
+    if (message == null) {
+      return originalUserMessage(session, invocationId);
+    }
+    if (node != null && carriesFunctionResponse(message)) {
+      return findOriginalUserMessage(session, invocationId).orElse(message);
+    }
+    return message;
   }
 
   private static boolean carriesFunctionResponse(Content message) {
