@@ -111,6 +111,20 @@ class SarvamAiConfigTest {
   }
 
   @Test
+  void builder_ttsTemperatureIsIndependentOfChatTemperature() {
+    var config =
+        SarvamAiConfig.builder().apiKey("key").temperature(1.0).ttsTemperature(0.6).build();
+    assertThat(config.ttsTemperature().getAsDouble()).isEqualTo(0.6);
+    assertThat(config.temperature().getAsDouble()).isEqualTo(1.0);
+    assertThat(SarvamAiConfig.builder().apiKey("key").build().ttsTemperature().isEmpty()).isTrue();
+    for (double invalid : new double[] {-1, Double.NaN, Double.POSITIVE_INFINITY}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SarvamAiConfig.builder().apiKey("key").ttsTemperature(invalid));
+    }
+  }
+
+  @Test
   void builder_maxRetriesDefault() {
     SarvamAiConfig config = SarvamAiConfig.builder().apiKey("key").build();
     assertThat(config.maxRetries()).isEqualTo(SarvamAiConfig.DEFAULT_MAX_RETRIES);

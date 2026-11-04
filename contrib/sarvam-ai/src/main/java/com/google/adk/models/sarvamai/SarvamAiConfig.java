@@ -19,6 +19,7 @@ package com.google.adk.models.sarvamai;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -73,6 +74,7 @@ public final class SarvamAiConfig {
   private final Optional<String> ttsSpeaker;
   private final Optional<String> ttsModel;
   private final OptionalDouble ttsPace;
+  private final OptionalDouble ttsTemperature;
   private final OptionalInt ttsSampleRate;
 
   // STT-specific parameters
@@ -111,10 +113,38 @@ public final class SarvamAiConfig {
     this.ttsSpeaker = Optional.ofNullable(builder.ttsSpeaker);
     this.ttsModel = Optional.ofNullable(builder.ttsModel);
     this.ttsPace = builder.ttsPace;
+    this.ttsTemperature = builder.ttsTemperature;
     this.ttsSampleRate = builder.ttsSampleRate;
     this.sttModel = Optional.ofNullable(builder.sttModel);
     this.sttMode = Optional.ofNullable(builder.sttMode);
     this.sttLanguageCode = Optional.ofNullable(builder.sttLanguageCode);
+  }
+
+  /** Normalizes an Indian language code to Sarvam's BCP-47 spelling; null means auto-detect. */
+  public static String normalizeLanguageCode(String code) {
+    if (code == null || code.isBlank() || "auto".equalsIgnoreCase(code)) {
+      return null;
+    }
+    String clean = code.trim();
+    String prefix =
+        clean.contains("-")
+            ? clean.substring(0, clean.indexOf('-')).toLowerCase(Locale.ROOT)
+            : clean.toLowerCase(Locale.ROOT);
+    return switch (prefix) {
+      case "hi" -> "hi-IN";
+      case "en" -> "en-IN";
+      case "kn" -> "kn-IN";
+      case "ta" -> "ta-IN";
+      case "te" -> "te-IN";
+      case "mr" -> "mr-IN";
+      case "bn" -> "bn-IN";
+      case "gu" -> "gu-IN";
+      case "ml" -> "ml-IN";
+      case "pa" -> "pa-IN";
+      case "or", "od" -> "od-IN";
+      case "as" -> "as-IN";
+      default -> prefix + "-IN";
+    };
   }
 
   public static Builder builder() {
@@ -201,6 +231,10 @@ public final class SarvamAiConfig {
     return ttsPace;
   }
 
+  public OptionalDouble ttsTemperature() {
+    return ttsTemperature;
+  }
+
   public OptionalInt ttsSampleRate() {
     return ttsSampleRate;
   }
@@ -239,6 +273,7 @@ public final class SarvamAiConfig {
     private String ttsSpeaker;
     private String ttsModel;
     private OptionalDouble ttsPace = OptionalDouble.empty();
+    private OptionalDouble ttsTemperature = OptionalDouble.empty();
     private OptionalInt ttsSampleRate = OptionalInt.empty();
     private String sttModel;
     private String sttMode;
@@ -361,6 +396,14 @@ public final class SarvamAiConfig {
       Preconditions.checkArgument(
           ttsPace >= 0.5 && ttsPace <= 2.0, "ttsPace must be between 0.5 and 2.0");
       this.ttsPace = OptionalDouble.of(ttsPace);
+      return this;
+    }
+
+    public Builder ttsTemperature(double ttsTemperature) {
+      Preconditions.checkArgument(
+          Double.isFinite(ttsTemperature) && ttsTemperature >= 0,
+          "ttsTemperature must be finite and nonnegative");
+      this.ttsTemperature = OptionalDouble.of(ttsTemperature);
       return this;
     }
 

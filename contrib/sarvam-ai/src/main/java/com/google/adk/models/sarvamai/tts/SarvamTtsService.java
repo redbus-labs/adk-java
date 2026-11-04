@@ -24,8 +24,14 @@ import io.reactivex.rxjava3.core.BackpressureStrategy;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import okhttp3.Call;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -232,6 +238,134 @@ public final class SarvamTtsService {
           emitter.setCancellable(() -> webSocket.close(1000, "Cancelled"));
         },
         BackpressureStrategy.BUFFER);
+  }
+
+  /**
+   * Streams raw, little-endian PCM16 via {@code POST /text-to-speech/stream}.
+   *
+   * <p>Each subscription opens one request on the IO scheduler. Disposing the subscription cancels
+   * both a pending connection and a blocked body read. Chunks always contain whole 16-bit samples;
+   * a truncated final sample is an error. This method never retries or replays delivered audio.
+   * Voice selection, language detection, turn ownership and playback interruption belong to
+   * callers.
+   *
+   * @param text speech text, limited to 3500 characters
+   * @param targetLanguageCode explicit BCP-47 language code
+   */
+  public Flowable<byte[]> synthesizeHttpStream(String text, String targetLanguageCode) {
+    Objects.requireNonNull(text, "text must not be null");
+    Objects.requireNonNull(targetLanguageCode, "targetLanguageCode must not be null");
+    if (text.isBlank() || text.length() > 3500) {
+      throw new IllegalArgumentException("Speech text must contain 1 to 3500 characters");
+    }
+
+    return Flowable.<byte[]>create(
+            emitter -> {
+              var body = objectMapper.createObjectNode();
+              body.put("text", text.trim());
+              body.put("language_code", targetLanguageCode);
+              body.put("speaker", config.ttsSpeaker().orElse("shubh"));
+              body.put("model", config.ttsModel().orElse("bulbul:v3"));
+              body.put("speech_sample_rate", config.ttsSampleRate().orElse(24000));
+              body.put("output_audio_codec", "linear16");
+              config.ttsPace().ifPresent(value -> body.put("pace", value));
+              config.ttsTemperature().ifPresent(value -> body.put("temperature", value));
+              String endpoint = config.ttsEndpoint().replaceAll("/$", "") + "/stream";
+              Request request =
+                  new Request.Builder()
+                      .url(endpoint)
+                      .header("api-subscription-key", config.apiKey())
+                      .post(
+                          RequestBody.create(
+                              objectMapper.writeValueAsString(body), JSON_MEDIA_TYPE))
+                      .build();
+              // Do not retry a speech request after any portion of its audio has been played.
+              Call call =
+                  httpClient.newBuilder().retryOnConnectionFailure(false).build().newCall(request);
+              call.timeout().timeout(config.readTimeout().toMillis(), TimeUnit.MILLISECONDS);
+              emitter.setCancellable(call::cancel);
+              if (emitter.isCancelled()) return;
+              try (Response response = call.execute()) {
+                if (!response.isSuccessful()) {
+                  throw new IOException(
+                      "Sarvam streaming TTS failed with status " + response.code());
+                }
+                if (response.body() == null) throw new IOException("Missing streaming TTS body");
+                String contentType = response.header("Content-Type", "").toLowerCase(Locale.ROOT);
+                if (contentType.contains("json")) {
+                  throw new IOException("Sarvam streaming TTS returned JSON instead of PCM");
+                }
+                try (InputStream input = response.body().byteStream()) {
+                  byte[] buffer = new byte[8192];
+                  int carry = -1;
+                  boolean delivered = false;
+                  int count;
+                  while (!emitter.isCancelled() && (count = input.read(buffer)) != -1) {
+                    if (count == 0) continue;
+                    byte[] combined = new byte[count + (carry >= 0 ? 1 : 0)];
+                    int offset = carry >= 0 ? 1 : 0;
+                    if (offset == 1) combined[0] = (byte) carry;
+                    System.arraycopy(buffer, 0, combined, offset, count);
+                    int aligned = combined.length & ~1;
+                    carry = aligned < combined.length ? combined[aligned] & 255 : -1;
+                    if (aligned > 0 && !emitter.isCancelled()) {
+                      emitter.onNext(Arrays.copyOf(combined, aligned));
+                      delivered = true;
+                    }
+                  }
+                  if (!emitter.isCancelled()) {
+                    if (carry >= 0)
+                      throw new IOException("Truncated PCM16 sample in streaming TTS");
+                    if (!delivered) throw new IOException("Streaming TTS returned no audio");
+                    emitter.onComplete();
+                  }
+                }
+              } catch (Exception error) {
+                emitter.tryOnError(error);
+              }
+            },
+            BackpressureStrategy.BUFFER)
+        .subscribeOn(Schedulers.io());
+  }
+
+  /**
+   * Blocking callback adapter for callers with an existing per-turn cancellation signal.
+   * Cancellation disposes the HTTP stream, including a pending connection or blocked read.
+   */
+  public void synthesizeHttpStream(
+      String text,
+      String language,
+      java.util.function.Consumer<byte[]> onAudio,
+      java.util.function.BooleanSupplier cancelled)
+      throws IOException, InterruptedException {
+    Objects.requireNonNull(onAudio);
+    Objects.requireNonNull(cancelled);
+    if (cancelled.getAsBoolean()) return;
+    var complete = new java.util.concurrent.CountDownLatch(1);
+    var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+    var subscription =
+        synthesizeHttpStream(text, language)
+            .subscribe(
+                chunk -> {
+                  if (!cancelled.getAsBoolean()) onAudio.accept(chunk);
+                },
+                error -> {
+                  failure.set(error);
+                  complete.countDown();
+                },
+                complete::countDown);
+    try {
+      while (!complete.await(50, TimeUnit.MILLISECONDS)) {
+        if (cancelled.getAsBoolean()) return;
+      }
+      if (!cancelled.getAsBoolean() && failure.get() != null) {
+        Throwable error = failure.get();
+        if (error instanceof IOException) throw (IOException) error;
+        throw new IOException("Sarvam streaming TTS failed", error);
+      }
+    } finally {
+      subscription.dispose();
+    }
   }
 
   public boolean isAvailable() {
