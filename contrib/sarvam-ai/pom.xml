@@ -28,17 +28,22 @@
     <name>Agent Development Kit - Sarvam AI</name>
     <description>Sarvam AI integration for the Agent Development Kit.</description>
 
+    <properties>
+        <!-- Allows testing this standalone integration against a supported older ADK runtime. -->
+        <adk.core.version>${project.version}</adk.core.version>
+    </properties>
+
     <dependencies>
         <!-- Main dependencies -->
         <dependency>
             <groupId>com.google.adk</groupId>
             <artifactId>google-adk</artifactId>
-            <version>${project.version}</version>
+            <version>${adk.core.version}</version>
         </dependency>
         <dependency>
             <groupId>com.google.adk</groupId>
             <artifactId>google-adk-dev</artifactId>
-            <version>${project.version}</version>
+            <version>${adk.core.version}</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
