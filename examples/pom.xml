@@ -20,7 +20,7 @@
   <parent>
     <groupId>com.google.adk</groupId>
     <artifactId>google-adk-parent</artifactId>
-    <version>1.12.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
+    <version>1.14.1-SNAPSHOT</version><!-- {x-version-update:google-adk:current} -->
     <relativePath>..</relativePath>
   </parent>
 
@@ -37,5 +37,7 @@
     <module>contextcaching</module>
     <module>helloworld</module>
     <module>mcpfilesystem</module>
+    <module>spring_chat</module>
+    <module>spring_chat_advanced</module>
   </modules>
 </project>

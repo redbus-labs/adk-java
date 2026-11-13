@@ -31,10 +31,14 @@ import kotlin.jvm.optionals.getOrNull
  * Carries the identity (`id`, `invocationId`, `author`, `branch`), the [content][ContentCodec], the
  * [actions][KtEventActions] (state/artifact deltas, the control-flow flags - transfer, escalate,
  * skipSummarization, endOfAgent - the requested tool confirmations, the context-compaction summary,
- * the resumable-run `agentState`, and the rewind marker `rewindBeforeInvocationId`), the
- * streaming/error signals (`partial`, `turnComplete`, `interrupted`, `errorMessage`, `errorCode`,
- * `finishReason`), the token `usageMetadata` ([UsageMetadataCodec]) and `groundingMetadata`
- * ([GroundingMetadataCodec]), long-running tool ids, and the timestamp.
+ * the resumable-run `agentState`, the rewind marker `rewindBeforeInvocationId`, and the workflow
+ * `route`), the streaming/error signals (`partial`, `turnComplete`, `interrupted`, `errorMessage`,
+ * `errorCode`, `finishReason`), the live transcriptions ([TranscriptionCodec]), the token
+ * `usageMetadata` ([UsageMetadataCodec]), `groundingMetadata` ([GroundingMetadataCodec]), context
+ * `cacheMetadata` ([CacheMetadataCodec]), `avgLogProbs`, `modelVersion`, `customMetadata`, a
+ * workflow node's `output` and `nodeInfo` ([WorkflowCodec]), long-running tool ids, the timestamp,
+ * and the `isolationScope`. Every other field is dropped; [reapplyJavaEvent] keeps them when a Java
+ * plugin returns an event.
  */
 internal object EventCodec {
 
@@ -47,6 +51,7 @@ internal object EventCodec {
         .actions(eventActionsToJava(event.actions))
     event.invocationId?.let { builder.invocationId(it) }
     event.branch?.let { builder.branch(it) }
+    event.isolationScope?.let { builder.isolationScope(it) }
     event.content?.let { builder.content(ContentCodec.toJava(it)) }
     if (event.longRunningToolIds.isNotEmpty()) builder.longRunningToolIds(event.longRunningToolIds)
     // Streaming/error signals are set only when meaningful, so ordinary events keep the Java
@@ -54,14 +59,19 @@ internal object EventCodec {
     if (event.partial) builder.partial(true)
     if (event.turnComplete) builder.turnComplete(true)
     if (event.interrupted) builder.interrupted(true)
+    event.inputTranscription?.let { builder.inputTranscription(TranscriptionCodec.toJava(it)) }
+    event.outputTranscription?.let { builder.outputTranscription(TranscriptionCodec.toJava(it)) }
     event.errorMessage?.let { builder.errorMessage(it) }
     event.errorCode?.let { builder.errorCode(GenaiFinishReason(it)) }
     event.finishReason?.let { builder.finishReason(it.toGenai()) }
     event.usageMetadata?.let { builder.usageMetadata(UsageMetadataCodec.toJava(it)) }
     event.avgLogProbs?.let { builder.avgLogprobs(it) }
     event.groundingMetadata?.let { builder.groundingMetadata(GroundingMetadataCodec.toJava(it)) }
+    event.cacheMetadata?.let { builder.cacheMetadata(CacheMetadataCodec.toJava(it)) }
     event.modelVersion?.let { builder.modelVersion(it) }
     event.customMetadata?.let { builder.customMetadata(CustomMetadataCodec.toJava(it)) }
+    event.output?.let { builder.output(WorkflowCodec.outputToJava(it)) }
+    event.nodeInfo?.let { builder.nodeInfo(WorkflowCodec.nodeInfoToJava(it)) }
     builder.timestamp(event.timestamp)
     return builder.build()
   }
@@ -93,11 +103,17 @@ internal object EventCodec {
             javaActions.compaction().getOrNull()?.let { EventCompactionCodec.fromJava(it) },
           agentState = agentStateFromJava(javaActions.agentState().getOrNull()),
           rewindBeforeInvocationId = javaActions.rewindBeforeInvocationId().getOrNull(),
+          route = javaActions.route().getOrNull()?.map { WorkflowCodec.routeFromJava(it) },
         ),
       branch = event.branch().getOrNull(),
+      isolationScope = event.isolationScope().getOrNull(),
       partial = event.partial().getOrNull() ?: false,
       turnComplete = event.turnComplete().getOrNull() ?: false,
       interrupted = event.interrupted().getOrNull() ?: false,
+      inputTranscription =
+        event.inputTranscription().getOrNull()?.let { TranscriptionCodec.fromJava(it) },
+      outputTranscription =
+        event.outputTranscription().getOrNull()?.let { TranscriptionCodec.fromJava(it) },
       errorMessage = event.errorMessage().getOrNull(),
       // toString() preserves the raw value; knownEnum().name would collapse an unrecognized code to
       // FINISH_REASON_UNSPECIFIED (errorCode is a free-form String on the Kotlin side).
@@ -107,9 +123,40 @@ internal object EventCodec {
       avgLogProbs = event.avgLogprobs().getOrNull(),
       groundingMetadata =
         event.groundingMetadata().getOrNull()?.let { GroundingMetadataCodec.fromJava(it) },
+      cacheMetadata = event.cacheMetadata().getOrNull()?.let { CacheMetadataCodec.fromJava(it) },
       modelVersion = event.modelVersion().getOrNull(),
       customMetadata = event.customMetadata().getOrNull()?.let { CustomMetadataCodec.fromJava(it) },
+      output = event.output().getOrNull()?.let { WorkflowCodec.outputFromJava(it) },
+      nodeInfo = event.nodeInfo().getOrNull()?.let { WorkflowCodec.nodeInfoFromJava(it) },
       timestamp = event.timestamp(),
     )
   }
+}
+
+/**
+ * Re-applies the event a Java plugin returned onto the original Kotlin [event]: fields [EventCodec]
+ * converts come from the result, and every other field keeps [event]'s value. `partial`,
+ * `turnComplete`, `interrupted` and `usageMetadata` keep [event]'s values when the result leaves
+ * them unset, and `interactionStatus` stays only while the turn is complete. An `output` the plugin
+ * left as tokt sent it keeps its Kotlin value, such as a `JsonElement`.
+ */
+internal fun reapplyJavaEvent(event: KtEvent, javaResult: JavaEvent): KtEvent {
+  val result = EventCodec.fromJava(javaResult)
+  // fromJava reads unset flags as false, so check the Java values.
+  val turnComplete = javaResult.turnComplete().getOrNull() ?: event.turnComplete
+  return result.copy(
+    partial = javaResult.partial().getOrNull() ?: event.partial,
+    turnComplete = turnComplete,
+    interrupted = javaResult.interrupted().getOrNull() ?: event.interrupted,
+    usageMetadata = result.usageMetadata ?: event.usageMetadata,
+    output =
+      if (javaResult.output().getOrNull() == WorkflowCodec.outputToJava(event.output)) event.output
+      else result.output,
+    citationMetadata = event.citationMetadata,
+    turnCompleteReason = event.turnCompleteReason,
+    interactionStatus = event.interactionStatus.takeIf { turnComplete },
+    liveSessionId = event.liveSessionId,
+    liveSessionResumptionUpdate = event.liveSessionResumptionUpdate,
+    voiceActivity = event.voiceActivity,
+  )
 }

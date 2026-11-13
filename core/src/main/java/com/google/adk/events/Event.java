@@ -68,6 +68,7 @@ public class Event extends JsonBaseModel {
   private @Nullable Double avgLogprobs;
   private @Nullable Boolean interrupted;
   private @Nullable String branch;
+  private @Nullable String isolationScope;
   private @Nullable GroundingMetadata groundingMetadata;
   private @Nullable List<CustomMetadata> customMetadata;
   private @Nullable String modelVersion;
@@ -259,6 +260,22 @@ public class Event extends JsonBaseModel {
     this.branch = branch;
   }
 
+  /**
+   * Returns the isolated conversation this event belongs to, such as a delegated task, so an
+   * agent's model history can keep only events from its own scope. Returns empty when the event is
+   * not scoped. This field is internal to the framework and may change without notice.
+   */
+  @Experimental
+  @JsonProperty("isolationScope")
+  public Optional<String> isolationScope() {
+    return Optional.ofNullable(isolationScope);
+  }
+
+  @Experimental
+  public void setIsolationScope(@Nullable String isolationScope) {
+    this.isolationScope = isolationScope;
+  }
+
   /** The grounding metadata of the event. */
   @JsonProperty("groundingMetadata")
   public Optional<GroundingMetadata> groundingMetadata() {
@@ -416,10 +433,29 @@ public class Event extends JsonBaseModel {
     if (actions().skipSummarization().orElse(false) || hasPendingLongRunningToolCall()) {
       return true;
     }
+    // An error ends the turn unless the model still asked for tools; mirrors Python ADK.
+    if (errorCode().isPresent() && !partial().orElse(false) && functionCalls().isEmpty()) {
+      return true;
+    }
     return functionCalls().isEmpty()
         && functionResponses().isEmpty()
         && !partial().orElse(false)
         && !hasTrailingCodeExecutionResult();
+  }
+
+  /**
+   * Returns the name of the workflow node that emitted this event, from {@link NodeInfo#name()}.
+   * Empty outside a workflow and on an event that carries any agent state or ends an agent. ADK
+   * Python's {@code Event.node_name} returns an empty string instead and ignores an empty agent
+   * state.
+   */
+  @Experimental
+  @JsonIgnore
+  public final Optional<String> nodeName() {
+    if (actions().agentState().isPresent() || actions().endOfAgent()) {
+      return Optional.empty();
+    }
+    return nodeInfo().flatMap(NodeInfo::name);
   }
 
   /**
@@ -464,6 +500,7 @@ public class Event extends JsonBaseModel {
     private @Nullable Double avgLogprobs;
     private @Nullable Boolean interrupted;
     private @Nullable String branch;
+    private @Nullable String isolationScope;
     private @Nullable GroundingMetadata groundingMetadata;
     private @Nullable List<CustomMetadata> customMetadata;
     private @Nullable String modelVersion;
@@ -610,6 +647,14 @@ public class Event extends JsonBaseModel {
       return Optional.ofNullable(branch);
     }
 
+    @Experimental
+    @CanIgnoreReturnValue
+    @JsonProperty("isolationScope")
+    public Builder isolationScope(@Nullable String value) {
+      this.isolationScope = value;
+      return this;
+    }
+
     @CanIgnoreReturnValue
     @JsonProperty("groundingMetadata")
     public Builder groundingMetadata(@Nullable GroundingMetadata value) {
@@ -688,6 +733,7 @@ public class Event extends JsonBaseModel {
       event.setAvgLogprobs(avgLogprobs);
       event.setInterrupted(interrupted);
       event.branch(branch);
+      event.setIsolationScope(isolationScope);
       event.setGroundingMetadata(groundingMetadata);
       event.setCustomMetadata(customMetadata);
       event.setModelVersion(modelVersion);
@@ -730,6 +776,7 @@ public class Event extends JsonBaseModel {
         .avgLogprobs(this.avgLogprobs)
         .interrupted(this.interrupted)
         .branch(this.branch)
+        .isolationScope(this.isolationScope)
         .groundingMetadata(this.groundingMetadata)
         .customMetadata(this.customMetadata)
         .modelVersion(this.modelVersion)
@@ -765,6 +812,7 @@ public class Event extends JsonBaseModel {
         && Objects.equals(avgLogprobs, other.avgLogprobs)
         && Objects.equals(interrupted, other.interrupted)
         && Objects.equals(branch, other.branch)
+        && Objects.equals(isolationScope, other.isolationScope)
         && Objects.equals(groundingMetadata, other.groundingMetadata)
         && Objects.equals(customMetadata, other.customMetadata)
         && Objects.equals(modelVersion, other.modelVersion)
@@ -798,6 +846,7 @@ public class Event extends JsonBaseModel {
         avgLogprobs,
         interrupted,
         branch,
+        isolationScope,
         groundingMetadata,
         customMetadata,
         modelVersion,

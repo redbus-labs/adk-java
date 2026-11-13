@@ -20,9 +20,15 @@ import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 import com.google.adk.agents.Context;
+import com.google.adk.agents.InvocationContext;
 import com.google.adk.annotations.Experimental;
+import com.google.adk.events.Event;
+import com.google.adk.events.EventActions;
+import com.google.adk.workflow.ResumeScan.Interception;
+import com.google.adk.workflow.ResumeScan.RecoveredNode;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
@@ -32,6 +38,7 @@ import io.reactivex.rxjava3.processors.UnicastProcessor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -50,18 +57,25 @@ final class Scheduler {
   private final Graph graph;
   private final Context context;
   private final NodeExecutionState workflowState;
-  private final Map<String, NodeState> nodeStates = new HashMap<>();
+  private final Map<String, NodeState> nodeStates = new LinkedHashMap<>();
   private final Map<String, @Nullable Object> nodeOutputs = new HashMap<>();
   // The branch each completed node ran on, so a join can re-merge parallel branches.
   private final Map<String, @Nullable String> nodeBranches = new HashMap<>();
   private final TriggerQueue triggerQueue = new TriggerQueue();
   private final Set<String> interruptIds = new LinkedHashSet<>();
+  // The states of the workflow's nodes from earlier turns, keyed by name@runId.
+  private final ImmutableMap<String, RecoveredNode> recovered;
+  // The nodes replayed from history whose completion is not handled yet.
+  private final Set<String> replayed = new HashSet<>();
+  // The nodes whose latest output was replayed, so no event in this turn carried it in outputFor.
+  private final Set<String> replayedOutputs = new HashSet<>();
 
   Scheduler(Workflow workflow, Graph graph, Context context) {
     this.workflow = workflow;
     this.graph = graph;
     this.context = context;
     this.workflowState = context.requireNodeState();
+    this.recovered = ResumeScan.scan(context.invocationContext(), workflowState.nodePath());
   }
 
   /** Runs the graph from its start node, which hands {@code nodeInput} to its successors. */
@@ -107,12 +121,13 @@ final class Scheduler {
     private boolean failed;
 
     Completable drive() {
-      return Completable.defer(
+      // Starts nodes after onSubscribe, so the caller can cancel a node that blocks as it starts.
+      return Completable.fromAction(
               () -> {
                 scheduleReady();
                 stopIfIdle();
-                return wakeUps.doOnNext(unused -> handleCompletions()).ignoreElements();
               })
+          .andThen(wakeUps.doOnNext(unused -> handleCompletions()).ignoreElements())
           .andThen(Completable.defer(() -> failed ? Completable.complete() : finalizeRun()))
           .doFinally(childRuns::dispose);
     }
@@ -126,7 +141,7 @@ final class Scheduler {
       List<Completion> batch = new ArrayList<>();
       for (Completion completion; (completion = completions.poll()) != null; ) {
         batch.add(completion);
-        childRuns.delete(running.remove(completion.nodeName()));
+        running.remove(completion.nodeName());
       }
       if (batch.isEmpty()) {
         return;
@@ -146,9 +161,10 @@ final class Scheduler {
      */
     private boolean handleFailures(List<Completion> batch) {
       for (Completion completion : batch) {
-        Optional<Exception> failure = completion.context().requireNodeState().failure();
+        NodeExecutionState childState = completion.context().requireNodeState();
+        Optional<Exception> failure = childState.failure();
         if (failure.isPresent()) {
-          workflowState.failure(failure.get());
+          workflowState.failure(failure.get(), childState.failureNodePath().orElseThrow());
           failed = true;
           childRuns.dispose();
           wakeUps.onComplete();
@@ -167,6 +183,10 @@ final class Scheduler {
     private void scheduleReady() {
       Optional<Integer> maxConcurrency = workflow.maxConcurrency();
       for (String nodeName : triggerQueue.queuedNodeNames()) {
+        // A cancel can arrive while a node blocks as it starts.
+        if (childRuns.isDisposed()) {
+          return;
+        }
         if (running.containsKey(nodeName)) {
           continue;
         }
@@ -187,24 +207,71 @@ final class Scheduler {
     private void start(String nodeName, Trigger trigger) {
       String runId = workflowState.nextChildRunId(nodeName);
       nodeStates.put(nodeName, new NodeState(NodeStatus.RUNNING));
+      Node node = graph.node(nodeName);
+      boolean useAsOutput = graph.terminalNodeNames().contains(nodeName);
+      String childKey = NodeRunner.segment(nodeName, runId);
+      RecoveredNode recoveredNode = recovered.get(childKey);
+      Interception interception =
+          ResumeScan.intercept(
+              node,
+              recoveredNode,
+              /* dynamic= */ false,
+              workflowState.childCanceledMidRun(childKey),
+              workflowState.childFailedThisTurn(childKey));
+      if (recoveredNode != null && !interception.shouldRun()) {
+        // Only a replay that completes an answered transfer marks a new step, as a run does.
+        boolean completesTransfer =
+            interception.transferToAgent() != null
+                && !recoveredNode.interruptIds.isEmpty()
+                && recoveredNode.unresolved().isEmpty();
+        if (completesTransfer) {
+          emitCheckpoint();
+        } else {
+          replayed.add(nodeName);
+        }
+        InvocationContext scheduled =
+            NodeRunner.scheduledContext(
+                context.invocationContext(),
+                trigger.branch(),
+                trigger.useSubBranch(),
+                nodeName,
+                runId);
+        Context replayContext =
+            ResumeScan.replayContext(context, scheduled, node, runId, useAsOutput, interception);
+        // A replay counts as running until its completion is handled, as a run does.
+        running.put(nodeName, Disposable.empty());
+        completions.add(new Completion(nodeName, replayContext));
+        wakeUps.onNext(true);
+        return;
+      }
+      Completable checkpointed = checkpoint();
+      // Processing the checkpoint can end the run, as when the caller stops after that event.
+      if (childRuns.isDisposed()) {
+        return;
+      }
+      // The node starts once its checkpoint is processed, as each of its own events is.
       Disposable run =
-          NodeRunner.builder()
-              .node(graph.node(nodeName))
-              .parent(context)
-              .runId(runId)
-              .useAsOutput(graph.terminalNodeNames().contains(nodeName))
-              .useSubBranch(trigger.useSubBranch())
-              .overrideBranch(trigger.branch())
-              .build()
-              .run(trigger.input())
+          checkpointed
+              .andThen(
+                  NodeRunner.builder()
+                      .node(node)
+                      .parent(context)
+                      .runId(runId)
+                      .useAsOutput(useAsOutput)
+                      .useSubBranch(trigger.useSubBranch())
+                      .overrideBranch(trigger.branch())
+                      .resumeInputs(interception.resumeInputs())
+                      .build()
+                      .run(trigger.input()))
               .subscribe(
                   childContext -> {
                     completions.add(new Completion(nodeName, childContext));
                     wakeUps.onNext(true);
                   },
                   // A node's exception fails only that node, so this is an Error.
-                  wakeUps::onError);
-      childRuns.add(run);
+                  wakeUps::onError,
+                  // Added before it subscribes, so a cancel reaches a node blocked as it starts.
+                  childRuns);
       running.put(nodeName, run);
     }
   }
@@ -212,23 +279,95 @@ final class Scheduler {
   private void handleCompletion(String nodeName, Context childContext) {
     NodeState progress = nodeStates.get(nodeName);
     NodeExecutionState childState = childContext.requireNodeState();
+    boolean wasReplayed = replayed.remove(nodeName);
     ImmutableSet<String> childInterruptIds = childState.interruptIds();
     if (!childInterruptIds.isEmpty()) {
       progress.status = NodeStatus.WAITING;
       progress.interrupts = childInterruptIds.asList();
       interruptIds.addAll(childInterruptIds);
+      emitCheckpoint();
       return;
     }
     if (graph.node(nodeName).waitForOutput()
         && childState.output().isEmpty()
         && childState.selectedRoutes().isEmpty()) {
       progress.status = NodeStatus.WAITING;
+      emitCheckpoint();
       return;
     }
     progress.status = NodeStatus.COMPLETED;
     nodeBranches.put(nodeName, childContext.invocationContext().branch().orElse(null));
-    childState.output().ifPresent(output -> nodeOutputs.put(nodeName, output));
+    Optional<Object> output = childState.output();
+    if (output.isPresent()) {
+      nodeOutputs.put(nodeName, output.get());
+      if (wasReplayed) {
+        replayedOutputs.add(nodeName);
+      } else {
+        replayedOutputs.remove(nodeName);
+      }
+    }
+    if (wasReplayed) {
+      reemitReplayedOutput(childContext);
+    } else {
+      emitCheckpoint();
+    }
     enqueueSuccessorTriggers(nodeName, childContext);
+  }
+
+  /** Queues a checkpoint, as {@link #checkpoint} does, without waiting for it to be processed. */
+  private void emitCheckpoint() {
+    Completable unused = checkpoint();
+  }
+
+  /**
+   * On a resumable invocation, records where every node stands, so that a later turn can see how
+   * far this one got. The event is queued before any event that follows it, and the returned
+   * Completable completes once it is processed.
+   */
+  private Completable checkpoint() {
+    if (!context.invocationContext().isResumable()) {
+      return Completable.complete();
+    }
+    Map<String, Object> nodes = new LinkedHashMap<>();
+    nodeStates.forEach((name, progress) -> nodes.put(name, progress.toCheckpoint()));
+    return send(
+        workflowEvent(context.invocationContext().branch().orElse(null))
+            .actions(
+                EventActions.builder()
+                    .agentState(ImmutableMap.of(NodeState.NODES_KEY, nodes))
+                    .build()));
+  }
+
+  /**
+   * On a resumable invocation, re-emits the output of a node replayed from history on the node's
+   * branch, without the paths that the output counts for.
+   */
+  private void reemitReplayedOutput(Context childContext) {
+    Optional<Object> output = childContext.requireNodeState().output();
+    if (!context.invocationContext().isResumable() || output.isEmpty()) {
+      return;
+    }
+    Completable unused =
+        send(
+            workflowEvent(childContext.invocationContext().branch().orElse(null))
+                .output(output.get())
+                .nodeInfo(
+                    NodeInfo.builder().path(childContext.requireNodeState().nodePath()).build()));
+  }
+
+  /** Returns the start of an event that the workflow itself emits on {@code branch}. */
+  private Event.Builder workflowEvent(@Nullable String branch) {
+    InvocationContext invocationContext = context.invocationContext();
+    return Event.builder()
+        .id(invocationContext.newUuid())
+        .timestamp(invocationContext.now().toEpochMilli())
+        .invocationId(invocationContext.invocationId())
+        .author(workflow.name())
+        .branch(branch);
+  }
+
+  private Completable send(Event.Builder event) {
+    return workflowState.eventSink().send(event.build(), /* nodeFailure= */ null);
   }
 
   private void enqueueSuccessorTriggers(String nodeName, Context childContext) {
@@ -287,7 +426,8 @@ final class Scheduler {
    * records the output of the sole terminal node that produced one as the workflow's output.
    */
   private Completable finalizeRun() {
-    if (!interruptIds.isEmpty()) {
+    // A child run from the workflow's own context records its interrupts on the workflow.
+    if (!interruptIds.isEmpty() || !workflowState.interruptIds().isEmpty()) {
       workflowState.addInterruptIds(interruptIds);
       return Completable.complete();
     }
@@ -304,11 +444,20 @@ final class Scheduler {
                   workflow.name(), terminalOutputs.size())));
     }
     if (terminalOutputs.size() == 1) {
-      workflowState.produceOutput(nodeOutputs.get(terminalOutputs.get(0)));
-      // The terminal node's event already carried the output for the workflow as well.
-      workflowState.markOutputEmitted();
+      String terminalNode = terminalOutputs.get(0);
+      workflowState.produceOutput(nodeOutputs.get(terminalNode));
+      // Unmarked so NodeRunner sends a replayed terminal node's output for the delegating node.
+      if (!replayedOutputs.contains(terminalNode) || !workflowState.isDelegatedToANode()) {
+        workflowState.markOutputEmitted();
+      }
     }
-    return Completable.complete();
+    // On a resumable invocation, a clean finish is marked so a later turn can see it.
+    if (!context.invocationContext().isResumable()) {
+      return Completable.complete();
+    }
+    return send(
+        workflowEvent(context.invocationContext().branch().orElse(null))
+            .actions(EventActions.builder().endOfAgent(true).build()));
   }
 
   /** Returns the longest segment prefix that the dot-separated {@code branches} share, if any. */

@@ -37,6 +37,8 @@ import com.google.adk.agents.RunConfig;
 import com.google.adk.events.Event;
 import com.google.adk.flows.llmflows.RequestProcessor.RequestProcessingResult;
 import com.google.adk.flows.llmflows.ResponseProcessor.ResponseProcessingResult;
+import com.google.adk.models.BaseLlm;
+import com.google.adk.models.BaseLlmConnection;
 import com.google.adk.models.CacheMetadata;
 import com.google.adk.models.LlmCallsLimitExceededException;
 import com.google.adk.models.LlmRequest;
@@ -433,6 +435,36 @@ public final class BaseLlmFlowTest {
     String aggregatedId = aggregatedFcEvent.functionCalls().get(0).id().orElseThrow();
     assertThat(partialId).isEqualTo(aggregatedId);
     assertThat(partialId).isEqualTo("adk-fixed-id-for-test");
+  }
+
+  @Test
+  public void run_dispatchesInvocationContextWithoutDependingOnModelType() {
+    List<InvocationContext> received = new ArrayList<>();
+    Content answer = Content.fromParts(Part.fromText("context-aware answer"));
+    BaseLlm model =
+        new BaseLlm("context-aware") {
+          @Override
+          public Flowable<LlmResponse> generateContent(LlmRequest request, boolean stream) {
+            throw new AssertionError("Flow must use the context-aware API");
+          }
+
+          @Override
+          public Flowable<LlmResponse> generateContent(
+              LlmRequest request, boolean stream, InvocationContext context) {
+            received.add(context);
+            return Flowable.just(createLlmResponse(answer));
+          }
+
+          @Override
+          public BaseLlmConnection connect(LlmRequest request) {
+            throw new UnsupportedOperationException();
+          }
+        };
+    InvocationContext invocation = createInvocationContext(createTestAgent(model));
+    List<Event> events =
+        createBaseLlmFlowWithoutProcessors().run(invocation).toList().blockingGet();
+    assertThat(received).containsExactly(invocation);
+    assertThat(getOnlyElement(events).content()).hasValue(answer);
   }
 
   @Test

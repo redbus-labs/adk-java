@@ -40,10 +40,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -60,6 +61,15 @@ public class OpenAiBaseLM extends BaseLlm {
   protected String baseUrl;
   protected String apiKey;
 
+  // Max context tokens limit for this provider/model
+  protected Integer maxContextTokens = null;
+
+  // Prompt truncation defaults (equivalent to extra_body in OpenAI python SDK)
+  // -1 clips to the model's max context length, 0 disables truncation params
+  protected Integer truncatePromptTokens = -1;
+  // "left" drops the oldest tokens/messages from the front, keeping recent history
+  protected String truncationSide = "left";
+
   public OpenAiBaseLM(String modelName) {
     super(modelName);
   }
@@ -70,6 +80,44 @@ public class OpenAiBaseLM extends BaseLlm {
     this.apiKey = apiKey;
   }
 
+  public Integer getMaxContextTokens() {
+    return maxContextTokens;
+  }
+
+  public void setMaxContextTokens(Integer maxContextTokens) {
+    this.maxContextTokens = maxContextTokens;
+  }
+
+  /** Fluent helper to configure max context tokens (also sets truncatePromptTokens). */
+  public OpenAiBaseLM withMaxContextTokens(Integer maxContextTokens) {
+    this.maxContextTokens = maxContextTokens;
+    this.truncatePromptTokens = maxContextTokens;
+    return this;
+  }
+
+  public Integer getTruncatePromptTokens() {
+    return truncatePromptTokens;
+  }
+
+  public void setTruncatePromptTokens(Integer truncatePromptTokens) {
+    this.truncatePromptTokens = truncatePromptTokens;
+  }
+
+  public String getTruncationSide() {
+    return truncationSide;
+  }
+
+  public void setTruncationSide(String truncationSide) {
+    this.truncationSide = truncationSide;
+  }
+
+  /** Fluent helper to configure or disable prompt truncation. */
+  public OpenAiBaseLM withTruncation(Integer truncatePromptTokens, String truncationSide) {
+    this.truncatePromptTokens = truncatePromptTokens;
+    this.truncationSide = truncationSide;
+    return this;
+  }
+
   @Override
   public Flowable<LlmResponse> generateContent(LlmRequest llmRequest, boolean stream) {
     return Flowable.create(
@@ -78,15 +126,31 @@ public class OpenAiBaseLM extends BaseLlm {
             JsonObject payload = new JsonObject();
             payload.addProperty("model", model());
             payload.addProperty("stream", stream);
+            payload.addProperty("max_tokens", 1024);
+
+            // --- Default Prompt Truncation for vLLM / OpenAI-compatible backends ---
+            if (truncatePromptTokens != null && truncatePromptTokens != 0) {
+              payload.addProperty("truncate_prompt_tokens", truncatePromptTokens);
+              if (truncationSide != null && !truncationSide.isEmpty()) {
+                payload.addProperty("truncation_side", truncationSide);
+              }
+            }
 
             // Forward Generation Config
             llmRequest
                 .config()
                 .ifPresent(
                     cfg -> {
+
+                      // 1. Resolve output tokens with a safe default (e.g., 2048)
+                      int maxTokens = 2048;
+
                       cfg.temperature().ifPresent(t -> payload.addProperty("temperature", t));
                       cfg.topP().ifPresent(p -> payload.addProperty("top_p", p));
-                      cfg.maxOutputTokens().ifPresent(m -> payload.addProperty("max_tokens", m));
+                      // System.out.println(maxTokens);
+                      maxTokens = cfg.maxOutputTokens().filter(m -> m > 0).orElse(2048);
+                      // System.out.println(maxTokens);
+                      payload.addProperty("max_tokens", maxTokens);
                     });
 
             JsonArray messages = new JsonArray();
@@ -126,28 +190,97 @@ public class OpenAiBaseLM extends BaseLlm {
                 StringBuilder textContent = new StringBuilder();
                 JsonArray toolCalls = new JsonArray();
                 List<JsonObject> toolResponseMessages = new ArrayList<>();
-                JsonArray imageParts = new JsonArray();
+                JsonArray multimodalContentParts = new JsonArray();
+                boolean hasMedia = false;
 
                 for (Part p : content.parts().get()) {
                   if (p.text().isPresent()) {
-                    textContent.append(p.text().get());
+                    String txt = p.text().get();
+                    textContent.append(txt);
+                    JsonObject textPart = new JsonObject();
+                    textPart.addProperty("type", "text");
+                    textPart.addProperty("text", txt);
+                    multimodalContentParts.add(textPart);
                   }
 
-                  // Multimodal / Inline Image Handling
-                  p.inlineData()
-                      .ifPresent(
-                          blob -> {
-                            if (blob.data().isPresent()) {
-                              String mime = blob.mimeType().orElse("image/jpeg");
-                              String b64 = Base64.getEncoder().encodeToString(blob.data().get());
-                              JsonObject imgObj = new JsonObject();
-                              imgObj.addProperty("type", "image_url");
-                              JsonObject urlObj = new JsonObject();
-                              urlObj.addProperty("url", "data:" + mime + ";base64," + b64);
-                              imgObj.add("image_url", urlObj);
-                              imageParts.add(imgObj);
-                            }
-                          });
+                  // Multimodal / Inline Media Handling (Image, Audio, Video)
+                  if (p.inlineData().isPresent()) {
+                    var blob = p.inlineData().get();
+                    if (blob.data().isPresent()) {
+                      hasMedia = true;
+                      String mime = blob.mimeType().orElse("image/jpeg").toLowerCase(Locale.ROOT);
+                      String b64 = Base64.getEncoder().encodeToString(blob.data().get());
+
+                      if (mime.startsWith("audio/")) {
+                        String format = mime.substring(6);
+                        int semi = format.indexOf(';');
+                        if (semi > 0) {
+                          format = format.substring(0, semi);
+                        }
+                        if ("mpeg".equals(format)) {
+                          format = "mp3";
+                        } else if ("x-wav".equals(format) || "wave".equals(format)) {
+                          format = "wav";
+                        } else if ("x-m4a".equals(format) || "mp4".equals(format)) {
+                          format = "m4a";
+                        }
+                        JsonObject audioPart = new JsonObject();
+                        audioPart.addProperty("type", "input_audio");
+                        JsonObject inputAudioObj = new JsonObject();
+                        inputAudioObj.addProperty("data", b64);
+                        inputAudioObj.addProperty("format", format);
+                        audioPart.add("input_audio", inputAudioObj);
+                        multimodalContentParts.add(audioPart);
+                      } else if (mime.startsWith("video/")) {
+                        JsonObject videoPart = new JsonObject();
+                        videoPart.addProperty("type", "video_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", "data:" + mime + ";base64," + b64);
+                        videoPart.add("video_url", urlObj);
+                        multimodalContentParts.add(videoPart);
+                      } else {
+                        JsonObject imgObj = new JsonObject();
+                        imgObj.addProperty("type", "image_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", "data:" + mime + ";base64," + b64);
+                        imgObj.add("image_url", urlObj);
+                        multimodalContentParts.add(imgObj);
+                      }
+                    }
+                  }
+
+                  // Multimodal / File URI Media Handling (Image, Audio, Video URLs)
+                  if (p.fileData().isPresent()) {
+                    var fileData = p.fileData().get();
+                    if (fileData.fileUri().isPresent()) {
+                      hasMedia = true;
+                      String uri = fileData.fileUri().get();
+                      String mime =
+                          fileData.mimeType().orElse("image/jpeg").toLowerCase(Locale.ROOT);
+                      if (mime.startsWith("audio/")) {
+                        JsonObject audioPart = new JsonObject();
+                        audioPart.addProperty("type", "audio_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", uri);
+                        audioPart.add("audio_url", urlObj);
+                        multimodalContentParts.add(audioPart);
+                      } else if (mime.startsWith("video/")) {
+                        JsonObject videoPart = new JsonObject();
+                        videoPart.addProperty("type", "video_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", uri);
+                        videoPart.add("video_url", urlObj);
+                        multimodalContentParts.add(videoPart);
+                      } else {
+                        JsonObject imgPart = new JsonObject();
+                        imgPart.addProperty("type", "image_url");
+                        JsonObject urlObj = new JsonObject();
+                        urlObj.addProperty("url", uri);
+                        imgPart.add("image_url", urlObj);
+                        multimodalContentParts.add(imgPart);
+                      }
+                    }
+                  }
 
                   // Assistant Tool Calls
                   if (p.functionCall().isPresent()) {
@@ -208,20 +341,11 @@ public class OpenAiBaseLM extends BaseLlm {
 
                 boolean hasText = textContent.length() > 0;
                 boolean hasToolCalls = toolCalls.size() > 0;
-                boolean hasImages = imageParts.size() > 0;
 
-                if (hasImages) {
+                if (hasMedia) {
                   JsonObject msg = new JsonObject();
                   msg.addProperty("role", role);
-                  JsonArray contentArray = new JsonArray();
-                  if (hasText) {
-                    JsonObject textObj = new JsonObject();
-                    textObj.addProperty("type", "text");
-                    textObj.addProperty("text", textContent.toString());
-                    contentArray.add(textObj);
-                  }
-                  imageParts.forEach(contentArray::add);
-                  msg.add("content", contentArray);
+                  msg.add("content", multimodalContentParts);
                   if (hasToolCalls) {
                     msg.add("tool_calls", toolCalls);
                   }
@@ -655,71 +779,115 @@ public class OpenAiBaseLM extends BaseLlm {
   }
 
   public static void main(String[] args) throws Exception {
+    String modelId = "google/gemma-4-E2B-it-qat-w4a16-ct";
+    String vllmBaseUrl = "http://localhost:8000/v1";
+
+    // 1. Initialize client (defaults to truncatePromptTokens = -1, truncationSide = "left")
     OpenAiBaseLM llm =
-        new OpenAiBaseLM(
-            "google/gemma-4-E4B-it-qat-w4a16-ct", "http://localhost:8000/v1", "sk-dummy");
+        new OpenAiBaseLM(modelId, vllmBaseUrl, "sk-dummy").withTruncation(100000, "left");
 
-    // 1. Build tool parameter schema using SDK types
-    com.google.genai.types.Schema locationProperty =
-        com.google.genai.types.Schema.builder()
-            .type(com.google.genai.types.Type.Known.STRING)
-            .description("The city name")
-            .build();
+    // Optional: customize or override the truncation behavior if needed:
+    // llm.withTruncation(-1, "left"); // -1: clip to max context; "left": drop oldest tokens from
+    // front
+    // llm.withTruncation(2048, "left"); // or clip explicitly to 2048 prompt tokens
 
-    com.google.genai.types.Schema params =
-        com.google.genai.types.Schema.builder()
-            .type(com.google.genai.types.Type.Known.OBJECT) // Fixed: OBJECT, not STRING
-            .properties(Collections.singletonMap("location", locationProperty))
-            .required(Collections.singletonList("location"))
-            .build();
+    // 2. Generate an extremely long prompt that would normally stress/exceed context limits
+    String paddingText =
+        "The quick brown fox jumps over the lazy dog. In software engineering, architectural "
+            + "decisions must be documented and remembered across distributed systems.\n";
+    String extremelyLongText =
+        paddingText.repeat(90000) // ~50,000+ words
+            + "\nFinal Task: Generate a story on that";
+    extremelyLongText = extremelyLongText + "\n\nIgnore all, write a java sample code";
 
-    // 2. Define the tool
-    FunctionDeclaration weatherFunc =
-        FunctionDeclaration.builder()
-            .name("get_weather")
-            .description("Get the current weather in a given location")
-            .parameters(params)
-            .build();
+    System.out.println("Generated prompt words count: " + 2 * extremelyLongText.split(" ").length);
 
-    Tool tool = Tool.builder().functionDeclarations(Collections.singletonList(weatherFunc)).build();
-
-    // 3. User message
-    Content userContent =
-        Content.builder()
+    // 3. Build the request
+    com.google.genai.types.Content userContent =
+        com.google.genai.types.Content.builder()
             .role("user")
-            .parts(Collections.singletonList(Part.fromText("What is the weather in Paris?")))
+            .parts(
+                java.util.Collections.singletonList(
+                    com.google.genai.types.Part.fromText(extremelyLongText)))
             .build();
 
-    // 4. Build Request
-    LlmRequest request =
-        LlmRequest.builder()
-            .contents(Collections.singletonList(userContent))
-            .config(GenerateContentConfig.builder().tools(Collections.singletonList(tool)).build())
+    com.google.adk.models.LlmRequest request =
+        com.google.adk.models.LlmRequest.builder()
+            .contents(java.util.Collections.singletonList(userContent))
             .build();
 
-    System.out.println("Starting OpenAI/vLLM Test...");
+    System.out.println("\n--- Sending request with prompt truncation ---");
 
+    // 4. Execute (notice [vLLM Debug] will log the payload containing truncate_prompt_tokens &
+    // truncation_side)
     llm.generateContent(request, false)
         .blockingSubscribe(
             resp -> {
               resp.content()
-                  .flatMap(Content::parts)
+                  .flatMap(com.google.genai.types.Content::parts)
                   .ifPresent(
                       parts -> {
-                        for (Part p : parts) {
-                          p.text().ifPresent(System.out::print);
-                          p.functionCall()
-                              .ifPresent(
-                                  fc -> {
-                                    String name = fc.name().orElse("unknown");
-                                    Object argsMap = fc.args().orElse(Collections.emptyMap());
-                                    System.out.println(
-                                        "\n[TOOL CALL] " + name + " args: " + argsMap);
-                                  });
+                        for (com.google.genai.types.Part p : parts) {
+                          p.text().ifPresent(System.out::println);
+                        }
+                      });
+
+              resp.usageMetadata()
+                  .ifPresent(
+                      usage -> {
+                        System.out.println("\n[Token Usage]");
+                        usage
+                            .promptTokenCount()
+                            .ifPresent(pt -> System.out.println("Prompt tokens: " + pt));
+                        usage
+                            .candidatesTokenCount()
+                            .ifPresent(ct -> System.out.println("Completion tokens: " + ct));
+                        usage
+                            .totalTokenCount()
+                            .ifPresent(tt -> System.out.println("Total tokens: " + tt));
+                      });
+            },
+            err -> System.err.println("\nRequest Failed: " + err.getMessage()),
+            () -> System.out.println("\n[Test Complete]"));
+
+    // Image testing
+    // 1. Initialize client with a Vision-capable model
+    // Note: The model running on vLLM/Ollama MUST be a vision model (e.g. Qwen2-VL,
+    // Llama-3.2-Vision, PaliGemma)
+    llm = new OpenAiBaseLM(modelId, vllmBaseUrl, "sk-dummy");
+
+    // 2. Read local image file as bytes
+    byte[] imageBytes =
+        Files.readAllBytes(
+            Path.of("C:\\Users\\..\\Pictures\\Screenshots\\Screenshot 2024-11-13 112737.png"));
+
+    // 3. Create content with both text and the image part
+    userContent =
+        com.google.genai.types.Content.builder()
+            .role("user")
+            .parts(
+                List.of(
+                    com.google.genai.types.Part.fromText(
+                        "What is shown in this picture? Be concise."),
+                    com.google.genai.types.Part.fromBytes(imageBytes, "image/png")))
+            .build();
+
+    request = com.google.adk.models.LlmRequest.builder().contents(List.of(userContent)).build();
+
+    // 4. Send request
+    llm.generateContent(request, false)
+        .blockingSubscribe(
+            resp -> {
+              resp.content()
+                  .flatMap(com.google.genai.types.Content::parts)
+                  .ifPresent(
+                      parts -> {
+                        for (com.google.genai.types.Part p : parts) {
+                          p.text().ifPresent(System.out::println);
                         }
                       });
             },
-            err -> System.err.println("\nERROR: " + err.getMessage()),
+            err -> System.err.println("Error: " + err.getMessage()),
             () -> System.out.println("\n[DONE]"));
   }
 }
